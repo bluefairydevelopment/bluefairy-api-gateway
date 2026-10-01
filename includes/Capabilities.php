@@ -61,13 +61,16 @@ final class Capabilities {
 	 * is the least an API key can hold — so a key never silently gains access
 	 * to a route this map has not considered.
 	 *
-	 * @param string $route REST route, with or without the leading slash.
+	 * @param string      $route  REST route, with or without the leading slash.
+	 * @param string|null $method HTTP method; null reads REQUEST_METHOD. Pass
+	 *                            WP_REST_Request::get_method() so an
+	 *                            X-HTTP-Method-Override is honoured.
 	 */
-	public static function required_scope( string $route ): string {
+	public static function required_scope( string $route, ?string $method = null ): string {
 		$route = '/' . ltrim( $route, '/' );
 		return match ( true ) {
 			str_starts_with( $route, '/bfag/v1/cache/purge' ) => 'cache:purge',
-			str_starts_with( $route, '/bfag/v1/webhooks' )    => self::is_read_method() ? 'webhook:read' : 'webhook:write',
+			str_starts_with( $route, '/bfag/v1/webhooks' )    => self::is_read_method( $method ) ? 'webhook:read' : 'webhook:write',
 			default                                            => 'read',
 		};
 	}
@@ -90,10 +93,15 @@ final class Capabilities {
 
 	/**
 	 * GET/HEAD/OPTIONS are reads.
+	 *
+	 * @param string|null $method Explicit method, or null for REQUEST_METHOD.
 	 */
-	private static function is_read_method(): bool {
-		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- compared against a fixed list only.
-		$method = isset( $_SERVER['REQUEST_METHOD'] ) ? strtoupper( (string) wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) : 'GET';
+	private static function is_read_method( ?string $method ): bool {
+		if ( null === $method ) {
+			// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- compared against a fixed list only.
+			$method = isset( $_SERVER['REQUEST_METHOD'] ) ? (string) wp_unslash( $_SERVER['REQUEST_METHOD'] ) : 'GET';
+		}
+		$method = strtoupper( $method );
 		return in_array( $method, [ 'GET', 'HEAD', 'OPTIONS' ], true );
 	}
 }

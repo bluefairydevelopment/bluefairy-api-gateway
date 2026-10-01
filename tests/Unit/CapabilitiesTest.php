@@ -43,6 +43,9 @@ final class CapabilitiesTest extends TestCase {
 		$this->assertSame( 'webhook:read', Capabilities::required_scope( '/bfag/v1/webhooks/3' ) );
 		$_SERVER['REQUEST_METHOD'] = 'DELETE';
 		$this->assertSame( 'webhook:write', Capabilities::required_scope( '/bfag/v1/webhooks/3' ) );
+		$this->assertSame( 'webhook:read', Capabilities::required_scope( '/bfag/v1/webhooks', 'get' ), 'an explicit method wins over REQUEST_METHOD' );
+		$_SERVER['REQUEST_METHOD'] = 'GET';
+		$this->assertSame( 'webhook:write', Capabilities::required_scope( '/bfag/v1/webhooks', 'PUT' ) );
 		$this->assertSame( 'read', Capabilities::required_scope( '/bfag/v1/status' ) );
 		$this->assertSame( 'read', Capabilities::required_scope( '/wp/v2/posts' ) );
 	}

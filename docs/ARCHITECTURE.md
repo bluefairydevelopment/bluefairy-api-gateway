@@ -34,7 +34,7 @@ Plan: `~/Sites/blueSites/plans/bluefairy-api-gateway.plan.md` (read "Revision v3
 | Class | Public API |
 |---|---|
 | `Settings` | `all(): array`, `get( string $key ): mixed`, `update( array ): array`, `sanitize( array ): array`, `refresh()`, `Settings::DEFAULTS`, `Settings::to_bool()`, `Settings::sanitize_cidr_list()` |
-| `Capabilities` | `MANAGE`, `SCOPES`, `add_caps()`, `remove_caps()`, `current_user_can_manage()`, `required_scope( string $route ): string`, `scope_satisfied( string $permissions, string $required ): bool` |
+| `Capabilities` | `MANAGE`, `SCOPES`, `add_caps()`, `remove_caps()`, `current_user_can_manage()`, `required_scope( string $route, ?string $method = null ): string`, `scope_satisfied( string $permissions, string $required ): bool` |
 | `Installer` | `TABLES`, `OPTIONS`, `CRON`, `activate()`, `deactivate()`, `maybe_upgrade()`, `schema( $prefix, $charset ): array`, `create_tables()`, `seed_default_rules()`, `schedule_cron()`, `cron_schedules( array ): array` (adds `bfag_five_minutes`) |
 | `Logger` | `use_settings( ?Settings )`, `enabled()`, `log( string, array = [] )`, `lines()`, `clear()` |
 | `Support\GlobMatcher` | `compile( string $glob ): string`, `matches( string $glob, string $route ): bool`, `is_valid( string $glob ): bool` — `*` = one segment, `**` = anything, `?` = one char; routes compared with the leading `/` stripped |
