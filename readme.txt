@@ -36,7 +36,7 @@ Activation creates six database tables, seeds one cache rule and one rate-limit 
 
 Everything lives under **Settings → API Gateway**, in five tabs.
 
-**Dashboard** — three cards (cache hit rate, webhook success rate, and the Pro ban count — shown as *Blocked (Pro)* without the add-on) recomputed every five minutes or when you press **Refresh**; the ten newest failed deliveries with **Retry**; the raw counts; and the status endpoint URL with a **Copy** button. Timestamps are shown in the site's timezone.
+**Dashboard** — three cards (cache hit rate, webhook success rate for outgoing deliveries, and the Pro *Active blocks* count — shown as *Blocked (Pro)* without the add-on) recomputed every five minutes or when you press **Refresh**; the ten newest failed deliveries with **Retry**; the raw counts; and the status endpoint URL with a **Copy** button. Timestamps are shown in the site's timezone.
 
 **Cache** — the rules table with an Enabled/Disabled badge you can click, **Edit** and **Delete**, and **Purge all**. The add/edit form takes a label, a route glob (matched without the leading slash: `wc/v3/products/*` matches `wc/v3/products` and `wc/v3/products/12`), a TTL in seconds and optional comma-separated tags. A rule with no tags is purged on every content change; add tags to narrow purging to those tags. Edit the seeded "All routes" rule to narrow it. With more than one rule the most specific one wins, and the table is listed in that order.
 
@@ -110,7 +110,7 @@ Network activation provisions every site — tables, the seeded rules, the capab
 
 == Screenshots ==
 
-1. Dashboard — cache hit rate, webhook success rate and ban-count cards, the recent failed deliveries with Retry, and the status endpoint.
+1. Dashboard — cache hit rate, webhook success rate and Active blocks cards, the recent failed deliveries with Retry, and the status endpoint.
 2. Cache — the rules table with the seeded "All routes" rule, Purge all, and the add/edit form with route glob, TTL and tags.
 3. Rate limit — the rules table with the seeded per-IP rule and the form: count by, route glob, requests per window.
 4. Webhooks — the webhooks table with Send test, and the add/edit form: URL, event, signing secret and extra headers.
@@ -119,15 +119,15 @@ Network activation provisions every site — tables, the seeded rules, the capab
 == Changelog ==
 
 = 1.0.0 =
-* Initial release.
-* REST response cache with `X-BF-Cache: HIT` / `MISS` / `BYPASS`, one route-glob rule, object-cache or transient storage, generation-based purging on post, term and comment changes, Purge all, and `POST /bfag/v1/cache/purge`.
-* Sliding-window rate limiting per IP and rule with `429`, `Retry-After` and `X-BF-RateLimit-*` headers, one rule, trusted-proxy IP resolution from one chosen header, five-minute hit-log pruning with a ten-million-row cap.
-* Up to three signed outbound webhooks on six WordPress events and four WooCommerce events, HMAC-SHA256 `X-BF-Signature` over `timestamp.body`, delivery on shutdown with per-request deduplication, a delivery log with Send test and Retry, payload truncation and retention pruning.
-* Dashboard KPIs recomputed every five minutes, `GET /bfag/v1/status` for monitors, and the `bfag_manage_gateway` capability.
-* Thirty-three `bfag_*` actions and filters as the add-on contract.
-* Compatibility: tested against WordPress 7.1; requires PHP 8.1 or newer.
+* First release.
+* REST response cache with `X-BF-Cache: HIT` / `MISS` / `BYPASS`, one route-glob rule, object-cache or transient storage (64 KB / one-hour cap on transients), generation-based purging on post, term and comment changes, Purge all, and `POST /bfag/v1/cache/purge`.
+* Sliding-window rate limiting per IP and rule with `429`, `Retry-After` and `X-BF-RateLimit-*` headers; one rule seeded at 300 per 60 s; editors exempt by default; trusted-proxy IP resolution from one chosen header; refused requests served from a marker with no database work.
+* Up to three signed outbound webhooks on six WordPress events and four WooCommerce events, HMAC-SHA256 `X-BF-Signature` over `timestamp.body`, delivery after the response (twenty at most, fifteen seconds at most, the rest by WP-Cron), a delivery log with Send test and Retry on failed outgoing deliveries, payload truncation and retention pruning.
+* Dashboard figures recomputed every five minutes, `GET /bfag/v1/status` for monitors, the `bfag_manage_gateway` capability, multisite provisioning.
+* Thirty-five `bfag_*` actions and filters as the add-on contract.
+* Compatibility: tested against WordPress 7.1; requires PHP 8.1 or newer. Database schema version 1.0.2 (internal).
 
 == Upgrade Notice ==
 
 = 1.0.0 =
-Initial release. Rate limiting is on from activation at 300 requests per minute per IP on every REST route — behind Cloudflare or a load balancer, add the proxy ranges under Settings → Rate limit → Trusted proxies before relying on it.
+First release — nothing to upgrade from. Rate limiting is on from activation at 300 requests per minute per IP on every REST route; behind Cloudflare or a load balancer, add the proxy ranges under Settings → Rate limit → Trusted proxies before relying on it.

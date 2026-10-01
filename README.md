@@ -219,7 +219,7 @@ vendor/bin/phpstan analyse --memory-limit=1G --no-progress
 node tests/js/admin.test.js
 ```
 
-The last line runs `assets/js/admin.js` against a dependency-free fake DOM (no npm): the dashboard Refresh, the notice-dismiss handler and the rate-limit Penalty-row toggle.
+The last line runs `assets/js/admin.js` against a dependency-free fake DOM (no npm): the dashboard Refresh (including the blocked card's label from `blocked_label`), the notice-dismiss handler, the rate-limit Penalty-row toggle and the webhook form's URL-required toggle that follows the Preset select.
 
 ## Coding standards
 

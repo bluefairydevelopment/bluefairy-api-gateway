@@ -242,8 +242,8 @@ from that client under that rule is refused from the marker alone — no row
 written, no count — so a client hammering a 429 costs nothing in the hits
 table. With a persistent object cache the count itself is an atomic
 `wp_cache_incr()` in fixed windows of the rule's length rather than a
-`COUNT(*)`: the hit row is still written (the admin's log and the Pro DDoS
-cross-route count read it), and a client may get up to twice the limit across
+`COUNT(*)`: the hit row is still written (the admin's hit log reads it), and
+a client may get up to twice the limit across
 one window boundary, which is the usual trade for a counter that costs no
 query. The budget is **per subject and
 per rule**, not per path: every route a rule matches draws on the same
@@ -749,7 +749,7 @@ That is what Pro adds. It installs **alongside** this plugin rather than
 replacing it — your rules, webhooks and settings carry straight over, and this
 plugin keeps doing exactly what it does now.
 
-| Feature | API Gateway Pro | API Gateway (this plugin) |
+| Feature | API Gateway Pro | API Gateway (free) |
 |---|---|---|
 | REST response cache with `X-BF-Cache: HIT` / `MISS` / `BYPASS` | Yes | Yes |
 | Cache rules | Up to 500 | 1 |
@@ -759,21 +759,21 @@ plugin keeps doing exactly what it does now.
 | Per-IP sliding-window rate limiting with `429` and `Retry-After` | Yes | Yes |
 | Rate-limit rules | Up to 500 | 1 |
 | Count by logged-in user or by API key | Yes | — |
-| Penalty: block an IP for N seconds when it breaches a rule | Yes | — |
-| DDoS auto-block across all routes, with an allow-list | Yes | — |
-| Blocked IPs panel — see, lift and add blocks by hand | Yes | — |
+| Penalty: block an IP for N seconds when it breaches an IP-counted rule | Yes | — |
+| DDoS auto-block once a rule has refused an IP the threshold number of requests over its limit, with a never-block list | Yes | — |
+| Blocked IP addresses panel — see, lift and add blocks by hand | Yes | — |
 | *Active blocks* dashboard card | Live count of blocked addresses | *Blocked (Pro)* placeholder |
 | Forwarded-IP resolution behind trusted proxies | Yes | Yes |
 | Signed outbound webhooks (`X-BF-Signature`, HMAC-SHA256) | Yes | Yes |
 | Webhooks | Up to 500 | 3 |
 | Events — six WordPress, four WooCommerce | Yes | Yes |
-| Delivery log with manual Retry | Yes | Yes |
+| Delivery log with manual Retry on failed outgoing deliveries | Yes | Yes |
 | Automatic retries with back-off (1 min, 5 min, 30 min), up to a per-webhook limit | Yes | — |
 | Email alert after N consecutive failures | Yes | — |
 | Salesforce, HubSpot and Mailchimp presets — the delivery becomes a CRM record | Yes | — |
 | Incoming webhook endpoint with per-vendor verification (`/bfag/v1/incoming/<preset>`) | Yes | — |
 | Webhook REST API — list, create, update, delete, deliveries, retry | Yes | — |
-| API keys with scopes (`X-BF-API-Key`) — `read`, `write`, `cache:purge`, `webhook:read`, `webhook:write` | Yes | — |
+| API keys with scopes (`X-BF-API-Key`, REST requests only) — `read`, `write`, `cache:purge`, `webhook:read`, `webhook:write` | Yes | — |
 | `GET /bfag/v1/status` and `POST /bfag/v1/cache/purge` | Yes | Yes |
 | Admin tabs | 6 | 5 |
 
@@ -789,9 +789,9 @@ one answer to any change: flush everything. Pro tags what each change touches,
 so editing a post leaves responses tagged `type:product` warm.
 
 **A client that is hammering you is just slowed down.** The free limiter
-answers 429 and keeps counting. Pro bans the address — for the rule's penalty,
-or for an hour once it has crossed the DDoS threshold across every route — and
-shows you the ban list.
+answers 429 and keeps counting. Pro blocks the address — for the rule's
+penalty, or for an hour once a rule has refused it the DDoS threshold number
+of requests over its limit — and shows you the list of blocks.
 
 **Every integration shares the administrator's login.** Pro mints API keys with
 scopes, so a build server can purge the cache and nothing else, and a
