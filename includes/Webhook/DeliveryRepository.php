@@ -63,6 +63,7 @@ final class DeliveryRepository {
 			'http_status'   => isset( $data['http_status'] ) && is_numeric( $data['http_status'] ) ? (int) $data['http_status'] : null,
 			'response_body' => isset( $data['response_body'] ) && is_scalar( $data['response_body'] ) ? substr( (string) $data['response_body'], 0, 2000 ) : null,
 			'attempt'       => max( 1, (int) ( $data['attempt'] ?? 1 ) ),
+			'next_retry_at' => isset( $data['next_retry_at'] ) && is_string( $data['next_retry_at'] ) ? $data['next_retry_at'] : null,
 			'created_at'    => gmdate( 'Y-m-d H:i:s' ),
 		];
 		$result = $wpdb->insert( $wpdb->prefix . 'bfag_webhook_deliveries', $row, $this->formats( $row ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
@@ -133,6 +134,10 @@ final class DeliveryRepository {
 	/**
 	 * Most recent deliveries, newest first.
 	 *
+	 * One literal statement whatever the filters: each optional filter is a
+	 * `( %d = 0 OR column = %d )` pair that MySQL folds away when the value
+	 * is the neutral one, so nothing is ever interpolated into the SQL.
+	 *
 	 * @param int                  $limit   Maximum rows.
 	 * @param array<string, mixed> $filters webhook_id, status, direction.
 	 * @return list<array<string, mixed>>
@@ -140,29 +145,24 @@ final class DeliveryRepository {
 	public function recent( int $limit = 50, array $filters = [] ): array {
 		global $wpdb;
 
-		$where = [ '1 = %d' ];
-		$args  = [ 1 ];
-		if ( isset( $filters['webhook_id'] ) && (int) $filters['webhook_id'] > 0 ) {
-			$where[] = 'webhook_id = %d';
-			$args[]  = (int) $filters['webhook_id'];
-		}
-		if ( isset( $filters['status'] ) && is_string( $filters['status'] ) && in_array( $filters['status'], self::STATUSES, true ) ) {
-			$where[] = 'status = %s';
-			$args[]  = $filters['status'];
-		}
-		if ( isset( $filters['direction'] ) && in_array( $filters['direction'], [ 'in', 'out' ], true ) ) {
-			$where[] = 'direction = %s';
-			$args[]  = $filters['direction'];
-		}
-		$args[] = max( 1, min( 500, $limit ) );
-		$where  = implode( ' AND ', $where );
+		$webhook_id = isset( $filters['webhook_id'] ) && (int) $filters['webhook_id'] > 0 ? (int) $filters['webhook_id'] : 0;
+		$status     = isset( $filters['status'] ) && is_string( $filters['status'] ) && in_array( $filters['status'], self::STATUSES, true ) ? $filters['status'] : '';
+		$direction  = isset( $filters['direction'] ) && in_array( $filters['direction'], [ 'in', 'out' ], true ) ? $filters['direction'] : '';
 
 		$rows = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- $where holds fixed column fragments and placeholders only; every value travels in $args.
-			$wpdb->prepare( "SELECT * FROM {$wpdb->prefix}bfag_webhook_deliveries WHERE {$where} ORDER BY id DESC LIMIT %d", $args ),
+			$wpdb->prepare(
+				"SELECT * FROM {$wpdb->prefix}bfag_webhook_deliveries WHERE ( %d = 0 OR webhook_id = %d ) AND ( %s = '' OR status = %s ) AND ( %s = '' OR direction = %s ) ORDER BY created_at DESC, id DESC LIMIT %d",
+				$webhook_id,
+				$webhook_id,
+				$status,
+				$status,
+				$direction,
+				$direction,
+				max( 1, min( 500, $limit ) )
+			),
 			ARRAY_A
 		);
-		$out = [];
+		$out  = [];
 		foreach ( is_array( $rows ) ? $rows : [] as $row ) {
 			if ( is_array( $row ) ) {
 				$out[] = $this->normalize( $row );
@@ -172,20 +172,92 @@ final class DeliveryRepository {
 	}
 
 	/**
-	 * Delete finished deliveries older than $retention_days, 5,000 at a time.
-	 * Returns the number of rows removed.
+	 * Status of the newest outgoing delivery of each webhook, in one query:
+	 * `webhook_id => status` for every id that has one.
 	 *
-	 * @param int $retention_days Days to keep.
+	 * @param int[] $webhook_ids Webhook ids.
+	 * @return array<int, string>
+	 */
+	public function last_statuses( array $webhook_ids ): array {
+		global $wpdb;
+
+		$ids = array_values( array_unique( array_filter( array_map( 'intval', $webhook_ids ), static fn( int $id ): bool => $id > 0 ) ) );
+		if ( [] === $ids ) {
+			return [];
+		}
+		$rows = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+			$wpdb->prepare(
+				"SELECT webhook_id, status FROM {$wpdb->prefix}bfag_webhook_deliveries WHERE id IN ( SELECT MAX(id) FROM {$wpdb->prefix}bfag_webhook_deliveries WHERE webhook_id IN (" . implode( ',', array_fill( 0, count( $ids ), '%d' ) ) . ') AND direction = %s GROUP BY webhook_id )',
+				array_merge( $ids, [ 'out' ] )
+			),
+			ARRAY_A
+		);
+		$out  = [];
+		foreach ( is_array( $rows ) ? $rows : [] as $row ) {
+			if ( is_array( $row ) && isset( $row['webhook_id'], $row['status'] ) && is_string( $row['status'] ) && '' !== $row['status'] ) {
+				$out[ (int) $row['webhook_id'] ] = $row['status'];
+			}
+		}
+		return $out;
+	}
+
+	/**
+	 * Outgoing deliveries queued for the pending-flush cron: `pending` with
+	 * a due `next_retry_at` (an in-flight delivery is `pending` too, but
+	 * with no `next_retry_at`). Oldest first.
+	 *
+	 * @param int $limit Maximum rows.
+	 * @return list<array<string, mixed>>
+	 */
+	public function pending( int $limit ): array {
+		global $wpdb;
+
+		$rows = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+			$wpdb->prepare(
+				"SELECT * FROM {$wpdb->prefix}bfag_webhook_deliveries WHERE status = %s AND direction = %s AND next_retry_at IS NOT NULL AND next_retry_at <= %s ORDER BY id ASC LIMIT %d",
+				'pending',
+				'out',
+				gmdate( 'Y-m-d H:i:s' ),
+				max( 1, min( 500, $limit ) )
+			),
+			ARRAY_A
+		);
+		$out  = [];
+		foreach ( is_array( $rows ) ? $rows : [] as $row ) {
+			if ( is_array( $row ) ) {
+				$out[] = $this->normalize( $row );
+			}
+		}
+		return $out;
+	}
+
+	/**
+	 * Delete finished deliveries older than $retention_days, and `pending`
+	 * or `retrying` rows older than a day (a row the cron never picked up,
+	 * or a send the process died in the middle of, must not live for ever),
+	 * 5,000 at a time. Returns the number of rows removed.
+	 *
+	 * @param int $retention_days Days to keep finished deliveries.
 	 */
 	public function prune( int $retention_days ): int {
 		global $wpdb;
 
 		$retention_days = max( 1, $retention_days );
 		$cutoff         = gmdate( 'Y-m-d H:i:s', time() - ( $retention_days * DAY_IN_SECONDS ) );
+		$stale          = gmdate( 'Y-m-d H:i:s', time() - DAY_IN_SECONDS );
 		$total          = 0;
 		for ( $i = 0; $i < 200; $i++ ) {
 			$deleted = $wpdb->query( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
 				$wpdb->prepare( "DELETE FROM {$wpdb->prefix}bfag_webhook_deliveries WHERE status IN ('success','failed') AND created_at < %s LIMIT %d", $cutoff, 5000 )
+			);
+			if ( ! is_int( $deleted ) || $deleted <= 0 ) {
+				break;
+			}
+			$total += $deleted;
+		}
+		for ( $i = 0; $i < 200; $i++ ) {
+			$deleted = $wpdb->query( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+				$wpdb->prepare( "DELETE FROM {$wpdb->prefix}bfag_webhook_deliveries WHERE status IN ('pending','retrying') AND created_at < %s LIMIT %d", $stale, 5000 )
 			);
 			if ( ! is_int( $deleted ) || $deleted <= 0 ) {
 				break;

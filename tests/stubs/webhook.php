@@ -83,3 +83,16 @@ function bfag_test_enable_woocommerce(): void {
 	}
 	final class WooCommerce {}
 }
+
+if ( ! function_exists( 'fastcgi_finish_request' ) ) {
+	/**
+	 * PHP-FPM only; absent under the CLI runner. Records, per call, how many
+	 * HTTP requests had been sent when the response was finished, so a test
+	 * can assert the order. Reset it yourself: bfag_test_reset() does not
+	 * know this global.
+	 */
+	function fastcgi_finish_request(): bool {
+		$GLOBALS['bfag_test_finished'][] = count( $GLOBALS['bfag_test_http_calls'] ?? [] );
+		return true;
+	}
+}

@@ -129,19 +129,26 @@ final class CachePurger {
 	}
 
 	/**
-	 * Orphan the responses stored under the given tags.
+	 * Orphan the responses stored under the given tags. Only tags an
+	 * enabled rule carries (plus the implicit `all`) are bumped: no key
+	 * embeds any other tag's generation, so bumping it would purge nothing
+	 * and leave one more entry in `bfag_tag_generations` for every post
+	 * ever saved. The known set is also what the store keeps, so entries
+	 * for tags no rule carries any more are dropped on the same write.
 	 *
 	 * @param string[] $tags Tags to bump.
 	 */
 	public function purge_tags( array $tags ): void {
-		$tags = array_values( array_filter( $tags, static fn( mixed $tag ): bool => is_string( $tag ) && '' !== $tag ) );
+		$tags  = array_values( array_filter( $tags, static fn( mixed $tag ): bool => is_string( $tag ) && '' !== $tag ) );
+		$known = $this->known_tags();
 
-		$unknown = array_values( array_diff( $tags, $this->known_tags() ) );
+		$unknown = array_values( array_diff( $tags, $known ) );
 		if ( [] !== $unknown ) {
 			Logger::log( 'cache purge names tags no enabled rule carries', [ 'tags' => $unknown ] );
 		}
+		$tags = array_values( array_intersect( $tags, $known ) );
 
-		$this->store->bump_tags( $tags );
+		$this->store->bump_tags( $tags, $known );
 		/** This action is documented in includes/Cache/CachePurger.php */
 		do_action( 'bfag_cache_purged', 'tags', $tags );
 	}

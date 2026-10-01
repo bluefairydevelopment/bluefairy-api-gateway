@@ -53,6 +53,22 @@ class SqliteWpdb extends FakeWpdb {
 	}
 
 	/**
+	 * `SHOW TABLE STATUS LIKE` for the hits table answers with the real row
+	 * count as `Rows` (MySQL's estimate; exact here). Anything else is
+	 * FakeWpdb (recorded, scripted).
+	 */
+	public function get_row( string $query, string $output = 'OBJECT', int $y = 0 ): mixed {
+		if ( 1 === preg_match( "/^SHOW TABLE STATUS LIKE '([^']+)'$/", $query, $m ) ) {
+			$table = str_replace( [ '\\_', '\\%' ], [ '_', '%' ], stripslashes( $m[1] ) );
+			if ( $this->prefix . 'bfag_rate_limit_hits' === $table ) {
+				$this->calls[] = [ 'method' => 'get_row', 'sql' => $query ];
+				return [ 'Rows' => (int) $this->pdo->query( 'SELECT COUNT(*) FROM ' . $table )->fetchColumn() ];
+			}
+		}
+		return parent::get_row( $query, $output, $y );
+	}
+
+	/**
 	 * Insert a hit row with hit_at some seconds in the past (or future),
 	 * bypassing HitCounter.
 	 */

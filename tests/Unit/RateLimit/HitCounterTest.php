@@ -108,7 +108,8 @@ final class HitCounterTest extends TestCase {
 		( new HitCounter() )->consume( $long_subject, $long_route, 60, 60 );
 		$insert = $this->wpdb->calls_to( 'insert' )[0];
 		$this->assertSame( 200, strlen( $insert['data']['subject'] ) );
-		$this->assertSame( 500, strlen( $insert['data']['route'] ) );
+		$this->assertSame( 191, strlen( $insert['data']['route'] ), 'P16: the route column is capped at 191 (the admin reads it; the index is on route_hash)' );
+		$this->assertSame( 191, HitCounter::ROUTE_COLUMN_LENGTH );
 		$this->assertSame( HitCounter::route_hash( $long_route ), $insert['data']['route_hash'] );
 		$this->assertStringContainsString( "subject = '" . substr( $long_subject, 0, 200 ) . "'", (string) $this->wpdb->calls_to( 'get_var' )[0]['sql'], 'the count uses the same truncated subject it wrote' );
 	}
@@ -245,6 +246,47 @@ final class HitCounterTest extends TestCase {
 	// total_rows() and rotate_if_huge()
 	// ------------------------------------------------------------------
 
+	// ------------------------------------------------------------------
+	// P3: counting in the object cache when it is persistent
+	// ------------------------------------------------------------------
+
+	public function test_with_a_persistent_object_cache_consume_inserts_but_counts_with_wp_cache_incr(): void {
+		wp_using_ext_object_cache( true );
+		bfag_test_set_time( 1_700_000_000 );
+		$counter = new HitCounter();
+		$this->wpdb->queue( 'get_var', '999' ); // Must never be consumed.
+
+		for ( $n = 1; $n <= 3; $n++ ) {
+			$this->assertFalse( $counter->consume( '203.0.113.5', 'rule:1', 60, 3 ), "request {$n} is within 3" );
+		}
+		$this->assertTrue( $counter->consume( '203.0.113.5', 'rule:1', 60, 3 ), 'the 4th exceeds 3' );
+
+		$this->assertCount( 4, $this->wpdb->calls_to( 'insert' ), 'every hit is still written: the admin log and the Pro cross-route count read the table' );
+		$this->assertSame( [], $this->wpdb->calls_to( 'get_var' ), 'no COUNT(*)' );
+		$key = HitCounter::window_key( '203.0.113.5', 'rule:1', 60 );
+		$this->assertSame( 'bfag:rl:' . md5( '203.0.113.5|rule:1' ) . ':' . intdiv( time(), 60 ), $key, 'subject and bucket key separated; the window index is the real clock, as hit_at is' );
+		$this->assertSame( 4, wp_cache_get( $key, 'bfag' ) );
+		$this->assertFalse( $counter->consume( '203.0.113.6', 'rule:1', 60, 3 ), 'another subject has its own counter' );
+		$this->assertFalse( $counter->consume( '203.0.113.5', 'rule:2', 60, 3 ), 'another rule has its own counter' );
+
+		$this->assertSame( 1, $counter->count_in_window( 'x', 'rule:9', 0 ), 'control: a fresh key starts at 1 (a window of 0 is treated as 1 s)' );
+	}
+
+	public function test_a_failed_insert_still_fails_open_with_a_persistent_object_cache(): void {
+		wp_using_ext_object_cache( true );
+		$this->wpdb->queue( 'insert', false );
+		$this->assertFalse( ( new HitCounter() )->consume( 's', 'rule:1', 60, 0 ) );
+		$this->assertFalse( wp_cache_get( HitCounter::window_key( 's', 'rule:1', 60 ), 'bfag' ), 'nothing counted' );
+	}
+
+	public function test_without_a_persistent_object_cache_consume_still_counts_in_the_table(): void {
+		$this->assertNull( wp_using_ext_object_cache() );
+		$this->wpdb->queue( 'get_var', '4' );
+		$this->assertTrue( ( new HitCounter() )->consume( '203.0.113.5', 'rule:1', 60, 3 ) );
+		$this->assertCount( 1, $this->wpdb->calls_to( 'get_var' ), 'the COUNT(*) is issued' );
+		$this->assertSame( [], $GLOBALS['bfag_test_cache'], 'no counter: a per-request object cache would forget it' );
+	}
+
 	public function test_total_rows_counts_the_whole_table(): void {
 		$this->wpdb->queue( 'get_var', '12345' );
 		$this->assertSame( 12345, ( new HitCounter() )->total_rows() );
@@ -257,12 +299,14 @@ final class HitCounterTest extends TestCase {
 		ini_set( 'error_log', '/dev/null' );
 		$counter = new HitCounter();
 
-		$this->wpdb->queue( 'get_var', '10' );
+		$this->wpdb->queue( 'get_row', [ 'Rows' => '10' ] );
 		$this->assertFalse( $counter->rotate_if_huge( 10 ), 'equal to the threshold is not above it' );
 		$this->assertCount( 0, $this->wpdb->queries_matching( 'TRUNCATE' ) );
 		$this->assertSame( [], Logger::lines() );
+		$this->assertSame( [], $this->wpdb->calls_to( 'get_var' ), 'P10: no COUNT(*) — the engine estimate' );
+		$this->assertSame( "SHOW TABLE STATUS LIKE 'bfw\\\\_bfag\\\\_rate\\\\_limit\\\\_hits'", $this->wpdb->calls_to( 'get_row' )[0]['sql'], 'esc_like()d name, then prepare() escapes the backslash: the same shape as the installer SHOW TABLES LIKE' );
 
-		$this->wpdb->queue( 'get_var', '11' );
+		$this->wpdb->queue( 'get_row', [ 'Rows' => '11' ] );
 		$this->assertTrue( $counter->rotate_if_huge( 10 ) );
 		$this->assertSame( [ 'TRUNCATE TABLE bfw_bfag_rate_limit_hits' ], $this->wpdb->queries_matching( 'TRUNCATE' ) );
 		$this->assertCount( 1, Logger::lines() );
@@ -271,10 +315,11 @@ final class HitCounterTest extends TestCase {
 
 	public function test_rotate_if_huge_default_threshold_is_ten_million(): void {
 		$this->assertSame( 10000000, HitCounter::ROTATE_THRESHOLD );
-		$this->wpdb->queue( 'get_var', '10000000' );
+		$this->wpdb->queue( 'get_row', [ 'Rows' => '10000000' ] );
 		$this->assertFalse( ( new HitCounter() )->rotate_if_huge() );
-		$this->wpdb->queue( 'get_var', '10000001' );
+		$this->wpdb->queue( 'get_row', [ 'Rows' => '10000001' ] );
 		$this->assertTrue( ( new HitCounter() )->rotate_if_huge() );
+		$this->assertSame( 0, ( new HitCounter() )->approximate_rows(), 'no status row (a table that does not exist): zero, never a truncate' );
 	}
 
 	public function test_rotate_if_huge_against_sqlite_empties_the_table(): void {

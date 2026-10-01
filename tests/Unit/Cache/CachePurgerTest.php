@@ -50,6 +50,28 @@ final class CachePurgerTest extends TestCase {
 	}
 
 	/**
+	 * Seed the enabled-rules cache with one `**` rule carrying $tags, so
+	 * those tags are "known" (an enabled rule's keys embed their
+	 * generation) and a purge of them bumps.
+	 *
+	 * @param string[] $tags Tags the rule carries.
+	 */
+	private function rule_carrying( array $tags ): void {
+		wp_cache_set(
+			CacheRuleRepository::CACHE_KEY,
+			[
+				[
+					'id'         => 1,
+					'route_glob' => '**',
+					'tags'       => implode( ',', $tags ),
+					'enabled'    => 1,
+				],
+			],
+			'bfag'
+		);
+	}
+
+	/**
 	 * Answer the purge-tags filter with $tags, recording what was asked.
 	 *
 	 * @param string[]|null $tags Tags to return.
@@ -78,6 +100,7 @@ final class CachePurgerTest extends TestCase {
 	}
 
 	public function test_a_post_change_bumps_only_tags_when_the_filter_returns_an_array(): void {
+		$this->rule_carrying( [ 'products', 'post-7', 'posts' ] );
 		$this->answer_tags( [ 'products', 'post-7' ] );
 
 		$this->purger->on_post_change( 7 );
@@ -129,6 +152,7 @@ final class CachePurgerTest extends TestCase {
 	}
 
 	public function test_a_term_change_asks_with_type_term(): void {
+		$this->rule_carrying( [ 'term-3' ] );
 		$this->answer_tags( [ 'term-3' ] );
 		$this->purger->on_term_change( 3, 'category' );
 		$this->assertSame( [ [ 'term', 3 ] ], $this->asked );
@@ -164,6 +188,7 @@ final class CachePurgerTest extends TestCase {
 	}
 
 	public function test_purge_tags_bumps_announces_and_drops_non_strings(): void {
+		$this->rule_carrying( [ 'products', 'posts' ] );
 		$this->purger->purge_tags( [ 'products', '', 'posts' ] );
 		$this->assertSame( 2, $this->store->tag_generation( 'products' ) );
 		$this->assertSame( 2, $this->store->tag_generation( 'posts' ) );
@@ -196,7 +221,46 @@ final class CachePurgerTest extends TestCase {
 		$this->assertCount( 1, Logger::lines() );
 		$this->assertStringContainsString( '"ghost"', Logger::lines()[0] );
 		$this->assertStringNotContainsString( '"posts"', Logger::lines()[0] );
-		$this->assertSame( 2, $this->store->tag_generation( 'ghost' ), 'logged, but still bumped' );
+		$this->assertSame( 1, $this->store->tag_generation( 'ghost' ), 'logged and NOT bumped: no key embeds it, and a bump would only add an entry to bfag_tag_generations' );
+		$this->assertSame( 2, $this->store->tag_generation( 'posts' ), 'the known tag in the same call is bumped' );
+		$this->assertSame( [ 'tags', [ 'posts' ] ], end( $this->purged ), 'the action announces only what was bumped' );
+	}
+
+	/**
+	 * P5: with only the seeded `**` rule, twenty post saves answered with
+	 * Pro-style tags leave exactly one entry (`all`) in the option; a rule
+	 * tagged `type:post` makes that tag persist; removing the rule and
+	 * purging again drops it.
+	 */
+	public function test_tag_generations_hold_only_tags_enabled_rules_carry(): void {
+		$this->rule_carrying( [] );
+		add_filter(
+			'bfag_cache_purge_tags',
+			static fn( ?array $current, string $type, int $id ): array => [ 'post:' . $id, 'type:post', 'all' ],
+			10,
+			3
+		);
+		for ( $id = 1; $id <= 20; $id++ ) {
+			$this->purger->on_post_change( $id );
+		}
+		$this->assertSame( [ 'all' => 21 ], get_option( CacheStore::TAG_GENERATIONS_OPTION ), 'twenty saves, one entry' );
+		$this->assertSame( 1, $this->store->generation(), 'nothing was dropped, so the global generation stands' );
+
+		$this->rule_carrying( [ 'type:post' ] );
+		$this->purger->on_post_change( 21 );
+		$this->assertSame(
+			[
+				'all'       => 22,
+				'type:post' => 2,
+			],
+			get_option( CacheStore::TAG_GENERATIONS_OPTION ),
+			'a tag a rule carries persists'
+		);
+
+		$this->rule_carrying( [] );
+		$this->purger->on_post_change( 22 );
+		$this->assertSame( [ 'all' => 23 ], get_option( CacheStore::TAG_GENERATIONS_OPTION ), 'the rule is gone, so its tag is dropped' );
+		$this->assertSame( 2, $this->store->generation(), 'dropping a tag restarts it at 1, so everything is orphaned through the global generation' );
 	}
 
 	public function test_register_hooks_binds_every_content_hook(): void {
@@ -213,6 +277,7 @@ final class CachePurgerTest extends TestCase {
 	}
 
 	public function test_hooks_fire_the_right_handler_with_the_right_id(): void {
+		$this->rule_carrying( [ 'x' ] );
 		$this->answer_tags( [ 'x' ] );
 		$this->purger->register_hooks();
 		bfag_test_add_post(

@@ -2,7 +2,7 @@
 /**
  * The Settings form.
  *
- * @var array<string, array{label:string, fields:array<string, array{label:string, type:string, description:string, min?:int, max?:int, options?:array<string, string>}>}> $groups Field groups.
+ * @var array<string, array{label:string, note?:string, fields:array<string, array{label:string, type:string, description:string, min?:int, max?:int, options?:array<string, string>}>}> $groups Field groups.
  * @var array<string, mixed>                $values   Current settings.
  * @var \BlueFairy\ApiGateway\Settings      $settings The Settings instance, for `bfag_settings_fields`.
  * @var string                              $form_url Where the form posts.
@@ -19,7 +19,11 @@ defined( 'ABSPATH' ) || exit;
 	<?php wp_nonce_field( 'bfag_save_settings' ); ?>
 	<table class="form-table" role="presentation">
 		<?php foreach ( $groups as $bfag_group_id => $bfag_group ) : ?>
-			<tr class="bfag-group-heading"><th colspan="2"><h2 id="bfag-group-<?php echo esc_attr( $bfag_group_id ); ?>"><?php echo esc_html( $bfag_group['label'] ); ?></h2></th></tr>
+			<tr class="bfag-group-heading"><th colspan="2"><h2 id="bfag-group-<?php echo esc_attr( $bfag_group_id ); ?>"><?php echo esc_html( $bfag_group['label'] ); ?></h2>
+			<?php if ( isset( $bfag_group['note'] ) && '' !== $bfag_group['note'] ) : ?>
+				<p class="description bfag-group-note"><?php echo esc_html( $bfag_group['note'] ); ?></p>
+			<?php endif; ?>
+			</th></tr>
 			<?php foreach ( $bfag_group['fields'] as $bfag_key => $bfag_field ) : ?>
 				<?php
 				$bfag_id    = 'bfag-setting-' . str_replace( '_', '-', $bfag_key );

@@ -99,10 +99,7 @@ final class WebhookPage extends Page {
 		$rows   = $this->webhooks->all();
 		$count  = $this->webhooks->count();
 		$limit  = $this->webhooks->limit();
-		$status = [];
-		foreach ( $rows as $row ) {
-			$status[ (int) $row['id'] ] = $this->deliveries->last_status( (int) $row['id'] );
-		}
+		$status = $this->deliveries->last_statuses( array_map( static fn( array $row ): int => (int) $row['id'], $rows ) );
 
 		$this->view(
 			'webhooks',

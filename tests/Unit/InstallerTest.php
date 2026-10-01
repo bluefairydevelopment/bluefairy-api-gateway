@@ -29,6 +29,11 @@ final class InstallerTest extends TestCase {
 		$this->assertStringContainsString( 'route_hash CHAR(16) NOT NULL', $schema['bfag_rate_limit_hits'] );
 		$this->assertStringContainsString( 'payload MEDIUMTEXT NOT NULL', $schema['bfag_webhook_deliveries'] );
 		$this->assertStringContainsString( 'truncated TINYINT(1)', $schema['bfag_webhook_deliveries'] );
+		$this->assertStringContainsString( "  KEY idx_webhook_id (webhook_id),\n", $schema['bfag_webhook_deliveries'], 'P8: last_status / per-webhook log read by webhook_id ORDER BY id' );
+		$this->assertStringContainsString( "  KEY idx_created_at (created_at)\n", $schema['bfag_webhook_deliveries'], 'P14: recent() orders by created_at' );
+		// The harness mirrors BFAG_DB_VERSION with a fallback define; the shipped value is in the plugin file.
+		$this->assertSame( 1, preg_match( "/define\\( 'BFAG_DB_VERSION', '([^']+)' \\);/", (string) file_get_contents( BFAG_FILE ), $v ) );
+		$this->assertSame( '1.0.1', $v[1], 'bumped so dbDelta adds the new keys on upgrade' );
 	}
 
 	public function test_create_tables_runs_db_delta_once_per_table(): void {
@@ -70,8 +75,9 @@ final class InstallerTest extends TestCase {
 		$this->wpdb->always( 'get_var', '0' );
 		Installer::activate();
 
-		$this->assertSame( [ 'bfag_cron_prune_hits', 'bfag_cron_prune_deliveries', 'bfag_cron_recompute_kpis' ], array_keys( $GLOBALS['bfag_test_cron'] ) );
+		$this->assertSame( [ 'bfag_cron_prune_hits', 'bfag_cron_prune_deliveries', 'bfag_cron_recompute_kpis', 'bfag_cron_prune_responses' ], array_keys( $GLOBALS['bfag_test_cron'] ) );
 		$this->assertSame( 'bfag_five_minutes', $GLOBALS['bfag_test_cron']['bfag_cron_prune_hits']['recurrence'] );
+		$this->assertSame( 'bfag_five_minutes', $GLOBALS['bfag_test_cron']['bfag_cron_prune_responses']['recurrence'] );
 		$this->assertSame( 'daily', $GLOBALS['bfag_test_cron']['bfag_cron_prune_deliveries']['recurrence'] );
 		$this->assertSame( 'bfag_five_minutes', $GLOBALS['bfag_test_cron']['bfag_cron_recompute_kpis']['recurrence'] );
 		$this->assertSame( 10, has_filter( 'cron_schedules', [ Installer::class, 'cron_schedules' ] ), 'activation registered the schedule itself' );
@@ -92,10 +98,13 @@ final class InstallerTest extends TestCase {
 	public function test_deactivate_clears_cron_and_capability(): void {
 		$this->wpdb->always( 'get_var', '0' );
 		Installer::activate();
+		wp_schedule_single_event( time(), 'bfag_cron_flush_pending' );
+		wp_schedule_single_event( time() + 5, 'bfag_cron_flush_pending', [ 'args' ] );
 		Installer::deactivate();
 		foreach ( array_keys( Installer::CRON ) as $hook ) {
 			$this->assertFalse( wp_next_scheduled( $hook ), $hook );
 		}
+		$this->assertSame( [], $GLOBALS['bfag_test_single_events'], 'every pending flush event, whatever its args, is unscheduled' );
 		$this->assertFalse( get_role( 'administrator' )->has_cap( Capabilities::MANAGE ) );
 		$this->assertSame( Settings::DEFAULTS, get_option( 'bfag_settings' ), 'data survives deactivation' );
 	}
@@ -128,10 +137,13 @@ final class InstallerTest extends TestCase {
 		preg_match( '/\$bfag_tables = \[(.*?)\];/s', $source, $t );
 		preg_match( '/\$bfag_option_keys = \[(.*?)\];/s', $source, $o );
 		preg_match( '/\$bfag_cron_hooks = \[(.*?)\];/s', $source, $c );
+		preg_match( '/\$bfag_single_events = \[(.*?)\];/s', $source, $e );
 		$extract = static fn( string $block ): array => array_map( static fn( string $s ): string => trim( $s, "'" ), preg_split( '/[\s,]+/', trim( $block ), -1, PREG_SPLIT_NO_EMPTY ) ?: [] );
 		$this->assertSame( Installer::TABLES, $extract( $t[1] ?? '' ) );
 		$this->assertSame( Installer::OPTIONS, $extract( $o[1] ?? '' ) );
 		$this->assertSame( array_keys( Installer::CRON ), $extract( $c[1] ?? '' ) );
+		$this->assertSame( Installer::SINGLE_EVENTS, $extract( $e[1] ?? '' ) );
+		$this->assertSame( [ 'bfag_cron_flush_pending' ], Installer::SINGLE_EVENTS );
 	}
 
 	// ------------------------------------------------------------------

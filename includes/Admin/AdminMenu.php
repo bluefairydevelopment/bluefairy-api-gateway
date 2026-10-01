@@ -123,7 +123,7 @@ final class AdminMenu {
 		$this->kpi_cron      = new KpiCron( $this->stats, $this->deliveries, $this->hits );
 		$this->settings_page = new SettingsPage( $this->settings );
 		$this->pages         = [
-			DashboardPage::TAB => new DashboardPage( $this->cache_rules, $this->rl_rules, $this->webhooks, $this->deliveries, $this->hits, $this->kpi_cron ),
+			DashboardPage::TAB => new DashboardPage( $this->cache_rules, $this->rl_rules, $this->webhooks, $this->deliveries, $this->kpi_cron ),
 			CachePage::TAB     => new CachePage( $this->cache_rules, $this->store, $this->upsell ),
 			RateLimitPage::TAB => new RateLimitPage( $this->rl_rules, $this->upsell ),
 			WebhookPage::TAB   => new WebhookPage( $this->webhooks, $this->deliveries, $this->dispatcher, $this->registry, $this->upsell ),

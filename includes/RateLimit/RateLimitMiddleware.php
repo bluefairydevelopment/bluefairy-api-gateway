@@ -42,6 +42,13 @@ final class RateLimitMiddleware {
 	public const BUCKET_PREFIX = 'rule:';
 
 	/**
+	 * Object-cache group / transient prefix of the "already limited"
+	 * marker a breach leaves behind.
+	 */
+	private const LIMITED_GROUP  = 'bfag';
+	private const LIMITED_PREFIX = 'bfag_limited_';
+
+	/**
 	 * Constructor.
 	 *
 	 * @param RateLimitRuleRepository $rules    Rule source.
@@ -138,10 +145,17 @@ final class RateLimitMiddleware {
 
 			$window = (int) $rule['window_seconds'];
 			$max    = (int) $rule['max_requests'];
+			// A subject that breached this rule within the window is refused
+			// from the marker alone: no INSERT, no COUNT, until it expires.
+			$marker = self::limited_key( $subject, (int) $rule['id'] );
+			$known  = $this->is_limited( $marker );
 			// Counted against the rule, not the path: one rule = one budget per
 			// subject, so neither a case variant nor a crawl of 10,000 distinct
 			// URLs under a `**` rule gets a fresh allowance.
-			if ( $this->hits->consume( $subject, self::bucket( (int) $rule['id'] ), $window, $max, $route ) ) {
+			if ( $known || $this->hits->consume( $subject, self::bucket( (int) $rule['id'] ), $window, $max, $route ) ) {
+				if ( ! $known ) {
+					$this->mark_limited( $marker, $window );
+				}
 				Logger::log(
 					'rate limit breached',
 					[
@@ -215,6 +229,47 @@ final class RateLimitMiddleware {
 	 */
 	public static function bucket( int $rule_id ): string {
 		return self::BUCKET_PREFIX . $rule_id;
+	}
+
+	/**
+	 * The marker key for a subject under a rule. The separator keeps
+	 * subject `10.0.0.1` + rule 12 apart from `10.0.0.11` + rule 2.
+	 *
+	 * @param string $subject The counted subject.
+	 * @param int    $rule_id The rule's id.
+	 */
+	public static function limited_key( string $subject, int $rule_id ): string {
+		return 'limited:' . md5( $subject . '|' . self::bucket( $rule_id ) );
+	}
+
+	/**
+	 * Did this subject breach this rule within the current window?
+	 *
+	 * @param string $marker Key from limited_key().
+	 */
+	private function is_limited( string $marker ): bool {
+		if ( true === wp_using_ext_object_cache() ) {
+			return false !== wp_cache_get( $marker, self::LIMITED_GROUP );
+		}
+		return false !== get_transient( self::LIMITED_PREFIX . $marker );
+	}
+
+	/**
+	 * Remember a breach for the rest of the window: in the object cache
+	 * when it is persistent, else as a transient (one options row with
+	 * its timeout, gone when the window ends).
+	 *
+	 * @param string $marker Key from limited_key().
+	 * @param int    $window Seconds until the subject may try again.
+	 */
+	private function mark_limited( string $marker, int $window ): void {
+		$until  = time() + max( 1, $window );
+		$window = max( 1, $window );
+		if ( true === wp_using_ext_object_cache() ) {
+			wp_cache_set( $marker, $until, self::LIMITED_GROUP, $window );
+			return;
+		}
+		set_transient( self::LIMITED_PREFIX . $marker, $until, $window );
 	}
 
 	/**

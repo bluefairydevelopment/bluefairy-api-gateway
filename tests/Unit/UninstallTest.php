@@ -35,6 +35,7 @@ final class UninstallTest extends TestCase {
 	public function test_default_keeps_tables_but_removes_options_cron_and_cap(): void {
 		$this->seed();
 		update_option( 'bfag_settings', [ 'delete_data_on_uninstall' => false ] );
+		wp_schedule_single_event( time(), 'bfag_cron_flush_pending', [ 7 ] );
 		$this->run_uninstall();
 
 		$this->assertSame( [], $this->wpdb->queries_matching( 'DROP TABLE' ), 'tables are kept unless opted in' );
@@ -44,6 +45,7 @@ final class UninstallTest extends TestCase {
 		foreach ( array_keys( Installer::CRON ) as $hook ) {
 			$this->assertFalse( wp_next_scheduled( $hook ), $hook );
 		}
+		$this->assertSame( [], $GLOBALS['bfag_test_single_events'], 'the pending-flush single event goes too, whatever its args' );
 		$this->assertFalse( get_role( 'administrator' )->has_cap( Capabilities::MANAGE ) );
 		$this->assertCount( 1, $this->wpdb->queries_matching( 'DELETE FROM bfw_options WHERE option_name LIKE' ), 'transients are swept' );
 	}

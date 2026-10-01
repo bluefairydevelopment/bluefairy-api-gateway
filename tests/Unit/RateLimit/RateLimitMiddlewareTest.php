@@ -175,6 +175,60 @@ final class RateLimitMiddlewareTest extends TestCase {
 		$this->assertCount( 1, $this->wpdb->calls_to( 'insert' ), 'the limited request is itself recorded' );
 	}
 
+	/**
+	 * P4: after a breach the subject is refused from a marker for the rest
+	 * of the window — no INSERT, no COUNT — and the breach action still
+	 * fires per limited request. Another subject, and the same subject
+	 * under another rule, are counted as before.
+	 */
+	public function test_a_subject_that_breached_is_refused_from_the_marker_without_touching_the_hits_table(): void {
+		bfag_test_set_time( 1_700_000_000 );
+		$rules = [ $this->rule( [ 'id' => 3, 'max_requests' => 5, 'window_seconds' => 60 ] ) ];
+		$this->wpdb->queue( 'get_var', '6' );
+		$middleware = $this->middleware( $rules );
+
+		$this->assertSame( 429, $this->check( $middleware )->get_status() );
+		$marker = 'bfag_limited_' . RateLimitMiddleware::limited_key( '203.0.113.10', 3 );
+		$this->assertEqualsWithDelta( time() + 60, get_transient( $marker ), 5, 'the marker holds the end of the window (real clock, as hit_at is)' );
+		$this->assertSame( 1_700_000_060, $GLOBALS['bfag_test_transients'][ $marker ]['expires'], 'and expires with it' );
+		$this->assertSame( 'limited:' . md5( '203.0.113.10|rule:3' ), RateLimitMiddleware::limited_key( '203.0.113.10', 3 ) );
+
+		$this->wpdb->calls = [];
+		$this->wpdb->queue( 'get_var', '0' );
+		$response = $this->check( $middleware );
+		$this->assertSame( 429, $response->get_status() );
+		$this->assertSame( '5', $response->get_headers()['X-BF-RateLimit-Limit'] );
+		$this->assertSame( [], $this->wpdb->calls, 'no INSERT and no COUNT for a known-limited subject' );
+		$this->assertCount( 2, $this->breaches, 'the breach action fires per limited request, as before' );
+
+		$_SERVER['REMOTE_ADDR'] = '203.0.113.99';
+		$this->assertNull( $this->check( $this->middleware( $rules ) ), 'another subject (a fresh context: the IP is memoised per request) is counted; the queued count of 0 passes it' );
+		$this->assertCount( 1, $this->wpdb->calls_to( 'insert' ) );
+		$_SERVER['REMOTE_ADDR'] = '203.0.113.10';
+
+		bfag_test_set_time( 1_700_000_061 );
+		$this->wpdb->calls = [];
+		$this->wpdb->queue( 'get_var', '1' );
+		$this->assertNull( $this->check( $middleware ), 'the window passed: counted again and under the limit' );
+		$this->assertCount( 1, $this->wpdb->calls_to( 'insert' ) );
+	}
+
+	public function test_the_marker_lives_in_the_object_cache_when_it_is_persistent(): void {
+		wp_using_ext_object_cache( true );
+		bfag_test_set_time( 1_700_000_000 );
+		$middleware = $this->middleware( [ $this->rule( [ 'id' => 1, 'max_requests' => 0, 'window_seconds' => 30 ] ) ] );
+
+		$this->assertSame( 429, $this->check( $middleware )->get_status(), 'max 0: the first hit breaches' );
+		$key = RateLimitMiddleware::limited_key( '203.0.113.10', 1 );
+		$this->assertEqualsWithDelta( time() + 30, wp_cache_get( $key, 'bfag' ), 5 );
+		$this->assertSame( 1_700_000_030, $GLOBALS['bfag_test_cache_expires']['bfag'][ $key ] );
+		$this->assertSame( [], $GLOBALS['bfag_test_transients'], 'no transient' );
+
+		$this->wpdb->calls = [];
+		$this->assertSame( 429, $this->check( $middleware )->get_status() );
+		$this->assertSame( [], $this->wpdb->calls );
+	}
+
 	public function test_consume_receives_the_rules_window_and_max(): void {
 		$this->wpdb->queue( 'get_var', '0' );
 		$t0 = time();

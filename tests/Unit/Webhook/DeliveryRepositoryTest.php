@@ -43,8 +43,14 @@ final class DeliveryRepositoryTest extends TestCase {
 		$this->assertNull( $insert['data']['http_status'] );
 		$this->assertNull( $insert['data']['response_body'] );
 		$this->assertSame( 1, $insert['data']['attempt'] );
+		$this->assertNull( $insert['data']['next_retry_at'], 'not queued for the cron unless asked' );
 		$this->assertMatchesRegularExpression( '/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/', $insert['data']['created_at'] );
-		$this->assertSame( [ '%d', '%s', '%s', '%s', '%d', '%s', '%d', '%s', '%d', '%s' ], $insert['format'] );
+		$this->assertSame( [ '%d', '%s', '%s', '%s', '%d', '%s', '%d', '%s', '%d', '%s', '%s' ], $insert['format'] );
+
+		$this->repo()->create( [ 'webhook_id' => 4, 'event' => 'e', 'payload' => '{}', 'next_retry_at' => '2026-02-03 04:05:06' ] );
+		$this->assertSame( '2026-02-03 04:05:06', $this->wpdb->calls_to( 'insert' )[1]['data']['next_retry_at'], 'P6: a queued row carries its due time' );
+		$this->repo()->create( [ 'webhook_id' => 4, 'event' => 'e', 'payload' => '{}', 'next_retry_at' => 123 ] );
+		$this->assertNull( $this->wpdb->calls_to( 'insert' )[2]['data']['next_retry_at'], 'a non-string due time is ignored' );
 	}
 
 	public function test_create_truncates_the_payload_at_max_payload_bytes(): void {
@@ -135,14 +141,15 @@ final class DeliveryRepositoryTest extends TestCase {
 		$rows = $repo->recent( 10, [ 'webhook_id' => 1, 'status' => 'success', 'direction' => 'in' ] );
 		$this->assertSame( 3, $rows[0]['id'] );
 		$sql = $this->wpdb->calls_to( 'get_results' )[0]['sql'];
-		$this->assertStringContainsString( "WHERE 1 = 1 AND webhook_id = 1 AND status = 'success' AND direction = 'in' ORDER BY id DESC LIMIT 10", $sql );
+		// One literal statement (Plugin Check: nothing interpolated); a filter is a neutral-or-equal pair the optimiser folds.
+		$this->assertSame( "SELECT * FROM bfw_bfag_webhook_deliveries WHERE ( 1 = 0 OR webhook_id = 1 ) AND ( 'success' = '' OR status = 'success' ) AND ( 'in' = '' OR direction = 'in' ) ORDER BY created_at DESC, id DESC LIMIT 10", $sql );
 
 		$repo->recent();
-		$this->assertStringContainsString( 'WHERE 1 = 1 ORDER BY id DESC LIMIT 50', $this->wpdb->calls_to( 'get_results' )[1]['sql'] );
+		$this->assertSame( "SELECT * FROM bfw_bfag_webhook_deliveries WHERE ( 0 = 0 OR webhook_id = 0 ) AND ( '' = '' OR status = '' ) AND ( '' = '' OR direction = '' ) ORDER BY created_at DESC, id DESC LIMIT 50", $this->wpdb->calls_to( 'get_results' )[1]['sql'], 'P14: newest by created_at, id as the tiebreak' );
 
 		$repo->recent( 9999, [ 'status' => "x' OR 1=1", 'direction' => 'up', 'webhook_id' => 0 ] );
 		$sql = $this->wpdb->calls_to( 'get_results' )[2]['sql'];
-		$this->assertStringContainsString( 'WHERE 1 = 1 ORDER BY id DESC LIMIT 500', $sql, 'invalid filter values are ignored; limit clamped' );
+		$this->assertStringContainsString( "( 0 = 0 OR webhook_id = 0 ) AND ( '' = '' OR status = '' ) AND ( '' = '' OR direction = '' ) ORDER BY created_at DESC, id DESC LIMIT 500", $sql, 'invalid filter values are ignored; limit clamped' );
 		$this->assertStringNotContainsString( 'OR 1=1', $sql );
 		$this->assertSame( [], $repo->recent( 5 ), 'no rows queued' );
 	}
@@ -157,12 +164,17 @@ final class DeliveryRepositoryTest extends TestCase {
 			$this->wpdb->queue( 'query', $n );
 		}
 		$before = time();
-		$this->assertSame( 10120, $repo->prune( 7 ) );
+		$this->assertSame( 10120 + 77, $repo->prune( 7 ) );
 		$deletes = $this->wpdb->queries_matching( 'DELETE FROM bfw_bfag_webhook_deliveries' );
-		$this->assertCount( 4, $deletes, 'stops at the first zero; the queued 77 is never reached' );
+		$this->assertCount( 6, $deletes, 'finished rows: stops at the first zero; then the stale pending/retrying loop takes the 77 and stops at the next zero' );
 		$cutoff = gmdate( 'Y-m-d H:i', $before - 7 * DAY_IN_SECONDS );
 		$this->assertStringContainsString( "WHERE status IN ('success','failed') AND created_at < '$cutoff", $deletes[0] );
 		$this->assertStringEndsWith( 'LIMIT 5000', $deletes[0] );
+		// F3: pending/retrying rows older than a day go too, whatever the retention.
+		$stale = gmdate( 'Y-m-d H:i', $before - DAY_IN_SECONDS );
+		$this->assertStringContainsString( "WHERE status IN ('pending','retrying') AND created_at < '$stale", $deletes[4] );
+		$this->assertStringEndsWith( 'LIMIT 5000', $deletes[4] );
+		$this->assertStringContainsString( "status IN ('pending','retrying')", $deletes[5] );
 
 		$this->reset();
 		$this->assertSame( 0, $repo->prune( 0 ), 'nothing queued: zero rows' );
@@ -171,6 +183,40 @@ final class DeliveryRepositoryTest extends TestCase {
 		$this->reset();
 		$this->wpdb->queue( 'query', false );
 		$this->assertSame( 0, $repo->prune( 30 ), 'a DB error stops the loop' );
+
+		$this->reset();
+		$this->assertSame( 0, $repo->prune( 30 ) );
+		$this->assertCount( 2, $this->wpdb->queries_matching( 'DELETE' ), 'one probe per loop' );
+	}
+
+	public function test_pending_selects_due_outgoing_rows_oldest_first_and_normalises_them(): void {
+		$repo = $this->repo();
+		$this->wpdb->queue( 'get_results', [ [ 'id' => '5', 'webhook_id' => '2', 'status' => 'pending', 'payload' => '{}', 'attempt' => '1', 'truncated' => '0' ], 'junk' ] );
+		$t0   = time();
+		$rows = $repo->pending( 20 );
+		$this->assertCount( 1, $rows );
+		$this->assertSame( 5, $rows[0]['id'] );
+		$this->assertSame( 2, $rows[0]['webhook_id'] );
+		$sql = $this->wpdb->calls_to( 'get_results' )[0]['sql'];
+		$this->assertSame( 1, preg_match( "/^SELECT \\* FROM bfw_bfag_webhook_deliveries WHERE status = 'pending' AND direction = 'out' AND next_retry_at IS NOT NULL AND next_retry_at <= '([^']+)' ORDER BY id ASC LIMIT 20$/", $sql, $m ), $sql );
+		$this->assertEqualsWithDelta( $t0, strtotime( $m[1] . ' UTC' ), 5, 'due now or earlier' );
+
+		$repo->pending( 9999 );
+		$this->assertStringEndsWith( 'LIMIT 500', $this->wpdb->calls_to( 'get_results' )[1]['sql'], 'clamped' );
+		$this->assertSame( [], $repo->pending( 0 ), 'nothing queued' );
+	}
+
+	public function test_last_statuses_is_one_grouped_query_keyed_by_webhook_id(): void {
+		$repo = $this->repo();
+		$this->wpdb->queue( 'get_results', [ [ 'webhook_id' => '3', 'status' => 'failed' ], [ 'webhook_id' => '1', 'status' => 'success' ], [ 'webhook_id' => '9', 'status' => '' ], 'junk' ] );
+		$this->assertSame( [ 3 => 'failed', 1 => 'success' ], $repo->last_statuses( [ 1, '3', 3, 0, -2, 9 ] ), 'deduped, non-positive ids dropped, an empty status skipped' );
+		$this->assertSame(
+			"SELECT webhook_id, status FROM bfw_bfag_webhook_deliveries WHERE id IN ( SELECT MAX(id) FROM bfw_bfag_webhook_deliveries WHERE webhook_id IN (1,3,9) AND direction = 'out' GROUP BY webhook_id )",
+			$this->wpdb->calls_to( 'get_results' )[0]['sql']
+		);
+		$this->assertSame( [], $repo->last_statuses( [] ) );
+		$this->assertSame( [], $repo->last_statuses( [ 0 ] ) );
+		$this->assertCount( 1, $this->wpdb->calls_to( 'get_results' ), 'no query for no ids' );
 	}
 
 	public function test_stats_since_fills_every_status_and_ignores_unknown_ones(): void {

@@ -38,6 +38,19 @@ final class HitCounter {
 	public const ROTATE_THRESHOLD     = 10000000;
 
 	/**
+	 * Object-cache group of the per-window counters used with a persistent
+	 * object cache.
+	 */
+	public const COUNTER_GROUP = 'bfag';
+
+	/**
+	 * Characters of the real route kept in the `route` column (the admin
+	 * reads it; the index is on `route_hash`). 191 is the longest a utf8mb4
+	 * column can be indexed in full, should an index ever be wanted.
+	 */
+	public const ROUTE_COLUMN_LENGTH = 191;
+
+	/**
 	 * Record a hit and report whether the subject is now over the limit.
 	 *
 	 * `$route` is the bucket key: whatever is counted together. The
@@ -62,7 +75,7 @@ final class HitCounter {
 			$wpdb->prefix . 'bfag_rate_limit_hits',
 			[
 				'subject'    => substr( $subject, 0, 200 ),
-				'route'      => substr( $display_route ?? $route, 0, 500 ),
+				'route'      => substr( $display_route ?? $route, 0, self::ROUTE_COLUMN_LENGTH ),
 				'route_hash' => self::route_hash( $route ),
 				'hit_at'     => gmdate( 'Y-m-d H:i:s', time() ),
 			],
@@ -73,7 +86,45 @@ final class HitCounter {
 			Logger::log( 'rate-limit hit insert failed', [ 'error' => $wpdb->last_error ] );
 			return false;
 		}
+		if ( true === wp_using_ext_object_cache() ) {
+			// The row is still written — the admin's hit log and the Pro
+			// add-on's cross-route DDoS count read the table — but the count
+			// is an atomic increment in the object cache, not a COUNT(*).
+			return $this->count_in_window( $subject, $route, $window ) > $max;
+		}
 		return $this->count( $subject, $route, $window ) > $max;
+	}
+
+	/**
+	 * Count this hit in the object cache and return the total so far in the
+	 * current fixed window (`floor( time / window )`). Fixed windows, not
+	 * sliding: a subject may get up to 2 × max across one boundary, which
+	 * is the usual trade for a counter that costs no query. The counter
+	 * lives for two windows so the previous one can still be read. A failed
+	 * increment (a key evicted between add and incr) counts as zero: fail
+	 * open, as a failed INSERT does.
+	 *
+	 * @param string $subject Who is being counted.
+	 * @param string $route   Bucket key, as passed to consume().
+	 * @param int    $window  Window length in seconds.
+	 */
+	public function count_in_window( string $subject, string $route, int $window ): int {
+		$key = self::window_key( $subject, $route, $window );
+		wp_cache_add( $key, 0, self::COUNTER_GROUP, max( 1, $window ) * 2 );
+		$count = wp_cache_incr( $key, 1, self::COUNTER_GROUP );
+		return false === $count ? 0 : (int) $count;
+	}
+
+	/**
+	 * The object-cache key of a subject's counter in the current window:
+	 * `bfag:rl:<md5(subject|route)>:<floor(time/window)>`.
+	 *
+	 * @param string $subject Who is being counted.
+	 * @param string $route   Bucket key.
+	 * @param int    $window  Window length in seconds.
+	 */
+	public static function window_key( string $subject, string $route, int $window ): string {
+		return 'bfag:rl:' . md5( $subject . '|' . $route ) . ':' . intdiv( time(), max( 1, $window ) );
 	}
 
 	/**
@@ -126,16 +177,30 @@ final class HitCounter {
 	}
 
 	/**
+	 * The storage engine's row estimate (`SHOW TABLE STATUS`), free where
+	 * COUNT(*) walks the table. Off by a margin on InnoDB, which is fine for
+	 * a ten-million-row cap; the dashboard figure is the exact count.
+	 */
+	public function approximate_rows(): int {
+		global $wpdb;
+
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- plugin table; the engine's estimate, read every five minutes.
+		$status = $wpdb->get_row( $wpdb->prepare( 'SHOW TABLE STATUS LIKE %s', $wpdb->esc_like( $wpdb->prefix . 'bfag_rate_limit_hits' ) ), ARRAY_A );
+		return is_array( $status ) && isset( $status['Rows'] ) && is_numeric( $status['Rows'] ) ? (int) $status['Rows'] : 0;
+	}
+
+	/**
 	 * Safety cap: when the pruner has fallen so far behind that the table
 	 * holds more than $threshold rows, empty it rather than let every
 	 * request's COUNT degrade further. Logged, because it forgives every
-	 * subject's current window.
+	 * subject's current window. Reads the engine's estimate, not COUNT(*):
+	 * this runs every five minutes on a table the KPI cron already counts.
 	 *
 	 * @param int $threshold Row count above which the table is truncated.
 	 * @return bool True when the table was truncated.
 	 */
 	public function rotate_if_huge( int $threshold = self::ROTATE_THRESHOLD ): bool {
-		$rows = $this->total_rows();
+		$rows = $this->approximate_rows();
 		if ( $rows <= $threshold ) {
 			return false;
 		}

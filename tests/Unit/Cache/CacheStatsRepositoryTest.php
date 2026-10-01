@@ -71,6 +71,68 @@ final class CacheStatsRepositoryTest extends TestCase {
 		$this->assertSame( 0, ( (int) strtotime( $m[1] . ' UTC' ) ) % 300 );
 	}
 
+	// ------------------------------------------------------------------
+	// P3: counters in a persistent object cache, flushed by the KPI cron
+	// ------------------------------------------------------------------
+
+	public function test_with_a_persistent_object_cache_hits_and_misses_are_counted_in_the_cache_not_the_table(): void {
+		wp_using_ext_object_cache( true );
+		$this->stats->record_hit();
+		$this->stats->record_hit();
+		$this->stats->record_miss();
+
+		$this->assertSame( [], $this->wpdb->calls, 'no query' );
+		$bucket = time() - ( time() % 300 );
+		$this->assertSame( 2, wp_cache_get( CacheStatsRepository::counter_key( $bucket, 'hits' ), 'bfag' ) );
+		$this->assertSame( 1, wp_cache_get( CacheStatsRepository::counter_key( $bucket, 'misses' ), 'bfag' ) );
+		$this->assertSame( 'stats:' . $bucket . ':hits', CacheStatsRepository::counter_key( $bucket, 'hits' ) );
+		$this->assertSame( bfag_test_now() + 900, $GLOBALS['bfag_test_cache_expires']['bfag'][ 'stats:' . $bucket . ':hits' ], 'a counter waits three buckets for the cron' );
+	}
+
+	public function test_flush_counters_upserts_the_current_and_previous_bucket_and_decrements_what_it_wrote(): void {
+		wp_using_ext_object_cache( true );
+		$bucket   = time() - ( time() % 300 );
+		$previous = $bucket - 300;
+		$older    = $bucket - 600;
+		wp_cache_set( CacheStatsRepository::counter_key( $previous, 'hits' ), 7, 'bfag' );
+		wp_cache_set( CacheStatsRepository::counter_key( $previous, 'misses' ), 2, 'bfag' );
+		wp_cache_set( CacheStatsRepository::counter_key( $bucket, 'hits' ), 3, 'bfag' );
+		wp_cache_set( CacheStatsRepository::counter_key( $older, 'hits' ), 50, 'bfag' );
+		$this->wpdb->always( 'query', 1 );
+
+		$this->assertSame( 2, $this->stats->flush_counters() );
+
+		$queries = array_column( $this->wpdb->calls_to( 'query' ), 'sql' );
+		$this->assertSame(
+			[
+				"INSERT INTO bfw_bfag_cache_stats (bucket_start, hits, misses) VALUES ('" . gmdate( 'Y-m-d H:i:s', $previous ) . "', 7, 2) ON DUPLICATE KEY UPDATE hits = hits + 7, misses = misses + 2",
+				"INSERT INTO bfw_bfag_cache_stats (bucket_start, hits, misses) VALUES ('" . gmdate( 'Y-m-d H:i:s', $bucket ) . "', 3, 0) ON DUPLICATE KEY UPDATE hits = hits + 3, misses = misses + 0",
+			],
+			$queries
+		);
+		$this->assertSame( 0, wp_cache_get( CacheStatsRepository::counter_key( $previous, 'hits' ), 'bfag' ), 'decremented by what was written' );
+		$this->assertSame( 0, wp_cache_get( CacheStatsRepository::counter_key( $bucket, 'hits' ), 'bfag' ) );
+		$this->assertSame( 50, wp_cache_get( CacheStatsRepository::counter_key( $older, 'hits' ), 'bfag' ), 'only the current and previous bucket are flushed' );
+
+		$this->wpdb->calls = [];
+		$this->assertSame( 0, $this->stats->flush_counters(), 'nothing left to write' );
+		$this->assertSame( [], $this->wpdb->calls );
+	}
+
+	public function test_flush_counters_keeps_the_counter_when_the_upsert_fails_and_is_a_no_op_without_a_persistent_cache(): void {
+		wp_using_ext_object_cache( true );
+		$bucket = time() - ( time() % 300 );
+		wp_cache_set( CacheStatsRepository::counter_key( $bucket, 'misses' ), 4, 'bfag' );
+		$this->wpdb->queue( 'query', false );
+		$this->assertSame( 0, $this->stats->flush_counters() );
+		$this->assertSame( 4, wp_cache_get( CacheStatsRepository::counter_key( $bucket, 'misses' ), 'bfag' ), 'kept for the next run' );
+
+		$GLOBALS['bfag_test_ext_cache'] = null;
+		$this->wpdb->calls              = [];
+		$this->assertSame( 0, $this->stats->flush_counters() );
+		$this->assertSame( [], $this->wpdb->calls, 'without a persistent cache there are no counters to flush' );
+	}
+
 	public function test_totals_since_sums_and_casts(): void {
 		$this->wpdb->queue(
 			'get_row',

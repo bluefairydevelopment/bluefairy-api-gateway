@@ -62,7 +62,15 @@ final class WebhookDispatcher {
 	];
 
 	/**
-	 * Lazily built reader of a row's custom headers.
+	 * Seconds to wait for the receiver. Deliveries are sent after the
+	 * response, up to EventBus::FLUSH_LIMIT of them in a row, so a slow
+	 * receiver must not hold a worker for minutes.
+	 */
+	public const TIMEOUT = 5;
+
+	/**
+	 * Lazily built reader of a row's custom headers (and of the webhook a
+	 * queued delivery belongs to).
 	 *
 	 * @var WebhookRepository|null
 	 */
@@ -194,6 +202,52 @@ final class WebhookDispatcher {
 	}
 
 	/**
+	 * Send a delivery the EventBus queued past its flush limit: the row's
+	 * stored payload, as the attempt the row records (1). The webhook is
+	 * looked up by the row; a missing or disabled one, or a truncated
+	 * payload, marks the row `failed` without sending. `next_retry_at` is
+	 * cleared first so the row is handed out once.
+	 *
+	 * @param array<string, mixed> $row A delivery row from DeliveryRepository::pending().
+	 * @return array{delivery_id:int, success:bool, http_status:int|null}
+	 */
+	public function dispatch_pending( array $row ): array {
+		$delivery_id = (int) ( $row['id'] ?? 0 );
+		$failure     = [
+			'delivery_id' => $delivery_id,
+			'success'     => false,
+			'http_status' => null,
+		];
+		$webhook     = $this->repository()->find( (int) ( $row['webhook_id'] ?? 0 ) );
+		if ( null === $webhook || 1 !== (int) ( $webhook['enabled'] ?? 0 ) ) {
+			Logger::log( 'pending delivery dropped: webhook missing or disabled', [ 'delivery_id' => $delivery_id ] );
+			$this->deliveries->update(
+				$delivery_id,
+				[
+					'status'        => 'failed',
+					'next_retry_at' => null,
+				]
+			);
+			return $failure;
+		}
+		if ( 1 === (int) ( $row['truncated'] ?? 0 ) ) {
+			Logger::log( 'pending delivery dropped: payload was truncated', [ 'delivery_id' => $delivery_id ] );
+			$this->deliveries->update(
+				$delivery_id,
+				[
+					'status'        => 'failed',
+					'next_retry_at' => null,
+				]
+			);
+			return $failure;
+		}
+		$this->deliveries->update( $delivery_id, [ 'next_retry_at' => null ] );
+		$body    = (string) ( $row['payload'] ?? '' );
+		$decoded = json_decode( $body, true );
+		return $this->send( $webhook, (string) ( $row['event'] ?? '' ), is_array( $decoded ) ? $decoded : [], $body, max( 1, (int) ( $row['attempt'] ?? 1 ) ), $delivery_id );
+	}
+
+	/**
 	 * Keep only safe custom headers. Names must match `[A-Za-z0-9-]+`; the
 	 * hop-by-hop, routing and credential headers are dropped regardless of
 	 * case, as is any value carrying CR or LF. Every rejection is logged.
@@ -269,7 +323,7 @@ final class WebhookDispatcher {
 			$auth = $this->filter_headers( is_array( $auth ) ? $auth : [], true );
 
 			$args = [
-				'timeout'            => 10,
+				'timeout'            => self::TIMEOUT,
 				'redirection'        => 0,
 				'reject_unsafe_urls' => true,
 				'blocking'           => true,

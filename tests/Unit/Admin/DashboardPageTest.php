@@ -25,16 +25,17 @@ final class DashboardPageTest extends TestCase {
 		$settings   = new Settings();
 		$deliveries = new DeliveryRepository( $settings );
 		$hits       = new HitCounter();
-		return new DashboardPage( new CacheRuleRepository(), new RateLimitRuleRepository(), new WebhookRepository(), $deliveries, $hits, new KpiCron( new CacheStatsRepository(), $deliveries, $hits ) );
+		return new DashboardPage( new CacheRuleRepository(), new RateLimitRuleRepository(), new WebhookRepository(), $deliveries, new KpiCron( new CacheStatsRepository(), $deliveries, $hits ) );
 	}
 
 	/**
-	 * Script render(): webhooks all() → get_results, failed recent() → get_results, four counts → get_var.
+	 * Script render(): webhooks all() → get_results, failed recent() → get_results, three counts → get_var.
+	 * (P10: the hits-table row count comes from the KPI transient, never a live COUNT(*).)
 	 *
 	 * @param list<array<string, mixed>> $failed Failed delivery rows.
-	 * @param list<int>                  $counts cache rules, rate-limit rules, webhooks, hits rows.
+	 * @param list<int>                  $counts cache rules, rate-limit rules, webhooks.
 	 */
-	private function prime( array $failed, array $counts = [ 1, 1, 2, 345 ] ): void {
+	private function prime( array $failed, array $counts = [ 1, 1, 2 ] ): void {
 		$this->wpdb->queue(
 			'get_results',
 			[
@@ -90,6 +91,8 @@ final class DashboardPageTest extends TestCase {
 		$this->assertStringContainsString( 'Not computed yet', $html );
 		$this->assertStringContainsString( 'data-bfag-refresh', $html );
 		$this->assertStringContainsString( 'No failed deliveries.', $html );
+		$this->assertStringContainsString( '<th>Rows in the rate-limit hits table</th><td>—</td>', $html, 'cold: a dash, not a live count' );
+		$this->assertSame( [], $this->wpdb->queries_matching( 'bfag_rate_limit_hits' ) );
 		$this->assertStringContainsString( 'https://example.com/wp-json/bfag/v1/status', $html );
 		$this->assertStringContainsString( 'data-bfag-copy="https://example.com/wp-json/bfag/v1/status"', $html );
 	}
@@ -111,7 +114,7 @@ final class DashboardPageTest extends TestCase {
 			],
 			360
 		);
-		$this->prime( [ $this->delivery( 10 ), $this->delivery( 11, 1 ) ], [ 1, 2, 3, 345 ] );
+		$this->prime( [ $this->delivery( 10 ), $this->delivery( 11, 1 ) ], [ 1, 2, 3 ] );
 
 		$html = bfag_test_render( [ $this->page(), 'render' ] );
 
@@ -127,11 +130,13 @@ final class DashboardPageTest extends TestCase {
 		$this->assertStringNotContainsString( 'data-bfag-retry="11"', $html );
 		$this->assertStringContainsString( 'Truncated — cannot retry', $html );
 		$this->assertStringContainsString( 'view=deliveries', $html );
-		$this->assertStringContainsString( "status = 'failed' ORDER BY id DESC LIMIT 10", $this->wpdb->queries_matching( 'bfag_webhook_deliveries' )[0] );
+		$this->assertStringContainsString( "( 'failed' = '' OR status = 'failed' ) AND ( '' = '' OR direction = '' ) ORDER BY created_at DESC, id DESC LIMIT 10", $this->wpdb->queries_matching( 'bfag_webhook_deliveries' )[0] );
 
 		$this->assertStringContainsString( '<th>Cache rules</th><td>1</td>', $html );
 		$this->assertStringContainsString( '<th>Rate-limit rules</th><td>2</td>', $html );
 		$this->assertStringContainsString( '<th>Webhooks</th><td>3</td>', $html );
-		$this->assertStringContainsString( '<th>Rows in the rate-limit hits table</th><td>345</td>', $html );
+		$this->assertStringContainsString( '<th>Rows in the rate-limit hits table</th><td>345</td>', $html, 'from the KPI transient' );
+		$this->assertSame( [], $this->wpdb->queries_matching( 'bfag_rate_limit_hits' ), 'P10: no live COUNT(*) of the hits table on a render' );
+		$this->assertCount( 3, $this->wpdb->calls_to( 'get_var' ), 'exactly the three rule/webhook counts' );
 	}
 }

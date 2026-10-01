@@ -88,6 +88,8 @@ final class KpiCron {
 			'blocked_today'        => (int) apply_filters( 'bfag_kpi_blocked_today', 0 ),
 			'hits_table_rows'      => $this->hits->total_rows(),
 			'computed_at'          => time(),
+			// The per-status breakdown, so /bfag/v1/status can serve it without its own aggregate.
+			'webhook_deliveries'   => $delivery,
 		];
 
 		/**
@@ -114,6 +116,9 @@ final class KpiCron {
 	 * @return array<string, mixed>
 	 */
 	public function run(): array {
+		// With a persistent object cache the hit/miss counters are batched
+		// there; move them into the table before reading it.
+		$this->stats->flush_counters();
 		$kpis = $this->compute();
 		set_transient( self::TRANSIENT, $kpis, self::TTL );
 		$this->stats->prune( self::STATS_KEEP_DAYS );

@@ -72,17 +72,21 @@ final class WebhookPageTest extends TestCase {
 	}
 
 	/**
-	 * Script the list render: all() → get_results, count() → get_var, last_status() → get_var per row, find() → get_row when editing.
+	 * Script the list render: all() → get_results, count() → get_var, last_statuses() → ONE get_results (P8), find() → get_row when editing.
 	 *
 	 * @param list<array<string, mixed>> $rows     Webhook rows.
-	 * @param list<string|null>          $statuses One last status per row.
+	 * @param list<string|null>          $statuses One last status per row (null = no delivery yet).
 	 */
 	private function prime_list( array $rows, array $statuses = [], ?array $editing = null ): void {
 		$this->wpdb->queue( 'get_results', $rows );
 		$this->wpdb->queue( 'get_var', count( $rows ) );
-		foreach ( $statuses as $status ) {
-			$this->wpdb->queue( 'get_var', $status );
+		$last = [];
+		foreach ( $statuses as $i => $status ) {
+			if ( null !== $status ) {
+				$last[] = [ 'webhook_id' => (string) $rows[ $i ]['id'], 'status' => $status ];
+			}
 		}
+		$this->wpdb->queue( 'get_results', $last );
 		if ( null !== $editing ) {
 			$this->wpdb->queue( 'get_row', $editing );
 		}
@@ -124,6 +128,30 @@ final class WebhookPageTest extends TestCase {
 		$this->assertStringNotContainsString( 'name="bfag[max_retries]"', $html, 'free: no retries field' );
 		$this->assertStringContainsString( '<option value="post.published"', $html );
 		$this->assertStringContainsString( '<optgroup label="', $html );
+	}
+
+	/**
+	 * P8: rendering five webhooks issues one deliveries query for their
+	 * last statuses, not one per row.
+	 */
+	public function test_rendering_five_webhooks_issues_one_deliveries_query_for_the_last_statuses(): void {
+		add_filter( 'bfag_webhook_limit', static fn(): int => 10 );
+		$rows = [];
+		for ( $id = 1; $id <= 5; $id++ ) {
+			$rows[] = $this->webhook( $id );
+		}
+		$this->prime_list( $rows, [ 'failed', null, 'success', 'pending', 'failed' ] );
+
+		$html = bfag_test_render( [ $this->page(), 'render' ] );
+
+		$deliveries = $this->wpdb->queries_matching( 'bfag_webhook_deliveries' );
+		$this->assertCount( 1, $deliveries );
+		$this->assertSame( "SELECT webhook_id, status FROM bfw_bfag_webhook_deliveries WHERE id IN ( SELECT MAX(id) FROM bfw_bfag_webhook_deliveries WHERE webhook_id IN (1,2,3,4,5) AND direction = 'out' GROUP BY webhook_id )", $deliveries[0] );
+		$this->assertSame( 2, substr_count( $html, 'bfag-badge--failed">failed</a>' ) );
+		$this->assertSame( 1, substr_count( $html, 'bfag-badge--success">success</a>' ) );
+		$this->assertSame( 1, substr_count( $html, 'bfag-badge--pending">pending</a>' ) );
+		$this->assertSame( 0, substr_count( $html, 'bfag-badge--">' ), 'the row with no delivery yet shows no status badge, not an empty one' );
+		$this->assertSame( 4, preg_match_all( '/class="bfag-badge bfag-badge--(failed|success|pending)">/', $html ), 'four status badges for five rows' );
 	}
 
 	public function test_at_the_limit_the_form_gives_way_to_the_upsell_line(): void {
@@ -187,7 +215,7 @@ final class WebhookPageTest extends TestCase {
 		$this->assertStringNotContainsString( 'data-bfag-retry="12"', $html, 'inbound rows are not resent' );
 		$this->assertStringContainsString( 'CRM &lt;sync&gt;', $html );
 		$this->assertStringNotContainsString( self::SECRET, $html );
-		$this->assertStringContainsString( 'WHERE 1 = 1 ORDER BY id DESC LIMIT 50', $this->wpdb->queries_matching( 'bfag_webhook_deliveries' )[0] );
+		$this->assertStringContainsString( "( 0 = 0 OR webhook_id = 0 ) AND ( '' = '' OR status = '' ) AND ( '' = '' OR direction = '' ) ORDER BY created_at DESC, id DESC LIMIT 50", $this->wpdb->queries_matching( 'bfag_webhook_deliveries' )[0] );
 	}
 
 	public function test_the_delivery_log_can_be_filtered_to_one_webhook(): void {

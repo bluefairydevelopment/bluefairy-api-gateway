@@ -146,7 +146,8 @@ final class WebhookDispatcherTest extends TestCase {
 		$args = $call['args'];
 		$this->assertSame( 'https://hooks.example.com/in', $call['url'] );
 		$this->assertSame( 'POST', $args['method'] );
-		$this->assertSame( 10, $args['timeout'] );
+		$this->assertSame( 5, $args['timeout'], 'P6: up to twenty are sent in a row on shutdown' );
+		$this->assertSame( 5, WebhookDispatcher::TIMEOUT );
 		$this->assertSame( 0, $args['redirection'] );
 		$this->assertTrue( $args['reject_unsafe_urls'] );
 		$this->assertSame( wp_json_encode( $payload ), $args['body'] );
@@ -385,6 +386,50 @@ final class WebhookDispatcherTest extends TestCase {
 		$this->assertSame( 'success', $updates[1]['data']['status'] );
 		$this->assertCount( 0, $this->wpdb->calls_to( 'insert' ) );
 		$this->assertSame( [ 'delivery_id' => 11, 'success' => true, 'http_status' => 200 ], $result );
+	}
+
+	/**
+	 * P6: a queued row is sent as its own attempt (1), with its stored
+	 * bytes, after its due time is cleared; the webhook comes from the row.
+	 */
+	public function test_dispatch_pending_sends_the_stored_bytes_as_attempt_one_after_clearing_the_due_time(): void {
+		$stored = '{"object":{"id":9}}';
+		$this->wpdb->queue( 'get_row', $this->webhook( [ 'enabled' => '1' ] ) ); // WebhookRepository::find().
+		bfag_test_queue_http( 204 );
+
+		$result = $this->dispatcher()->dispatch_pending( [ 'id' => 31, 'webhook_id' => 7, 'event' => 'post.updated', 'payload' => $stored, 'truncated' => 0, 'status' => 'pending', 'attempt' => 1, 'next_retry_at' => '2026-01-01 00:00:00' ] );
+
+		$this->assertStringContainsString( 'WHERE id = 7', $this->wpdb->calls_to( 'get_row' )[0]['sql'], 'the webhook of the row' );
+		$args = $this->sent_args();
+		$this->assertSame( $stored, $args['body'] );
+		$this->assertSame( '31', $args['headers']['X-BF-Delivery'] );
+		$this->assertSame( 'post.updated', $args['headers']['X-BF-Event'] );
+		$updates = $this->wpdb->calls_to( 'update' );
+		$this->assertSame( [ 'next_retry_at' => null ], $updates[0]['data'], 'handed out once' );
+		$this->assertSame( 1, $updates[1]['data']['attempt'], 'attempt 1, not a retry' );
+		$this->assertSame( 'success', $updates[1]['data']['status'] );
+		$this->assertCount( 0, $this->wpdb->calls_to( 'insert' ) );
+		$this->assertSame( [ 'delivery_id' => 31, 'success' => true, 'http_status' => 204 ], $result );
+	}
+
+	public function test_dispatch_pending_fails_the_row_without_sending_when_the_webhook_is_gone_disabled_or_the_payload_truncated(): void {
+		$dispatcher = $this->dispatcher();
+		$this->enable_logging(); // After dispatcher(): that helper resets the settings option.
+		$row        = [ 'id' => 32, 'webhook_id' => 7, 'event' => 'post.updated', 'payload' => '{}', 'truncated' => 0, 'status' => 'pending', 'attempt' => 1 ];
+
+		$this->assertSame( [ 'delivery_id' => 32, 'success' => false, 'http_status' => null ], $dispatcher->dispatch_pending( $row ), 'missing webhook' );
+		$this->wpdb->queue( 'get_row', $this->webhook( [ 'enabled' => '0' ] ) );
+		$this->assertFalse( $dispatcher->dispatch_pending( $row )['success'], 'disabled webhook' );
+		$this->wpdb->queue( 'get_row', $this->webhook( [ 'enabled' => '1' ] ) );
+		$this->assertFalse( $dispatcher->dispatch_pending( [ 'truncated' => 1 ] + $row )['success'], 'truncated payload' );
+
+		$this->assertSame( [], $GLOBALS['bfag_test_http_calls'], 'nothing sent' );
+		foreach ( $this->wpdb->calls_to( 'update' ) as $update ) {
+			$this->assertSame( [ 'status' => 'failed', 'next_retry_at' => null ], $update['data'] );
+			$this->assertSame( [ 'id' => 32 ], $update['where'] );
+		}
+		$this->assertCount( 3, $this->wpdb->calls_to( 'update' ) );
+		$this->assertCount( 3, Logger::lines() );
 	}
 
 	public function test_redeliver_refuses_a_missing_or_truncated_delivery(): void {

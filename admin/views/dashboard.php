@@ -5,7 +5,7 @@
  * @var array<string, mixed>|null  $kpis    KpiCron::current(), null when cold.
  * @var list<array<string, mixed>> $failed  The most recent failed deliveries.
  * @var array<int, string>         $labels  Webhook id => label.
- * @var array<string, int>         $counts  cache_rules, rate_limit_rules, webhooks, hits_table_rows.
+ * @var array<string, int|null>    $counts  cache_rules, rate_limit_rules, webhooks, hits_table_rows (null until the KPI cron has run).
  * @var string                     $log_url The delivery log URL.
  *
  * @package BlueFairy\ApiGateway
@@ -108,7 +108,7 @@ $bfag_int  = static function ( mixed $value ): string {
 		<tr><th><?php esc_html_e( 'Cache rules', 'bluefairy-api-gateway' ); ?></th><td><?php echo esc_html( number_format_i18n( $counts['cache_rules'] ) ); ?></td></tr>
 		<tr><th><?php esc_html_e( 'Rate-limit rules', 'bluefairy-api-gateway' ); ?></th><td><?php echo esc_html( number_format_i18n( $counts['rate_limit_rules'] ) ); ?></td></tr>
 		<tr><th><?php esc_html_e( 'Webhooks', 'bluefairy-api-gateway' ); ?></th><td><?php echo esc_html( number_format_i18n( $counts['webhooks'] ) ); ?></td></tr>
-		<tr><th><?php esc_html_e( 'Rows in the rate-limit hits table', 'bluefairy-api-gateway' ); ?></th><td><?php echo esc_html( number_format_i18n( $counts['hits_table_rows'] ) ); ?></td></tr>
+		<tr><th><?php esc_html_e( 'Rows in the rate-limit hits table', 'bluefairy-api-gateway' ); ?></th><td><?php echo esc_html( null === $counts['hits_table_rows'] ? '—' : number_format_i18n( $counts['hits_table_rows'] ) ); ?></td></tr>
 	</tbody>
 </table>
 

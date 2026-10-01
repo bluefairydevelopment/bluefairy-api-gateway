@@ -59,7 +59,7 @@ final class KpiCronTest extends TestCase {
 		$kpis = $this->cron()->compute();
 
 		$this->assertSame(
-			[ 'cache_hit_rate', 'cache_hits', 'cache_misses', 'webhook_success_rate', 'webhook_failed', 'webhook_total', 'blocked_today', 'hits_table_rows', 'computed_at' ],
+			[ 'cache_hit_rate', 'cache_hits', 'cache_misses', 'webhook_success_rate', 'webhook_failed', 'webhook_total', 'blocked_today', 'hits_table_rows', 'computed_at', 'webhook_deliveries' ],
 			array_keys( $kpis )
 		);
 		$this->assertSame( 0.75, $kpis['cache_hit_rate'] );
@@ -71,6 +71,7 @@ final class KpiCronTest extends TestCase {
 		$this->assertSame( 0, $kpis['blocked_today'] );
 		$this->assertSame( 4321, $kpis['hits_table_rows'] );
 		$this->assertIsInt( $kpis['computed_at'] );
+		$this->assertSame( [ 'success' => 8, 'failed' => 2, 'pending' => 1, 'retrying' => 0 ], $kpis['webhook_deliveries'], 'P11: the breakdown /status serves' );
 		$this->assertSame( 1, preg_match( "/bucket_start >= '([^']+)'/", $this->wpdb->queries_matching( 'bfag_cache_stats' )[0] ?? '', $m ) );
 		$this->assertEqualsWithDelta( time() - DAY_IN_SECONDS, strtotime( $m[1] . ' UTC' ), 5, 'the window is the last 24 hours' );
 	}
@@ -101,6 +102,31 @@ final class KpiCronTest extends TestCase {
 		$kpis = $this->cron()->compute();
 		$this->assertSame( 7, $kpis['blocked_today'] );
 		$this->assertSame( 3, $kpis['api_keys'] );
+	}
+
+	/**
+	 * P3: with a persistent object cache run() moves the counters into the
+	 * table before it aggregates, so the KPIs include this bucket.
+	 */
+	public function test_run_flushes_the_object_cache_counters_before_computing_and_compute_alone_does_not(): void {
+		wp_using_ext_object_cache( true );
+		$bucket = time() - ( time() % 300 );
+		wp_cache_set( CacheStatsRepository::counter_key( $bucket, 'hits' ), 5, 'bfag' );
+		$this->wpdb->always( 'query', 1 );
+
+		$this->prime( 1, 1, [], 0 );
+		$this->cron()->compute();
+		$this->assertSame( [], $this->wpdb->queries_matching( 'ON DUPLICATE KEY' ), 'compute() reads only' );
+
+		$this->wpdb->calls = [];
+		$this->prime( 1, 1, [], 0 );
+		$this->cron()->run();
+		$methods = array_column( $this->wpdb->calls, 'method' );
+		$flush   = array_search( 'query', $methods, true );
+		$read    = array_search( 'get_row', $methods, true );
+		$this->assertNotFalse( $flush );
+		$this->assertStringContainsString( 'ON DUPLICATE KEY UPDATE hits = hits + 5', (string) $this->wpdb->calls[ $flush ]['sql'] );
+		$this->assertLessThan( $read, $flush, 'flushed before the aggregate read' );
 	}
 
 	public function test_run_stores_the_transient_for_360_seconds_and_current_reads_it(): void {

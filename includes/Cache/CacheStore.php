@@ -13,6 +13,8 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
+use BlueFairy\ApiGateway\Logger;
+
 /**
  * Stores serialised REST responses in the WP object cache (group
  * `bfag_responses`) when a persistent object cache is present, otherwise in
@@ -43,6 +45,32 @@ final class CacheStore {
 	public const TRANSIENT_PREFIX = 'bfag_resp_';
 
 	/**
+	 * Longest a transient entry lives, whatever the rule's TTL. A purge only
+	 * orphans transients — their key is an md5, so the generation they embed
+	 * cannot be read back and they cannot be found to delete — and core
+	 * sweeps expired transients once a day. Capping the TTL bounds how long
+	 * an orphan occupies two rows of the options table.
+	 */
+	public const MAX_TRANSIENT_TTL = 3600;
+
+	/**
+	 * Largest serialised entry the transient backend will store. An
+	 * oversized response is served and labelled MISS every time; it is not
+	 * worth a MEDIUMTEXT row in the options table.
+	 */
+	public const MAX_TRANSIENT_BYTES = 65536;
+
+	/**
+	 * Expired transient pairs deleted per cleanup slice.
+	 */
+	public const PRUNE_BATCH = 5000;
+
+	/**
+	 * Most slices one cleanup run issues.
+	 */
+	public const PRUNE_MAX_ITERATIONS = 20;
+
+	/**
 	 * Option holding the global generation.
 	 */
 	public const GENERATION_OPTION = 'bfag_cache_generation';
@@ -67,6 +95,13 @@ final class CacheStore {
 	 * @var array<string, int>|null
 	 */
 	private ?array $tag_generations = null;
+
+	/**
+	 * Whether an oversized entry has been refused and logged this request.
+	 *
+	 * @var bool
+	 */
+	private bool $logged_oversize = false;
 
 	/**
 	 * Longest tag name stored in a generation key.
@@ -98,7 +133,10 @@ final class CacheStore {
 
 	/**
 	 * Store an entry. Only status, headers, data and stored_at are kept;
-	 * stored_at defaults to now.
+	 * stored_at defaults to now. On the transient backend the TTL is capped
+	 * at MAX_TRANSIENT_TTL and an entry over MAX_TRANSIENT_BYTES is not
+	 * stored at all (logged once per request); the object cache takes any
+	 * size for the full TTL.
 	 *
 	 * @param string               $key   Cache key.
 	 * @param array<string, mixed> $entry Entry with status, headers, data and optionally stored_at.
@@ -117,7 +155,69 @@ final class CacheStore {
 			wp_cache_set( $key, $record, self::GROUP, $ttl );
 			return;
 		}
-		set_transient( self::TRANSIENT_PREFIX . $key, $record, $ttl );
+		$bytes = strlen( serialize( $record ) ); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.serialize_serialize -- sizing what set_transient() would write.
+		if ( $bytes > self::MAX_TRANSIENT_BYTES ) {
+			if ( ! $this->logged_oversize ) {
+				$this->logged_oversize = true;
+				Logger::log(
+					'response not cached: larger than the transient limit',
+					[
+						'bytes' => $bytes,
+						'max'   => self::MAX_TRANSIENT_BYTES,
+					]
+				);
+			}
+			return;
+		}
+		set_transient( self::TRANSIENT_PREFIX . $key, $record, min( $ttl, self::MAX_TRANSIENT_TTL ) );
+	}
+
+	/**
+	 * Delete expired response transients from the options table, both rows
+	 * of each pair, PRUNE_BATCH pairs a slice until a slice finds none (or
+	 * PRUNE_MAX_ITERATIONS slices have run). Nothing to do on the object
+	 * cache backend, where entries expire on their own. Returns pairs
+	 * deleted.
+	 */
+	public function prune_expired(): int {
+		if ( $this->use_object_cache() ) {
+			return 0;
+		}
+		global $wpdb;
+
+		$deleted = 0;
+		for ( $i = 0; $i < self::PRUNE_MAX_ITERATIONS; $i++ ) {
+			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- expired transients core will not sweep for up to a day.
+			$timeouts = $wpdb->get_col(
+				$wpdb->prepare(
+					"SELECT option_name FROM {$wpdb->options} WHERE option_name LIKE %s AND option_value < %d LIMIT %d",
+					$wpdb->esc_like( '_transient_timeout_' . self::TRANSIENT_PREFIX ) . '%',
+					time(),
+					self::PRUNE_BATCH
+				)
+			);
+			$timeouts = is_array( $timeouts ) ? array_values( array_filter( $timeouts, 'is_string' ) ) : [];
+			if ( [] === $timeouts ) {
+				break;
+			}
+			$names = [];
+			foreach ( $timeouts as $timeout ) {
+				$names[] = $timeout;
+				$names[] = '_transient_' . substr( $timeout, strlen( '_transient_timeout_' ) );
+			}
+			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- deleting the pairs found above.
+			$wpdb->query(
+				$wpdb->prepare(
+					"DELETE FROM {$wpdb->options} WHERE option_name IN (" . implode( ',', array_fill( 0, count( $names ), '%s' ) ) . ')',
+					$names
+				)
+			);
+			$deleted += count( $timeouts );
+			if ( count( $timeouts ) < self::PRUNE_BATCH ) {
+				break;
+			}
+		}
+		return $deleted;
 	}
 
 	/**
@@ -180,9 +280,17 @@ final class CacheStore {
 	 * One option write however many tags; the memo and the object-cache
 	 * copy are dropped so the next read sees the new generations.
 	 *
-	 * @param string[] $tags Tag names.
+	 * With `$keep` given (the tags enabled rules carry — CachePurger passes
+	 * them), every stored generation not in it is dropped, so the option
+	 * holds at most rules × tags entries instead of one per object ever
+	 * saved. A dropped tag restarts at 1, so the global generation is
+	 * bumped too: a rule that later carries the tag again must never meet
+	 * an entry keyed on the old generation 1.
+	 *
+	 * @param string[]      $tags Tag names.
+	 * @param string[]|null $keep Tags to retain a generation for; null keeps everything.
 	 */
-	public function bump_tags( array $tags ): void {
+	public function bump_tags( array $tags, ?array $keep = null ): void {
 		$generations = $this->tag_generations();
 		$changed     = false;
 		$seen        = [];
@@ -195,12 +303,25 @@ final class CacheStore {
 			$generations[ $tag ] = ( $generations[ $tag ] ?? 1 ) + 1;
 			$changed             = true;
 		}
-		if ( ! $changed ) {
+		$dropped = false;
+		if ( null !== $keep ) {
+			$retain = array_fill_keys( array_map( [ self::class, 'sanitize_tag' ], array_filter( $keep, 'is_string' ) ), true );
+			foreach ( array_keys( $generations ) as $tag ) {
+				if ( ! isset( $retain[ $tag ] ) && ! isset( $seen[ $tag ] ) ) {
+					unset( $generations[ $tag ] );
+					$dropped = true;
+				}
+			}
+		}
+		if ( ! $changed && ! $dropped ) {
 			return;
 		}
 		update_option( self::TAG_GENERATIONS_OPTION, $generations, false );
 		wp_cache_delete( self::TAGS_KEY, self::META_GROUP );
 		$this->tag_generations = null;
+		if ( $dropped ) {
+			$this->flush_all();
+		}
 	}
 
 	/**

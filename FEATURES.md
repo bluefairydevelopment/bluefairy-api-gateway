@@ -24,7 +24,7 @@ recomputes, so opening the dashboard never runs aggregate queries itself.
 |---|---|---|
 | **Cache hit rate (24 h)** | hits ÷ (hits + misses) over the last 24 hours, as a percentage | `N hits · M misses` |
 | **Webhook success (24 h)** | successful ÷ (successful + failed) deliveries over the last 24 hours | `F failed of T` — T counts pending and retrying deliveries too |
-| **Blocked today** | always `0` in the free plugin — the Pro add-on's ban list fills it in | `R hits in the rate-limit log` — the row count of the hits table |
+| **Blocked today** | always `0` in the free plugin — the Pro add-on's ban list fills it in | `R hits in the rate-limit log` — the row count of the hits table, as of the last KPI run |
 
 A card shows `—` when there is nothing to divide: no requests, or no finished
 deliveries. Below the cards, **Refresh** recomputes the figures immediately
@@ -38,7 +38,8 @@ delivery whose stored payload was truncated shows *Truncated — cannot retry*
 instead. *Open the delivery log* goes to the full log on the Webhooks tab.
 
 **At a glance** gives the raw counts: cache rules, rate-limit rules, webhooks,
-rows in the rate-limit hits table.
+rows in the rate-limit hits table (from the last KPI run — a dash until the
+first one — so opening the dashboard never counts that table live).
 
 **Status endpoint** shows the URL of `GET /bfag/v1/status` with a **Copy**
 button. A monitor authenticated with the gateway capability reads the same
@@ -125,9 +126,19 @@ rule matches, cached or not. The admin form does not expose that column.
 ### Where responses are stored
 
 With a persistent object cache (Redis, Memcached — `wp_using_ext_object_cache()`
-is true) responses go to the object-cache group `bfag_responses`. Without one
-they go to transients named `bfag_resp_<key>`, which live in the options
-table. Either way an entry expires by its TTL.
+is true) responses go to the object-cache group `bfag_responses`, any size,
+for the rule's full TTL. Without one they go to transients named
+`bfag_resp_<key>`, which live in the options table — two rows each — and
+three limits apply there: a response over **64 KB** is not stored at all (it
+is served and labelled `MISS` every time; logged once per request when debug
+logging is on), an entry lives at most **one hour** whatever the rule's TTL,
+and `bfag_cron_prune_responses` deletes expired pairs every five minutes,
+5,000 at a time. The cap and the cleanup exist because a purge only
+*orphans* a transient (its key is an md5, so the generation it embeds cannot
+be read back) and core sweeps expired transients only once a day; without
+them every purge left every stored response in the options table until then.
+The Settings → Cache group says as much. Use a persistent object cache on a
+busy site.
 
 ### How purging works
 
@@ -210,7 +221,17 @@ X-BF-RateLimit-Window: <window seconds>
 
 It is a sliding window: a client allowed 300 per 60 s who sends 300 requests in
 the first second is refused for the next 59 seconds, and admitted again one
-request at a time as the oldest rows age out. The budget is **per subject and
+request at a time as the oldest rows age out. The request that crosses the
+limit leaves a marker for the rest of the window (in the object cache when it
+is persistent, else a `bfag_limited_*` transient), and every further request
+from that client under that rule is refused from the marker alone — no row
+written, no count — so a client hammering a 429 costs nothing in the hits
+table. With a persistent object cache the count itself is an atomic
+`wp_cache_incr()` in fixed windows of the rule's length rather than a
+`COUNT(*)`: the hit row is still written (the admin's log and the Pro DDoS
+cross-route count read it), and a client may get up to twice the limit across
+one window boundary, which is the usual trade for a counter that costs no
+query. The budget is **per subject and
 per rule**, not per path: every route a rule matches draws on the same
 allowance, so the `**` seeded rule means "300 per minute in total", and neither
 a crawl of 10,000 distinct URLs nor `/wp/v2/Posts` spelled ten different ways
@@ -252,7 +273,9 @@ longest enabled window (at least 60 s), 10,000 rows at a time, at most 50
 batches per run. If WP-Cron has been asleep long enough for the table to pass
 ten million rows, the table is truncated outright and the event logged — it
 forgives every subject's current window, which is better than every request's
-`COUNT` degrading further. The dashboard shows the current row count.
+`COUNT` degrading further. That check reads the storage engine's row estimate
+(`SHOW TABLE STATUS`), not a `COUNT(*)`; the one exact count is the KPI cron's,
+every five minutes, and that is the figure the dashboard shows.
 
 ---
 
@@ -340,9 +363,19 @@ subscribes to that event, so a site with no webhooks pays nothing on
 `save_post`. During a request the plugin only **collects** payloads, deduped
 per event and object id — a bulk import that saves one post ten times queues
 one delivery. The queue is flushed once, on `shutdown`, after the response to
-the browser has been sent. Delivery is synchronous from there: one
-`wp_remote_post()` per webhook, ten-second timeout, no redirects,
-`reject_unsafe_urls`. A `save_post` triggered by a receiver writing back during
+the browser has been sent. Under PHP-FPM the response is handed to the web
+server first (`fastcgi_finish_request()`; the `bfag_webhook_finish_response`
+filter turns that off for a plugin that prints on `shutdown`). Delivery is
+synchronous from there for at most **twenty** deliveries: one
+`wp_remote_post()` per webhook, five-second timeout, no redirects,
+`reject_unsafe_urls`. Anything beyond twenty is written to the delivery log
+as `pending`, due now, and one WP-Cron single event
+(`bfag_cron_flush_pending`) sends those in batches of twenty, re-arming
+itself while rows remain — so a bulk import of 500 posts with three webhooks
+never ties up the PHP worker that saved them. Under WP-CLI or WP-Cron, where
+there is no response to wait for, the queue is flushed as soon as it passes
+twenty rather than held in memory. A queued row the cron never reaches is
+pruned after a day. A `save_post` triggered by a receiver writing back during
 delivery is ignored rather than queued, so two sites pointing at each other
 cannot loop.
 
@@ -504,13 +537,16 @@ notification email is stored as blank; unknown keys are dropped.
 
 | Hook | Schedule | Work |
 |---|---|---|
-| `bfag_cron_prune_hits` | every five minutes | prune the rate-limit hit log; rotate it past ten million rows |
-| `bfag_cron_prune_deliveries` | daily | prune finished deliveries past the retention setting |
-| `bfag_cron_recompute_kpis` | every five minutes | rebuild the dashboard transient (`bfag_kpis`, six-minute TTL) |
+| `bfag_cron_prune_hits` | every five minutes | prune the rate-limit hit log; rotate it past ten million rows (by the engine's estimate) |
+| `bfag_cron_prune_deliveries` | daily | prune finished deliveries past the retention setting, and `pending`/`retrying` rows older than a day |
+| `bfag_cron_recompute_kpis` | every five minutes | flush the object-cache hit/miss counters (persistent cache only), then rebuild the dashboard transient (`bfag_kpis`, six-minute TTL) |
+| `bfag_cron_prune_responses` | every five minutes | delete expired response transients (no persistent object cache) in slices of 5,000 pairs |
+| `bfag_cron_flush_pending` | single event, on demand | send webhook deliveries queued past the twenty-per-flush limit, twenty at a time |
 
 The five-minute interval is registered by the plugin on `cron_schedules` as
-`bfag_five_minutes`. All three events are scheduled sixty seconds after
-activation and cleared on deactivation. They run on WP-Cron, which is driven
+`bfag_five_minutes`. The four recurring events are scheduled sixty seconds
+after activation and cleared on deactivation, along with any pending flush
+event. They run on WP-Cron, which is driven
 by page views; on a quiet site the hit log is pruned less often than every
 five minutes, which is harmless because counting only ever looks back one
 window. If `DISABLE_WP_CRON` is true the plugin's screen shows a warning until
@@ -545,9 +581,9 @@ sent at the end of the request that caused them.
 
 ## Uninstalling
 
-Deleting the plugin through the Plugins screen removes its five options, every
-`bfag_` transient, its three cron events and the `bfag_manage_gateway`
-capability, on every site of a multisite network. Your rules, webhooks and
+Deleting the plugin through the Plugins screen removes its options, every
+`bfag_` transient, its four recurring cron events and any pending flush event,
+and the `bfag_manage_gateway` capability, on every site of a multisite network. Your rules, webhooks and
 delivery log — the six `bfag_` tables — are dropped **only** when *Delete
 data on uninstall* was ticked beforehand; by default they stay, because a
 delivery log is a record, not a cache. Deactivating removes only the cron

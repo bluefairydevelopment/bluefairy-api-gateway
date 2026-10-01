@@ -62,7 +62,7 @@ final class PruneCronTest extends TestCase {
 		$this->rules_with_windows( [ 60, 3600, 120 ] );
 		$this->wpdb->queue( 'query', 10 );
 		$this->wpdb->queue( 'query', 0 );
-		$this->wpdb->queue( 'get_var', '42' );
+		$this->wpdb->queue( 'get_row', [ 'Rows' => '42' ] );
 		$t0 = time();
 		$this->cron()->run();
 
@@ -73,13 +73,14 @@ final class PruneCronTest extends TestCase {
 		$this->assertGreaterThanOrEqual( $t0 - 3600, $before, 'rows inside the longest window must survive' );
 		$this->assertLessThanOrEqual( time() - 3600, $before );
 
-		$count_calls = $this->wpdb->calls_to( 'get_var' );
-		$this->assertCount( 1, $count_calls );
-		$this->assertSame( 'SELECT COUNT(*) FROM bfw_bfag_rate_limit_hits', $count_calls[0]['sql'] );
+		$this->assertSame( [], $this->wpdb->calls_to( 'get_var' ), 'P10: the cap check never COUNT(*)s — the KPI cron is the one exact count' );
+		$status_calls = $this->wpdb->calls_to( 'get_row' );
+		$this->assertCount( 1, $status_calls );
+		$this->assertStringStartsWith( 'SHOW TABLE STATUS LIKE', $status_calls[0]['sql'] );
 		$this->assertCount( 0, $this->wpdb->queries_matching( 'TRUNCATE' ), '42 rows is not huge' );
 
 		$order = array_column( $this->wpdb->calls, 'method' );
-		$this->assertSame( [ 'query', 'query', 'get_var' ], $order, 'prune first, then the cap check' );
+		$this->assertSame( [ 'query', 'query', 'get_row' ], $order, 'prune first, then the cap check' );
 	}
 
 	public function test_run_uses_the_default_window_without_rules(): void {
@@ -97,7 +98,7 @@ final class PruneCronTest extends TestCase {
 	public function test_run_rotates_the_table_when_it_is_over_the_cap(): void {
 		$this->rules_with_windows( [ 60 ] );
 		$this->wpdb->queue( 'query', 0 );
-		$this->wpdb->queue( 'get_var', (string) ( HitCounter::ROTATE_THRESHOLD + 1 ) );
+		$this->wpdb->queue( 'get_row', [ 'Rows' => (string) ( HitCounter::ROTATE_THRESHOLD + 1 ) ] );
 		$this->cron()->run();
 		$this->assertSame( [ 'TRUNCATE TABLE bfw_bfag_rate_limit_hits' ], $this->wpdb->queries_matching( 'TRUNCATE' ) );
 	}

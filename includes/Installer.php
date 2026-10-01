@@ -70,6 +70,17 @@ final class Installer {
 		'bfag_cron_prune_hits'       => 'bfag_five_minutes',
 		'bfag_cron_prune_deliveries' => 'daily',
 		'bfag_cron_recompute_kpis'   => 'bfag_five_minutes',
+		'bfag_cron_prune_responses'  => 'bfag_five_minutes',
+	];
+
+	/**
+	 * Single (one-off) cron events the plugin schedules on demand. Cleared
+	 * with the recurring ones; uninstall.php holds a copy.
+	 *
+	 * @var list<string>
+	 */
+	public const SINGLE_EVENTS = [
+		'bfag_cron_flush_pending',
 	];
 
 	/**
@@ -143,6 +154,9 @@ final class Installer {
 	public static function deactivate(): void {
 		foreach ( array_keys( self::CRON ) as $hook ) {
 			wp_clear_scheduled_hook( $hook );
+		}
+		foreach ( self::SINGLE_EVENTS as $hook ) {
+			wp_unschedule_hook( $hook );
 		}
 		Capabilities::remove_caps();
 	}
@@ -299,8 +313,10 @@ final class Installer {
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY  (id),
   KEY idx_webhook_status (webhook_id,status),
+  KEY idx_webhook_id (webhook_id),
   KEY idx_next_retry (next_retry_at),
-  KEY idx_prune (status,created_at)
+  KEY idx_prune (status,created_at),
+  KEY idx_created_at (created_at)
 ) {$engine};",
 		];
 	}

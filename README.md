@@ -73,7 +73,7 @@ All settings live in the single option `bfag_settings` and are edited on **Setti
 | Trusted proxies | `trusted_proxies` | `[]` | IPs or CIDRs, one per line; invalid entries discarded | When `REMOTE_ADDR` is one of these, the client IP is taken from the *Client address header* below. Needed behind Cloudflare, a load balancer or a CDN; without it every visitor shares the proxy's bucket, and a notice says so while a forwarded-address header is arriving. |
 | Client address header | `forwarded_header` | `X-Forwarded-For` | `X-Forwarded-For`, `CF-Connecting-IP`, `X-Real-IP` or `True-Client-IP`; anything else saves as the default | The one header read from a trusted proxy (`X-Forwarded-For`: right-most address that is not itself a trusted proxy). Every other header is ignored, so a visitor cannot pick their own address. |
 | Max stored payload (bytes) | `max_payload_bytes` | `65535` | 1024–16777215 | A delivery whose JSON body is longer is still sent in full, but the stored copy is cut here and flagged *truncated*, and cannot be retried. |
-| Delivery log retention (days) | `retention_days` | `30` | 1–365 | Finished (`success`/`failed`) deliveries older than this are deleted by the daily prune. |
+| Delivery log retention (days) | `retention_days` | `30` | 1–365 | Finished (`success`/`failed`) deliveries older than this are deleted by the daily prune; `pending`/`retrying` rows older than a day are deleted regardless. |
 | Debug logging | `debug_logging` | `false` | checkbox | Writes gateway decisions (rejected headers, breached rules, refused saves, prune counts) to the PHP error log, prefixed `[bfag]`. |
 | Hide the WP-Cron notice | `disable_cron_notice` | `false` | checkbox | Suppresses the warning shown on the plugin's screen when `DISABLE_WP_CRON` is true. |
 | Delete data on uninstall | `delete_data_on_uninstall` | `false` | checkbox | When the plugin is deleted, also drop the six tables. Options, transients, cron events and the capability are removed regardless. The Pro add-on's uninstall reads this same switch. |
@@ -92,7 +92,8 @@ Exempt from rate limiting. Returns:
   "kpis": {
     "cache_hit_rate": 0.83, "cache_hits": 412, "cache_misses": 84,
     "webhook_success_rate": 1.0, "webhook_failed": 0, "webhook_total": 12,
-    "blocked_today": 0, "hits_table_rows": 1532, "computed_at": 1790812800
+    "blocked_today": 0, "hits_table_rows": 1532, "computed_at": 1790812800,
+    "webhook_deliveries": { "success": 12, "failed": 0, "pending": 0, "retrying": 0 }
   },
   "counts": {
     "webhooks": 2,
@@ -103,7 +104,7 @@ Exempt from rate limiting. Returns:
 }
 ```
 
-`kpis` is `null` until the five-minute KPI cron has run once (or the dashboard's **Refresh** button has been pressed). `blocked_today` is always `0` in the free plugin.
+`kpis` is `null` until the five-minute KPI cron has run once (or the dashboard's **Refresh** button has been pressed), and so are `counts.cache_24h` and `counts.deliveries_24h`, which are copied from it: a monitor polling this route never runs an aggregate query. `counts.webhooks` is live, cached for a minute. `blocked_today` is always `0` in the free plugin.
 
 ### `POST /wp-json/bfag/v1/cache/purge`
 
@@ -127,11 +128,13 @@ Tag names are lower-cased and reduced to `[a-z0-9_-]`; a purge naming a tag that
 
 | Hook | Schedule | Work |
 |---|---|---|
-| `bfag_cron_prune_hits` | every five minutes (`bfag_five_minutes`, registered by the plugin) | Deletes rate-limit hits older than the longest enabled window, 10,000 rows at a time; truncates the table outright if it has grown past ten million rows. |
-| `bfag_cron_prune_deliveries` | daily | Deletes finished deliveries older than *Delivery log retention*, 5,000 rows at a time. |
-| `bfag_cron_recompute_kpis` | every five minutes | Recomputes the dashboard figures into the `bfag_kpis` transient (six-minute TTL). |
+| `bfag_cron_prune_hits` | every five minutes (`bfag_five_minutes`, registered by the plugin) | Deletes rate-limit hits older than the longest enabled window, 10,000 rows at a time; truncates the table outright if the engine's row estimate has passed ten million. |
+| `bfag_cron_prune_deliveries` | daily | Deletes finished deliveries older than *Delivery log retention*, and `pending`/`retrying` rows older than a day, 5,000 rows at a time. |
+| `bfag_cron_recompute_kpis` | every five minutes | Flushes the object-cache hit/miss counters (with a persistent object cache), then recomputes the dashboard figures into the `bfag_kpis` transient (six-minute TTL). |
+| `bfag_cron_prune_responses` | every five minutes | Without a persistent object cache: deletes expired `bfag_resp_*` transients, 5,000 pairs at a time. |
+| `bfag_cron_flush_pending` | single event, scheduled on demand | Sends webhook deliveries queued past the twenty-per-flush limit, twenty at a time, re-arming itself while rows remain. |
 
-All three are scheduled on activation, cleared on deactivation, and run through WP-Cron. If `DISABLE_WP_CRON` is set, the plugin shows a notice on its own screen until you tick *Hide the WP-Cron notice*; make sure a system cron runs `wp-cron.php`. There are no WP-CLI commands; `wp cron event run bfag_cron_prune_hits` runs a job on demand.
+The four recurring events are scheduled on activation, cleared on deactivation (with any pending flush event), and run through WP-Cron. If `DISABLE_WP_CRON` is set, the plugin shows a notice on its own screen until you tick *Hide the WP-Cron notice*; make sure a system cron runs `wp-cron.php`. There are no WP-CLI commands; `wp cron event run bfag_cron_prune_hits` runs a job on demand.
 
 ## Database
 
@@ -141,14 +144,14 @@ Six tables, all prefixed with `$wpdb->prefix`, created with `dbDelta` on activat
 |---|---|
 | `bfag_cache_rules` | cache rules — label, route glob, TTL, tags, optional response headers (JSON), enabled |
 | `bfag_rate_limit_rules` | rate-limit rules — label, subject type, route glob, max requests, window, penalty (used by Pro), enabled |
-| `bfag_rate_limit_hits` | one row per counted request: subject, route, 16-hex route hash, GMT timestamp |
+| `bfag_rate_limit_hits` | one row per counted request: subject, route (first 191 characters), 16-hex route hash, GMT timestamp |
 | `bfag_cache_stats` | hit and miss counters in five-minute buckets |
 | `bfag_webhooks` | webhook subscriptions — label, URL, event, secret, headers (JSON), preset, enabled, max retries |
-| `bfag_webhook_deliveries` | the delivery log — payload, status, HTTP status, response body (first 2,000 characters), attempt, timestamps |
+| `bfag_webhook_deliveries` | the delivery log — payload, status, HTTP status, response body (first 2,000 characters), attempt, timestamps. DB version 1.0.1 adds `idx_webhook_id` and `idx_created_at`; `dbDelta` adds them on the first boot after upgrading |
 
-Options: `bfag_settings`, `bfag_db_version`, `bfag_version`, `bfag_cache_generation`, `bfag_tag_generations` (every tag generation, `tag => int`), `bfag_kpis`. Transients: `bfag_kpis`, and `bfag_resp_<key>` when no persistent object cache is present. Object-cache groups: `bfag` (rules and the generation, five-minute TTL) and `bfag_responses` (stored responses, when a persistent object cache is present).
+Options: `bfag_settings`, `bfag_db_version`, `bfag_version`, `bfag_cache_generation`, `bfag_tag_generations` (the generation of every tag an enabled rule carries, `tag => int` — entries for tags no rule carries any more are dropped on the next purge), `bfag_kpis`. Transients: `bfag_kpis`, and without a persistent object cache `bfag_resp_<key>` (stored responses) and `bfag_limited_<key>` (a client over a limit, for the rest of its window). Object-cache groups: `bfag` (rules, the generations, and with a persistent cache the rate-limit window counters, the cache-stats counters and the limited markers; five-minute TTL for the rule lists) and `bfag_responses` (stored responses, when a persistent object cache is present).
 
-Cached responses go to the WordPress object cache group `bfag_responses` when `wp_using_ext_object_cache()` is true (Redis, Memcached), otherwise to transients. Purging never enumerates entries: every key embeds a generation number, and a purge bumps the generation so old entries are simply never looked up again and expire by their TTL.
+Cached responses go to the WordPress object cache group `bfag_responses` when `wp_using_ext_object_cache()` is true (Redis, Memcached), otherwise to transients — capped there at 64 KB per response and one hour, and swept every five minutes by `bfag_cron_prune_responses`. Purging never enumerates entries: every key embeds a generation number, and a purge bumps the generation so old entries are simply never looked up again and expire by their TTL. With a persistent object cache the rate-limit count and the cache hit/miss counters are `wp_cache_incr()` calls (the hit row is still written; the counters are flushed to `bfag_cache_stats` by the KPI cron), so a cached response costs one query — the hit-log INSERT.
 
 ## File structure
 
@@ -212,7 +215,7 @@ Deleting the plugin through the Plugins screen always removes its options, its t
 - `declare(strict_types=1)` in every PHP file; PHPStan level 6; WordPress Coding Standards.
 - Every SQL statement goes through `$wpdb->prepare()`; every list query carries a `LIMIT`.
 - Every admin action verifies a nonce and the capability; every output is escaped at the boundary.
-- Outbound HTTP only through `wp_remote_post()`, with `reject_unsafe_urls`, no redirects and a ten-second timeout.
+- Outbound HTTP only through `wp_remote_post()`, with `reject_unsafe_urls`, no redirects and a five-second timeout.
 - No third-party runtime dependencies.
 
 ## Support

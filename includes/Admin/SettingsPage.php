@@ -52,7 +52,7 @@ final class SettingsPage extends Page {
 	 * Field definitions, grouped. Every key of Settings::DEFAULTS appears
 	 * exactly once; the test asserts it.
 	 *
-	 * @return array<string, array{label:string, fields:array<string, array{label:string, type:string, description:string, min?:int, max?:int, options?:array<string, string>}>}>
+	 * @return array<string, array{label:string, note?:string, fields:array<string, array{label:string, type:string, description:string, min?:int, max?:int, options?:array<string, string>}>}>
 	 */
 	public function groups(): array {
 		return [
@@ -75,6 +75,7 @@ final class SettingsPage extends Page {
 			],
 			'cache'     => [
 				'label'  => __( 'Cache', 'bluefairy-api-gateway' ),
+				'note'   => __( 'Without a persistent object cache (Redis, Memcached) responses are stored as transients in the options table and capped at 64 KB and one hour.', 'bluefairy-api-gateway' ),
 				'fields' => [
 					'cache_enabled'     => [
 						'label'       => __( 'Enable response cache', 'bluefairy-api-gateway' ),

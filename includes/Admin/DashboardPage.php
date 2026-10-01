@@ -14,7 +14,6 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 use BlueFairy\ApiGateway\Cache\CacheRuleRepository;
-use BlueFairy\ApiGateway\RateLimit\HitCounter;
 use BlueFairy\ApiGateway\RateLimit\RateLimitRuleRepository;
 use BlueFairy\ApiGateway\Webhook\DeliveryRepository;
 use BlueFairy\ApiGateway\Webhook\WebhookRepository;
@@ -37,15 +36,13 @@ final class DashboardPage extends Page {
 	 * @param RateLimitRuleRepository $rl_rules    Rate-limit rules.
 	 * @param WebhookRepository       $webhooks    Webhooks.
 	 * @param DeliveryRepository      $deliveries  Delivery log.
-	 * @param HitCounter              $hits        Rate-limit hits.
-	 * @param KpiCron                 $kpis        KPI transient.
+	 * @param KpiCron                 $kpis        KPI transient (also the source of the hits-table row count).
 	 */
 	public function __construct(
 		private readonly CacheRuleRepository $cache_rules,
 		private readonly RateLimitRuleRepository $rl_rules,
 		private readonly WebhookRepository $webhooks,
 		private readonly DeliveryRepository $deliveries,
-		private readonly HitCounter $hits,
 		private readonly KpiCron $kpis
 	) {}
 
@@ -73,17 +70,19 @@ final class DashboardPage extends Page {
 		foreach ( $this->webhooks->all() as $row ) {
 			$labels[ (int) $row['id'] ] = (string) $row['label'];
 		}
+		$kpis = $this->kpis->current();
 		$this->view(
 			'dashboard',
 			[
-				'kpis'    => $this->kpis->current(),
+				'kpis'    => $kpis,
 				'failed'  => $this->deliveries->recent( self::FAILED_LIMIT, [ 'status' => 'failed' ] ),
 				'labels'  => $labels,
 				'counts'  => [
 					'cache_rules'      => $this->cache_rules->count(),
 					'rate_limit_rules' => $this->rl_rules->count(),
 					'webhooks'         => $this->webhooks->count(),
-					'hits_table_rows'  => $this->hits->total_rows(),
+					// From the KPI transient, never a live COUNT(*) of the hits table on every render; null (a dash) when cold.
+					'hits_table_rows'  => isset( $kpis['hits_table_rows'] ) && is_numeric( $kpis['hits_table_rows'] ) ? (int) $kpis['hits_table_rows'] : null,
 				],
 				'log_url' => add_query_arg(
 					[

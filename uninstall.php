@@ -52,6 +52,15 @@ $bfag_cron_hooks = [
 	'bfag_cron_prune_hits',
 	'bfag_cron_prune_deliveries',
 	'bfag_cron_recompute_kpis',
+	'bfag_cron_prune_responses',
+];
+
+/**
+ * One-off events (Installer::SINGLE_EVENTS): wp_unschedule_hook() removes
+ * every instance whatever its arguments.
+ */
+$bfag_single_events = [
+	'bfag_cron_flush_pending',
 ];
 
 /**
@@ -60,7 +69,7 @@ $bfag_cron_hooks = [
  * Declared as a closure rather than a named function so it cannot collide
  * with the Pro add-on's uninstall running in the same request.
  */
-$bfag_uninstall_site = static function () use ( $bfag_tables, $bfag_option_keys, $bfag_cron_hooks ): void {
+$bfag_uninstall_site = static function () use ( $bfag_tables, $bfag_option_keys, $bfag_cron_hooks, $bfag_single_events ): void {
 	global $wpdb;
 
 	$settings    = get_option( 'bfag_settings', [] );
@@ -90,6 +99,9 @@ $bfag_uninstall_site = static function () use ( $bfag_tables, $bfag_option_keys,
 
 	foreach ( $bfag_cron_hooks as $hook ) {
 		wp_clear_scheduled_hook( $hook );
+	}
+	foreach ( $bfag_single_events as $hook ) {
+		wp_unschedule_hook( $hook );
 	}
 
 	$role = get_role( 'administrator' );

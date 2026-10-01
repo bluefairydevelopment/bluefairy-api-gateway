@@ -87,6 +87,7 @@ final class Plugin {
 		$cache       = new Cache\CacheManager( $store, new Cache\CacheKeyGenerator( $store ), $cache_rules, $stats, $settings );
 		$cache->register_hooks();
 		( new Cache\CachePurger( $store, $cache_rules ) )->register_hooks();
+		( new Cache\PruneCron( $store ) )->register_hooks();
 		self::set( 'cache.store', $store );
 		self::set( 'cache.rules', $cache_rules );
 		self::set( 'cache.stats', $stats );
@@ -105,7 +106,7 @@ final class Plugin {
 		$deliveries = new Webhook\DeliveryRepository( $settings );
 		$dispatcher = new Webhook\WebhookDispatcher( $deliveries, $settings );
 		$registry   = new Webhook\EventRegistry();
-		( new Webhook\EventBus( $webhooks, $dispatcher, $registry ) )->register_hooks();
+		( new Webhook\EventBus( $webhooks, $dispatcher, $registry, $deliveries ) )->register_hooks();
 		( new Webhook\PruneCron( $deliveries, $settings ) )->register_hooks();
 		self::set( 'webhook.repository', $webhooks );
 		self::set( 'webhook.deliveries', $deliveries );
@@ -116,7 +117,7 @@ final class Plugin {
 		( new Admin\KpiCron( $stats, $deliveries, $hits ) )->register_hooks();
 
 		// REST.
-		$status = new Rest\StatusController( $stats, $deliveries, $webhooks );
+		$status = new Rest\StatusController( $webhooks );
 		$purge  = new Rest\CacheController( $store );
 		add_action( 'rest_api_init', [ $status, 'register_routes' ] );
 		add_action( 'rest_api_init', [ $purge, 'register_routes' ] );

@@ -15,6 +15,8 @@ use BlueFairy\ApiGateway\Webhook\EventBus;
 use BlueFairy\ApiGateway\Webhook\EventRegistry;
 use BlueFairy\ApiGateway\Webhook\WebhookDispatcher;
 use BlueFairy\ApiGateway\Webhook\WebhookRepository;
+use PHPUnit\Framework\Attributes\PreserveGlobalState;
+use PHPUnit\Framework\Attributes\RunInSeparateProcess;
 
 final class EventBusTest extends TestCase {
 
@@ -28,7 +30,8 @@ final class EventBusTest extends TestCase {
 
 	private function bus(): EventBus {
 		$settings = new Settings();
-		return new EventBus( new WebhookRepository(), new WebhookDispatcher( new DeliveryRepository( $settings ), $settings ), new EventRegistry() );
+		$deliveries = new DeliveryRepository( $settings );
+		return new EventBus( new WebhookRepository(), new WebhookDispatcher( $deliveries, $settings ), new EventRegistry(), $deliveries );
 	}
 
 	/**
@@ -82,7 +85,7 @@ final class EventBusTest extends TestCase {
 		// A disabled row should never be in the enabled cache; the repository filters at SQL level. Simulate the real list.
 		wp_cache_set( WebhookRepository::CACHE_KEY, [ [ 'id' => 1, 'event' => 'nope.unknown', 'enabled' => 1, 'url' => 'https://x.example.com', 'secret' => '', 'headers' => '{}' ] ], WebhookRepository::CACHE_GROUP );
 		$this->bus()->register_hooks();
-		$this->assertSame( [ 'shutdown' ], array_keys( $GLOBALS['bfag_test_hooks'] ) );
+		$this->assertSame( [ 'shutdown', EventBus::HOOK ], array_keys( $GLOBALS['bfag_test_hooks'] ), 'only the flush and the pending cron, no event hook' );
 	}
 
 	public function test_handle_accumulates_and_nothing_is_sent_until_flush(): void {
@@ -213,6 +216,194 @@ final class EventBusTest extends TestCase {
 		do_action( 'shutdown' );
 		$this->assertCount( 1, $GLOBALS['bfag_test_http_calls'] );
 		$this->assertSame( [], $bus->pending() );
+	}
+
+	// ------------------------------------------------------------------
+	// P6: the flush limit, the pending cron, F9 background flushing
+	// ------------------------------------------------------------------
+
+	/**
+	 * One subscribed webhook, 25 published posts: 20 are sent on flush, 5
+	 * are written as pending rows due now, and exactly one single event is
+	 * scheduled however many times flush() runs.
+	 */
+	public function test_flush_sends_twenty_and_queues_the_rest_for_one_single_cron_event(): void {
+		$this->assertSame( 20, EventBus::FLUSH_LIMIT );
+		$this->seed( [ [ 'event' => 'post.published' ] ] );
+		$bus = $this->bus();
+		$bus->register_hooks();
+		for ( $id = 1; $id <= 25; $id++ ) {
+			$this->publish( $id );
+		}
+		$this->assertCount( 25, $bus->pending() );
+		$this->assertSame( [], $GLOBALS['bfag_test_single_events'], 'nothing scheduled before the flush' );
+
+		$bus->flush();
+
+		$this->assertCount( 20, $GLOBALS['bfag_test_http_calls'], 'twenty sent now' );
+		$inserts = $this->wpdb->calls_to( 'insert' );
+		$this->assertCount( 25, $inserts, 'twenty in-flight rows plus five queued rows' );
+		$queued = array_slice( $inserts, 20 );
+		foreach ( $queued as $i => $insert ) {
+			$this->assertSame( 'pending', $insert['data']['status'], "queued row {$i}" );
+			$this->assertSame( 'out', $insert['data']['direction'] );
+			$this->assertSame( 1, $insert['data']['attempt'] );
+			$this->assertSame( 1, $insert['data']['webhook_id'] );
+			$this->assertSame( 'post.published', $insert['data']['event'] );
+			$this->assertSame( 21 + $i, json_decode( (string) $insert['data']['payload'], true )['object']['id'] ?? null, 'the stored payload is the event payload' );
+			$this->assertMatchesRegularExpression( '/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/', (string) $insert['data']['next_retry_at'], 'a GMT datetime, not null (strtotime( null . " UTC" ) would be "now")' );
+			$this->assertEqualsWithDelta( time(), strtotime( $insert['data']['next_retry_at'] . ' UTC' ), 5, 'due now' );
+		}
+		foreach ( array_slice( $inserts, 0, 20 ) as $insert ) {
+			$this->assertNull( $insert['data']['next_retry_at'], 'an in-flight row carries no due time' );
+		}
+		$this->assertCount( 1, $GLOBALS['bfag_test_single_events'] );
+		$this->assertSame( 'bfag_cron_flush_pending', $GLOBALS['bfag_test_single_events'][0]['hook'] );
+		$this->assertEqualsWithDelta( time(), $GLOBALS['bfag_test_single_events'][0]['timestamp'], 5 );
+		$this->assertContains( EventBus::HOOK, \BlueFairy\ApiGateway\Installer::SINGLE_EVENTS, 'so deactivation and uninstall clear it' );
+
+		// A second over-limit flush while the event is still due does not schedule a second one.
+		for ( $id = 26; $id <= 47; $id++ ) {
+			$this->publish( $id );
+		}
+		$bus->flush();
+		$this->assertCount( 1, $GLOBALS['bfag_test_single_events'], 'deduped on wp_next_scheduled()' );
+		$this->assertCount( 40, $GLOBALS['bfag_test_http_calls'] );
+	}
+
+	public function test_a_flush_within_the_limit_queues_nothing_and_schedules_nothing(): void {
+		$this->seed( [ [ 'event' => 'post.published' ] ] );
+		$bus = $this->bus();
+		$bus->register_hooks();
+		for ( $id = 1; $id <= 20; $id++ ) {
+			$this->publish( $id );
+		}
+		$bus->flush();
+		$this->assertCount( 20, $GLOBALS['bfag_test_http_calls'] );
+		$this->assertCount( 20, $this->wpdb->calls_to( 'insert' ) );
+		$this->assertSame( [], $GLOBALS['bfag_test_single_events'] );
+	}
+
+	/**
+	 * The cron handler sends the queued rows through the dispatcher — the
+	 * stored payload, as attempt 1 — and re-arms itself only when its batch
+	 * was full.
+	 */
+	public function test_the_cron_handler_sends_pending_rows_and_rearms_when_the_batch_was_full(): void {
+		$this->seed( [ [ 'event' => 'post.published' ] ] );
+		$bus = $this->bus();
+		$bus->register_hooks();
+		$this->assertNotFalse( has_action( EventBus::HOOK ), 'bound to the single event' );
+		$rows = [];
+		for ( $id = 101; $id <= 105; $id++ ) {
+			$rows[] = [ 'id' => $id, 'webhook_id' => 1, 'direction' => 'out', 'event' => 'post.published', 'payload' => '{"object":{"id":' . $id . '}}', 'truncated' => '0', 'status' => 'pending', 'attempt' => '1', 'next_retry_at' => '2026-01-01 00:00:00' ];
+		}
+		$this->wpdb->queue( 'get_results', $rows );
+		$this->wpdb->always( 'get_row', $this->seeded_row() );
+		$this->wpdb->always( 'update', 1 );
+
+		do_action( EventBus::HOOK );
+
+		$this->assertCount( 5, $GLOBALS['bfag_test_http_calls'] );
+		$this->assertSame( '{"object":{"id":103}}', $GLOBALS['bfag_test_http_calls'][2]['args']['body'], 'the stored bytes' );
+		$this->assertSame( '103', $GLOBALS['bfag_test_http_calls'][2]['args']['headers']['X-BF-Delivery'] );
+		$select = $this->wpdb->calls_to( 'get_results' )[0]['sql'];
+		$this->assertStringContainsString( "WHERE status = 'pending' AND direction = 'out' AND next_retry_at IS NOT NULL AND next_retry_at <= '", $select );
+		$this->assertStringEndsWith( 'ORDER BY id ASC LIMIT 20', $select );
+		$this->assertCount( 0, $this->wpdb->calls_to( 'insert' ), 'rows are reused, never re-inserted' );
+		$this->assertSame( [], $GLOBALS['bfag_test_single_events'], 'five of twenty: nothing left, no re-arm' );
+		$this->assertFalse( Plugin::$dispatching );
+
+		// A full batch re-arms the event for the remainder.
+		$this->reset();
+		$this->seed( [ [ 'event' => 'post.published' ] ] );
+		$full = [];
+		for ( $id = 1; $id <= 20; $id++ ) {
+			$full[] = [ 'id' => $id, 'webhook_id' => 1, 'direction' => 'out', 'event' => 'post.published', 'payload' => '{}', 'truncated' => '0', 'status' => 'pending', 'attempt' => '1' ];
+		}
+		$this->wpdb->queue( 'get_results', $full );
+		$this->wpdb->always( 'get_row', $this->seeded_row() );
+		$this->bus()->flush_pending();
+		$this->assertCount( 20, $GLOBALS['bfag_test_http_calls'] );
+		$this->assertCount( 1, $GLOBALS['bfag_test_single_events'], 're-armed' );
+
+		// Nothing pending: no dispatch, no re-arm.
+		$this->reset();
+		$this->bus()->flush_pending();
+		$this->assertSame( [], $GLOBALS['bfag_test_http_calls'] );
+		$this->assertSame( [], $GLOBALS['bfag_test_single_events'] );
+	}
+
+	/**
+	 * F9: under WP-CLI there is no response to wait for, so the 21st
+	 * handle() flushes the queue instead of holding it in memory.
+	 */
+	#[RunInSeparateProcess]
+	#[PreserveGlobalState( false )]
+	public function test_under_wp_cli_the_twenty_first_handle_flushes(): void {
+		define( 'WP_CLI', true );
+		$this->seed( [ [ 'event' => 'post.published' ] ] );
+		$bus = $this->bus();
+		$bus->register_hooks();
+		for ( $id = 1; $id <= 20; $id++ ) {
+			$this->publish( $id );
+		}
+		$this->assertCount( 20, $bus->pending(), 'twenty are held' );
+		$this->assertCount( 0, $GLOBALS['bfag_test_http_calls'] );
+
+		$this->publish( 21 );
+
+		$this->assertSame( [], $bus->pending(), 'the 21st flushed' );
+		$this->assertCount( 20, $GLOBALS['bfag_test_http_calls'], 'twenty sent now' );
+		$this->assertCount( 21, $this->wpdb->calls_to( 'insert' ), 'the 21st is queued for the cron' );
+		$this->assertCount( 1, $GLOBALS['bfag_test_single_events'] );
+	}
+
+	public function test_a_cron_process_flushes_at_the_limit_but_a_web_request_holds_everything_for_shutdown(): void {
+		$this->seed( [ [ 'event' => 'post.published' ] ] );
+		$bus = $this->bus();
+		$bus->register_hooks();
+		for ( $id = 1; $id <= 21; $id++ ) {
+			$this->publish( $id );
+		}
+		$this->assertCount( 21, $bus->pending(), 'a web request waits for shutdown' );
+		$this->assertCount( 0, $GLOBALS['bfag_test_http_calls'] );
+
+		$GLOBALS['bfag_test_doing_cron'] = true;
+		$this->publish( 22 );
+		$this->assertSame( [], $bus->pending(), 'under WP-Cron the queue past the limit is flushed at once' );
+		$this->assertCount( 20, $GLOBALS['bfag_test_http_calls'] );
+	}
+
+	/**
+	 * The response is handed to the web server before anything is sent,
+	 * where PHP-FPM allows it. Under this CLI test runner the default is
+	 * off; the filter switches it on.
+	 */
+	public function test_flush_finishes_the_response_first_unless_cli_or_the_filter_says_not_to(): void {
+		$GLOBALS['bfag_test_finished'] = [];
+		$this->seed( [ [ 'event' => 'post.published' ] ] );
+		$bus = $this->bus();
+		$bus->register_hooks();
+		$this->publish( 1 );
+		$bus->flush();
+		$this->assertSame( [], $GLOBALS['bfag_test_finished'], 'PHP_SAPI is cli here: never finished' );
+
+		add_filter( 'bfag_webhook_finish_response', '__return_true' );
+		$this->publish( 2 );
+		$bus->flush();
+		$this->assertSame( [ 1 ], $GLOBALS['bfag_test_finished'], 'finished once, when one request (the first flush) had been sent and the second not yet' );
+		$this->assertCount( 2, $GLOBALS['bfag_test_http_calls'] );
+
+		$bus->flush();
+		$this->assertCount( 1, $GLOBALS['bfag_test_finished'], 'an empty flush finishes nothing' );
+	}
+
+	/**
+	 * @return array<string, mixed>
+	 */
+	private function seeded_row(): array {
+		return [ 'id' => 1, 'label' => 'W1', 'url' => 'https://hooks.example.com/1', 'event' => 'post.published', 'secret' => 's', 'headers' => '{}', 'preset' => '', 'enabled' => '1', 'max_retries' => '3' ];
 	}
 
 	public function test_invalidate_clears_the_enabled_webhooks_cache(): void {

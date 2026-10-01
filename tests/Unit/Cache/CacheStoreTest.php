@@ -9,6 +9,8 @@ namespace BlueFairy\ApiGateway\Tests\Unit\Cache;
 
 use BlueFairy\ApiGateway\Cache\CacheStore;
 use BlueFairy\ApiGateway\Installer;
+use BlueFairy\ApiGateway\Logger;
+use BlueFairy\ApiGateway\Settings;
 use BlueFairy\ApiGateway\Tests\TestCase;
 
 final class CacheStoreTest extends TestCase {
@@ -107,6 +109,92 @@ final class CacheStoreTest extends TestCase {
 		$this->assertNotNull( $store->get( 'k5' ), 'inside the TTL' );
 		bfag_test_set_time( 1_700_000_061 );
 		$this->assertNull( $store->get( 'k5' ), 'past the TTL' );
+	}
+
+	/**
+	 * P1: a transient lives at most MAX_TRANSIENT_TTL whatever the rule
+	 * says; the object cache keeps the full TTL.
+	 */
+	public function test_transient_ttl_is_capped_at_one_hour_but_the_object_cache_ttl_is_not(): void {
+		$this->assertSame( 3600, CacheStore::MAX_TRANSIENT_TTL );
+		bfag_test_set_time( 1_700_000_000 );
+		$store = new CacheStore();
+		$store->set( 'k6', self::ENTRY, 86400 );
+		$this->assertSame( 1_700_000_000 + 3600, $GLOBALS['bfag_test_transients']['bfag_resp_k6']['expires'] );
+		$store->set( 'k7', self::ENTRY, 60 );
+		$this->assertSame( 1_700_000_000 + 60, $GLOBALS['bfag_test_transients']['bfag_resp_k7']['expires'], 'a TTL under the cap is kept' );
+
+		wp_using_ext_object_cache( true );
+		$store->set( 'k8', self::ENTRY, 86400 );
+		$this->assertSame( 1_700_000_000 + 86400, $GLOBALS['bfag_test_cache_expires'][ CacheStore::GROUP ]['k8'] );
+	}
+
+	/**
+	 * P1: a 65 KB entry is refused by the transient backend (logged once per
+	 * request) and accepted by the object cache; a 60 KB one is stored on both.
+	 */
+	public function test_entries_over_64kb_are_not_stored_as_transients_but_are_in_the_object_cache(): void {
+		$this->assertSame( 65536, CacheStore::MAX_TRANSIENT_BYTES );
+		update_option( 'bfag_settings', [ 'debug_logging' => true ] );
+		Logger::use_settings( new Settings() );
+		ini_set( 'error_log', '/dev/null' );
+		$big   = [ 'data' => str_repeat( 'x', 65 * 1024 ) ] + self::ENTRY;
+		$small = [ 'data' => str_repeat( 'x', 60 * 1024 ) ] + self::ENTRY;
+		$store = new CacheStore();
+
+		$store->set( 'big', $big, 60 );
+		$store->set( 'big2', $big, 60 );
+		$store->set( 'small', $small, 60 );
+		$this->assertNull( $store->get( 'big' ) );
+		$this->assertArrayNotHasKey( 'bfag_resp_big', $GLOBALS['bfag_test_transients'] );
+		$this->assertNotNull( $store->get( 'small' ), 'under the cap is stored' );
+		$this->assertCount( 1, Logger::lines(), 'logged once per request, not per refused entry' );
+		$this->assertStringContainsString( 'larger than the transient limit', Logger::lines()[0] );
+
+		wp_using_ext_object_cache( true );
+		$store->set( 'big', $big, 60 );
+		$this->assertSame( $big['data'], $store->get( 'big' )['data'] ?? null, 'no size limit on the object cache' );
+	}
+
+	/**
+	 * P1: the cleanup selects expired timeout rows in slices of PRUNE_BATCH,
+	 * deletes each pair by name, and loops until a slice comes back short.
+	 */
+	public function test_prune_expired_deletes_each_expired_pair_and_loops_until_a_short_slice(): void {
+		bfag_test_set_time( 1_700_000_000 );
+		$store = new CacheStore();
+		$full  = [];
+		for ( $i = 0; $i < CacheStore::PRUNE_BATCH; $i++ ) {
+			$full[] = '_transient_timeout_bfag_resp_' . $i;
+		}
+		$this->wpdb->queue( 'get_col', $full );
+		$this->wpdb->queue( 'get_col', [ '_transient_timeout_bfag_resp_abc', '_transient_timeout_bfag_resp_def' ] );
+		$this->wpdb->queue( 'get_col', [ '_transient_timeout_bfag_resp_never' ] );
+
+		$this->assertSame( CacheStore::PRUNE_BATCH + 2, $store->prune_expired() );
+
+		$selects = $this->wpdb->calls_to( 'get_col' );
+		$this->assertCount( 2, $selects, 'a short slice ends the loop; the third queued answer is never asked for' );
+		$this->assertSame( 1, preg_match( "/^SELECT option_name FROM bfw_options WHERE option_name LIKE '\\\\\\\\_transient\\\\\\\\_timeout\\\\\\\\_bfag\\\\\\\\_resp\\\\\\\\_%' AND option_value < (\d+) LIMIT 5000$/", $selects[0]['sql'], $m ), $selects[0]['sql'] );
+		$this->assertEqualsWithDelta( time(), (int) $m[1], 5, 'expired = timeout before now (the real clock, as core writes it)' );
+
+		$deletes = $this->wpdb->queries_matching( 'DELETE FROM bfw_options' );
+		$this->assertCount( 2, $deletes );
+		$this->assertSame( "DELETE FROM bfw_options WHERE option_name IN ('_transient_timeout_bfag_resp_abc','_transient_bfag_resp_abc','_transient_timeout_bfag_resp_def','_transient_bfag_resp_def')", $deletes[1], 'both rows of each pair' );
+		$this->assertSame( 2 * CacheStore::PRUNE_BATCH, substr_count( $deletes[0], '_transient_' ) );
+	}
+
+	public function test_prune_expired_issues_nothing_when_nothing_is_expired_or_on_the_object_cache(): void {
+		$store = new CacheStore();
+		$this->assertSame( 0, $store->prune_expired() );
+		$this->assertCount( 1, $this->wpdb->calls_to( 'get_col' ), 'one probe, no delete' );
+		$this->assertSame( [], $this->wpdb->queries_matching( 'DELETE' ) );
+
+		wp_using_ext_object_cache( true );
+		$this->wpdb->calls = [];
+		$this->wpdb->queue( 'get_col', [ '_transient_timeout_bfag_resp_x' ] );
+		$this->assertSame( 0, $store->prune_expired() );
+		$this->assertSame( [], $this->wpdb->calls, 'entries expire on their own in a persistent object cache' );
 	}
 
 	public function test_get_rejects_malformed_entries(): void {

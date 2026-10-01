@@ -30,6 +30,21 @@ final class SettingsPageTest extends TestCase {
 		$this->assertSame( [ 'save_settings' ], $this->page()->actions() );
 	}
 
+	/**
+	 * P1: the Cache group tells the admin what happens without Redis/Memcached.
+	 */
+	public function test_the_cache_group_carries_the_transient_note_and_renders_it(): void {
+		$groups = $this->page()->groups();
+		$note   = 'Without a persistent object cache (Redis, Memcached) responses are stored as transients in the options table and capped at 64 KB and one hour.';
+		$this->assertSame( $note, $groups['cache']['note'] );
+		$this->assertArrayNotHasKey( 'note', $groups['general'], 'only the Cache group has one' );
+
+		$html = bfag_test_render( [ $this->page(), 'render' ] );
+		$this->assertSame( 1, substr_count( $html, 'bfag-group-note' ), 'rendered exactly once' );
+		$this->assertStringContainsString( '<h2 id="bfag-group-cache">Cache</h2>', $html );
+		$this->assertStringContainsString( '<p class="description bfag-group-note">' . esc_html( $note ) . '</p>', $html );
+	}
+
 	public function test_every_default_appears_in_exactly_one_group(): void {
 		$groups = $this->page()->groups();
 		$this->assertSame( [ 'general', 'cache', 'ratelimit', 'webhooks', 'advanced' ], array_keys( $groups ) );

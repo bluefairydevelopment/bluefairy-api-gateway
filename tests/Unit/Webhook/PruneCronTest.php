@@ -45,8 +45,9 @@ final class PruneCronTest extends TestCase {
 		$cron->register_hooks();
 		do_action( 'bfag_cron_prune_deliveries' );
 		$deletes = $this->wpdb->queries_matching( 'DELETE FROM bfw_bfag_webhook_deliveries' );
-		$this->assertCount( 2, $deletes );
+		$this->assertCount( 3, $deletes, 'two finished-row slices (40, then 0) and one stale pending/retrying probe' );
 		$this->assertStringContainsString( gmdate( 'Y-m-d H:i', $before - 7 * DAY_IN_SECONDS ), $deletes[0] );
+		$this->assertStringContainsString( "status IN ('pending','retrying')", $deletes[2] );
 		$this->assertStringNotContainsString( gmdate( 'Y-m-d H:i', $before - 30 * DAY_IN_SECONDS ), $deletes[0] );
 		$this->assertNotEmpty( array_filter( Logger::lines(), static fn( string $l ): bool => str_contains( $l, '"retention_days":7,"removed":40' ) ) );
 	}
