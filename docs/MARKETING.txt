@@ -1,0 +1,102 @@
+BlueFairy API Gateway — Marketing Content
+==========================================
+
+
+3-SENTENCE SUMMARY
+------------------
+
+BlueFairy API Gateway sits in front of the WordPress REST API with a response cache, a per-IP rate limiter and signed outbound webhooks, all managed from one screen at Settings → API Gateway. Anonymous GET responses are served from cache with an X-BF-Cache header you can see from curl, clients over the limit get a proper 429 with Retry-After, and post, user, comment and WooCommerce order events reach your other systems as HMAC-signed JSON with a delivery log and one-click resend. Requires PHP 8.1+ and WordPress 6.6+; licensed GPL-2.0-or-later; free — add API Gateway Pro for up to 500 of everything, tag-based purges, per-key limits, DDoS blocking, automatic retries with alerts and CRM presets.
+
+
+CSS CLASS PREFIX
+----------------
+
+bfag   (API Gateway — shared with API Gateway Pro)
+
+All classes in the product description HTML, hub page, FAQ page, and
+sidebar widget card use this prefix to avoid collisions.
+
+
+HTML LONG DESCRIPTION
+---------------------
+
+(Used as WooCommerce product description. Classes match the
+.bfag-sp-desc .bfag-dc-* rules in single-product-api-gateway.html)
+
+<div class="bfag-dc-grid">
+
+  <div class="bfag-dc-card">
+    <div class="bfag-dc-icon">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4 3 9 3s9-1.34 9-3"/></svg>
+    </div>
+    <h3>REST Response Cache</h3>
+    <p>Anonymous <code>GET</code> responses are stored and served back with <code>X-BF-Cache: HIT</code>; every response is labelled HIT, MISS or BYPASS. Logged-in and authenticated requests are never cached, and the cache purges itself when a post, term or comment changes. Uses Redis or Memcached when you have one.</p>
+  </div>
+
+  <div class="bfag-dc-card">
+    <div class="bfag-dc-icon">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 14l4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/></svg>
+    </div>
+    <h3>Rate Limiting</h3>
+    <p>A sliding-window limit per client IP — seeded at 300 requests a minute. The breaching request gets <code>429</code> with <code>Retry-After</code>; after that the client is refused for the rest of its window without touching the database. Forwarded-IP headers are trusted only from the proxies you list.</p>
+  </div>
+
+  <div class="bfag-dc-card">
+    <div class="bfag-dc-icon">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+    </div>
+    <h3>Signed Webhooks</h3>
+    <p>Post, user, comment and WooCommerce order events are sent as JSON with an <code>X-BF-Signature</code> HMAC-SHA256 over the timestamp and body, so the receiver can prove where it came from and when. HTTPS targets only; the secret is generated for you.</p>
+  </div>
+
+  <div class="bfag-dc-card">
+    <div class="bfag-dc-icon">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></svg>
+    </div>
+    <h3>Delivery Log &amp; Resend</h3>
+    <p>Every delivery is logged with its HTTP status and response body. A failed one can be resent from the log or straight from the dashboard. Deliveries go out after the page has been sent, so a bulk import or a dead endpoint never slows the request that triggered them.</p>
+  </div>
+
+  <div class="bfag-dc-card">
+    <div class="bfag-dc-icon">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+    </div>
+    <h3>Dashboard &amp; Status Endpoint</h3>
+    <p>Cache hit rate and webhook success rate over 24 hours, the rate-limit log size and the latest failed deliveries — and the same figures at <code>GET /bfag/v1/status</code> for your monitoring tool.</p>
+  </div>
+
+</div>
+
+<div class="bfag-dc-shots">
+  <figure>
+    <img src="/wp-content/uploads/2026/10/ApiGatewayMain.png" alt="API Gateway dashboard with cache hit rate, webhook success rate and recent failed deliveries">
+    <figcaption>Dashboard — cache hit rate, webhook success and the latest failures with Retry.</figcaption>
+  </figure>
+  <figure>
+    <img src="/wp-content/uploads/2026/10/ApiGatewayCache.png" alt="Cache tab listing the cache rule with its route glob and lifetime">
+    <figcaption>Cache — the route rule, its lifetime, and Purge all.</figcaption>
+  </figure>
+  <figure>
+    <img src="/wp-content/uploads/2026/10/ApiGatewayWebhooks.png" alt="Webhooks tab listing three webhooks and their last delivery">
+    <figcaption>Webhooks — three signed webhooks with their last delivery status.</figcaption>
+  </figure>
+  <figure>
+    <img src="/wp-content/uploads/2026/10/ApiGatewayDeliveryLog.png" alt="Delivery log with HTTP statuses and an opened response body">
+    <figcaption>Delivery log — every attempt with its HTTP status and response; failed ones can be resent.</figcaption>
+  </figure>
+</div>
+
+<div class="bfag-dc-included">
+  <h3>What&rsquo;s included</h3>
+  <ul>
+    <li>REST response cache — one route rule, HIT/MISS/BYPASS header, automatic purge on content changes</li>
+    <li>Purge by hand from the Cache tab or <code>POST /bfag/v1/cache/purge</code></li>
+    <li>Per-IP rate limiting — one rule, 429 with Retry-After and X-BF-RateLimit headers</li>
+    <li>Trusted-proxy handling for X-Forwarded-For, CF-Connecting-IP, X-Real-IP or True-Client-IP</li>
+    <li>Up to three HMAC-signed outbound webhooks — post, user, comment and WooCommerce order events</li>
+    <li>Delivery log with response bodies and one-click resend</li>
+    <li>Dashboard and a <code>GET /bfag/v1/status</code> endpoint for monitoring</li>
+    <li>Multisite — network activation provisions every site; each keeps its own rules, webhooks and settings</li>
+    <li>GPL-2.0-or-later &middot; PHP 8.1+ &middot; WordPress 6.6+</li>
+  </ul>
+</div>
