@@ -60,7 +60,8 @@ final class CacheController {
 	}
 
 	/**
-	 * Keep `[a-z0-9_-]` tag names, lower-cased, unique, non-empty.
+	 * Accept an array or a comma-separated string; keep `[a-z0-9_:-]` tag
+	 * names (CacheStore::sanitize_tag), lower-cased, unique, non-empty.
 	 *
 	 * @param mixed $value The raw parameter.
 	 * @return list<string>
@@ -77,7 +78,7 @@ final class CacheController {
 			if ( ! is_scalar( $tag ) ) {
 				continue;
 			}
-			$tag = sanitize_key( (string) $tag );
+			$tag = CacheStore::sanitize_tag( (string) $tag );
 			if ( '' !== $tag ) {
 				$tags[] = $tag;
 			}

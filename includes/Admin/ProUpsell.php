@@ -43,12 +43,13 @@ final class ProUpsell {
 	 */
 	public function features(): array {
 		return [
-			__( 'Unlimited cache rules and rate-limit rules', 'bluefairy-api-gateway' ),
-			__( 'Per-content-type cache rules with tag purging', 'bluefairy-api-gateway' ),
-			__( 'Rate limits per user and per API key, with auto-ban', 'bluefairy-api-gateway' ),
-			__( 'Unlimited webhooks with automatic retries and alerts', 'bluefairy-api-gateway' ),
-			__( 'CRM and chat presets: HubSpot, Slack, Zapier and more', 'bluefairy-api-gateway' ),
-			__( 'Scoped API keys for integrations', 'bluefairy-api-gateway' ),
+			__( 'Up to 500 cache rules and rate-limit rules (free: one of each)', 'bluefairy-api-gateway' ),
+			__( 'Purges narrowed to the tags a change touches', 'bluefairy-api-gateway' ),
+			__( 'Rate limits per user and per API key, with DDoS auto-ban', 'bluefairy-api-gateway' ),
+			__( 'Up to 500 webhooks with automatic retries and failure alerts (free: three, single attempt)', 'bluefairy-api-gateway' ),
+			__( 'Salesforce, HubSpot and Mailchimp presets and a verified incoming-webhook endpoint', 'bluefairy-api-gateway' ),
+			__( 'API keys with scopes for integrations', 'bluefairy-api-gateway' ),
+			__( 'WPGraphQL query caching', 'bluefairy-api-gateway' ),
 		];
 	}
 

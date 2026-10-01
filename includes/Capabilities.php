@@ -27,7 +27,22 @@ final class Capabilities {
 	 *
 	 * @var list<string>
 	 */
-	public const SCOPES = [ 'read', 'cache:purge', 'webhook:read', 'webhook:write' ];
+	public const SCOPES = [ 'read', 'write', 'cache:purge', 'webhook:read', 'webhook:write' ];
+
+	/**
+	 * One-line description of each scope, keyed like SCOPES, for the Pro
+	 * add-on's API-key form. A key acts as the user it is bound to, so
+	 * `write` is as powerful as that user's REST access.
+	 *
+	 * @var array<string, string>
+	 */
+	public const SCOPE_LABELS = [
+		'read'          => 'Read any route',
+		'write'         => 'Create, update and delete through any REST route (acts as the key\'s user)',
+		'cache:purge'   => 'Purge the response cache (POST /bfag/v1/cache/purge)',
+		'webhook:read'  => 'List webhooks and their deliveries (GET /bfag/v1/webhooks…)',
+		'webhook:write' => 'Create, update, delete and retry webhooks (/bfag/v1/webhooks…); implies webhook:read',
+	];
 
 	/**
 	 * Grant the capability to the administrator role.
@@ -57,9 +72,11 @@ final class Capabilities {
 	}
 
 	/**
-	 * The scope token a route requires. Unknown routes require `read`, which
-	 * is the least an API key can hold — so a key never silently gains access
-	 * to a route this map has not considered.
+	 * The scope token a route requires. Inside `/bfag/v1`, the purge and
+	 * webhook routes have their own scopes and anything else (e.g. `/status`)
+	 * needs `read`. Outside `/bfag/v1` — every other REST route on the site —
+	 * GET/HEAD/OPTIONS need `read` and any other method needs `write`, so a
+	 * key holding only `read` can never `POST /wp/v2/posts` as its user.
 	 *
 	 * @param string      $route  REST route, with or without the leading slash.
 	 * @param string|null $method HTTP method; null reads REQUEST_METHOD. Pass
@@ -71,13 +88,16 @@ final class Capabilities {
 		return match ( true ) {
 			str_starts_with( $route, '/bfag/v1/cache/purge' ) => 'cache:purge',
 			str_starts_with( $route, '/bfag/v1/webhooks' )    => self::is_read_method( $method ) ? 'webhook:read' : 'webhook:write',
-			default                                            => 'read',
+			str_starts_with( $route, '/bfag/v1/' )            => 'read',
+			default                                            => self::is_read_method( $method ) ? 'read' : 'write',
 		};
 	}
 
 	/**
 	 * Does a space-separated permission string satisfy a required scope?
-	 * `webhook:write` implies `webhook:read`; nothing implies `cache:purge`.
+	 * `webhook:write` implies `webhook:read`; nothing else implies anything —
+	 * in particular `write` does not imply `read`, and neither implies
+	 * `cache:purge`.
 	 *
 	 * @param string $permissions Space-separated scope tokens the key holds.
 	 * @param string $required    The scope the route needs.

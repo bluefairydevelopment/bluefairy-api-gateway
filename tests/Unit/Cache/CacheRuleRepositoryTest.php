@@ -193,12 +193,12 @@ final class CacheRuleRepositoryTest extends TestCase {
 			$tags[] = 'tag-' . $i;
 		}
 		$this->repo->create( [ 'tags' => implode( ',', $tags ) ] );
-		$this->repo->create( [ 'tags' => 'Hello World, foo_bar, foo-bar, a.b' ] );
+		$this->repo->create( [ 'tags' => 'Hello World, foo_bar, foo-bar, a.b, Post:7' ] );
 
 		$inserts = $this->wpdb->calls_to( 'insert' );
 		$this->assertCount( 20, explode( ',', $inserts[0]['data']['tags'] ) );
 		$this->assertSame( 'tag-1', explode( ',', $inserts[0]['data']['tags'] )[0] );
-		$this->assertSame( 'helloworld,foo_bar,foo-bar,ab', $inserts[1]['data']['tags'] );
+		$this->assertSame( 'helloworld,foo_bar,foo-bar,ab,post:7', $inserts[1]['data']['tags'], 'the colon of a Pro tag survives (CacheStore::sanitize_tag)' );
 	}
 
 	public function test_create_sanitises_headers_json(): void {

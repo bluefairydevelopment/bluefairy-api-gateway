@@ -103,11 +103,28 @@ final class CacheControllerTest extends TestCase {
 		$this->assertSame( [ [ 'tags', [ 'posts', 'products', 'x' ] ] ], $purged );
 	}
 
+	/**
+	 * `sanitize_key()` would turn `post:42` into `post42`, a tag the Pro
+	 * purger never bumps; the endpoint must keep the colon.
+	 */
+	public function test_purging_a_colon_tag_bumps_that_tag_not_its_colonless_twin(): void {
+		$response = ( new CacheController( $this->store ) )->purge( $this->purge_request( [ 'tags' => [ 'post:42', 'Type:Product' ] ] ) );
+
+		$this->assertSame( [ 'post:42', 'type:product' ], $response->get_data()['tags'] );
+		$this->assertSame( 2, $this->store->tag_generation( 'post:42' ) );
+		$this->assertSame( 2, $this->store->tag_generation( 'type:product' ) );
+		$this->assertSame( 1, $this->store->tag_generation( 'post42' ), 'post42 is not post:42' );
+		$this->assertArrayHasKey( CacheStore::TAG_PREFIX . 'post:42', $GLOBALS['bfag_test_transients'] );
+		$this->assertArrayNotHasKey( CacheStore::TAG_PREFIX . 'post42', $GLOBALS['bfag_test_transients'] );
+	}
+
 	public function test_sanitize_tags_accepts_a_csv_string_and_rejects_junk(): void {
 		$controller = new CacheController( $this->store );
 		$this->assertSame( [ 'a', 'b-c' ], $controller->sanitize_tags( 'A, b-c ,,' ) );
 		$this->assertSame( [], $controller->sanitize_tags( 42 ) );
 		$this->assertSame( [], $controller->sanitize_tags( null ) );
 		$this->assertSame( [ 'ok' ], $controller->sanitize_tags( [ [ 'nested' ], 'ok' ] ) );
+		$this->assertSame( [ 'post:42', 'tax:category' ], $controller->sanitize_tags( 'post:42, tax:category' ), 'the colon of a Pro tag survives' );
+		$this->assertSame( [ str_repeat( 'a', 50 ) ], $controller->sanitize_tags( [ str_repeat( 'a', 60 ) ] ), 'capped at 50 like CacheStore' );
 	}
 }

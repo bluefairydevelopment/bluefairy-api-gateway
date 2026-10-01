@@ -13,7 +13,7 @@ Plan: `~/Sites/blueSites/plans/bluefairy-api-gateway.plan.md` (read "Revision v3
   Every function has a docblock with `@param` for every parameter.
 - PSR-4 under `includes/`. Instance-based services wired in `Plugin::boot()`; only
   `Plugin::boot/service/set`, `Installer::*`, `Capabilities::*`, `Logger::*`,
-  `GlobMatcher::*`, `IpUtils::*` are static.
+  `GlobMatcher::*`, `IpUtils::*` and `CacheStore::sanitize_tag()` are static.
 - All SQL through `$wpdb->prepare()`; reads via `get_results/get_row/get_var/get_col`;
   writes via `insert/update/delete` or prepared `query()`. Table names are
   `$wpdb->prefix . 'bfag_…'`. Every list query has a `LIMIT`.
@@ -34,7 +34,7 @@ Plan: `~/Sites/blueSites/plans/bluefairy-api-gateway.plan.md` (read "Revision v3
 | Class | Public API |
 |---|---|
 | `Settings` | `all(): array`, `get( string $key ): mixed`, `update( array ): array`, `sanitize( array ): array`, `refresh()`, `Settings::DEFAULTS`, `Settings::to_bool()`, `Settings::sanitize_cidr_list()` |
-| `Capabilities` | `MANAGE`, `SCOPES`, `add_caps()`, `remove_caps()`, `current_user_can_manage()`, `required_scope( string $route, ?string $method = null ): string`, `scope_satisfied( string $permissions, string $required ): bool` |
+| `Capabilities` | `MANAGE`, `SCOPES` (`read`, `write`, `cache:purge`, `webhook:read`, `webhook:write`), `SCOPE_LABELS` (scope → one-line description, same keys and order), `add_caps()`, `remove_caps()`, `current_user_can_manage()`, `required_scope( string $route, ?string $method = null ): string` — `cache:purge` for `/bfag/v1/cache/purge`; `webhook:read`/`webhook:write` for `/bfag/v1/webhooks…` by method; `read` for anything else under `/bfag/v1/`; outside `/bfag/v1` `read` for GET/HEAD/OPTIONS and `write` for every other method (a key acts as its user, so a read-only key must not be able to `POST /wp/v2/posts`), `scope_satisfied( string $permissions, string $required ): bool` — `webhook:write` implies `webhook:read`; nothing else implies anything (`write` does not imply `read`) |
 | `Installer` | `TABLES`, `OPTIONS`, `CRON`, `activate()`, `deactivate()`, `maybe_upgrade()`, `schema( $prefix, $charset ): array`, `create_tables()`, `seed_default_rules()`, `schedule_cron()`, `cron_schedules( array ): array` (adds `bfag_five_minutes`) |
 | `Logger` | `use_settings( ?Settings )`, `enabled()`, `log( string, array = [] )`, `lines()`, `clear()` |
 | `Support\GlobMatcher` | `compile( string $glob ): string`, `matches( string $glob, string $route ): bool`, `is_valid( string $glob ): bool` — `*` = one segment, `**` = anything, `?` = one char; routes compared with the leading `/` stripped |
@@ -72,6 +72,7 @@ generation orphans the old entries (transients expire by TTL; object-cache entri
 - `flush_all(): void` — increments `bfag_cache_generation`, clears the `bfag_responses` group when supported
 - `tag_generation( string $tag ): int` — transient/option `bfag_tag_gen_<sanitized tag>` (default 1)
 - `bump_tags( string[] $tags ): void`
+- `CacheStore::sanitize_tag( string $tag ): string` — static; the one tag sanitiser (`[a-z0-9_:-]`, lower-cased, max 50). Every purge path (REST, AJAX, rule tags) uses it; `sanitize_key()` must not be used on a tag because it strips the `:` of `post:42`.
 
 **`CacheKeyGenerator`** — `__construct( CacheStore )`.
 - `for_request( \WP_REST_Request $request, string[] $tags = [] ): string` — `md5()` of
@@ -82,7 +83,7 @@ generation orphans the old entries (transients expire by TTL; object-cache entri
 columns, `enabled`/`id`/`ttl_seconds` cast to int, `tags` as a comma-separated string.
 - `all_enabled(): array` — object cache key `cache_rules_enabled`, ordered by id
 - `all( int $limit = 200 ): array`, `find( int $id ): ?array`, `count(): int`
-- `create( array $data ): int|false` — returns false (and logs) when `count() >= limit()`; validates glob with `GlobMatcher::is_valid`, ttl 1–86400, tags sanitised (`[a-z0-9_:-]`, max 20; `post:7`, `type:product` are the Pro purge-tag shapes)
+- `create( array $data ): int|false` — returns false (and logs) when `count() >= limit()` or the glob fails `GlobMatcher::is_valid`; the TTL is **clamped** to 1–86400 (never refused), and `update()` clamps it the same way; tags sanitised through `CacheStore::sanitize_tag()` (`[a-z0-9_:-]`, lower-cased, max 50 chars, max 20 tags; `post:7`, `type:product` are the Pro purge-tag shapes)
 - `update( int $id, array $data ): bool`, `delete( int $id ): bool`, `set_enabled( int $id, bool ): bool`
 - `limit(): int` — `(int) apply_filters( 'bfag_cache_rule_limit', 1 )`
 - `match( string $route ): ?array` — first enabled rule whose glob matches (via `GlobMatcher`), null when none
@@ -105,7 +106,7 @@ columns, `enabled`/`id`/`ttl_seconds` cast to int, `tags` as a comma-separated s
 
 **`CachePurger`** — `__construct( CacheStore, CacheRuleRepository )`.
 - `register_hooks(): void` — `save_post` (10, 3), `delete_post`, `trashed_post`, `edited_term` (10, 3), `created_term` (10, 3), `delete_term` (10, 3), `transition_comment_status`, `wp_insert_comment`
-- `on_post_change( int $post_id ): void` — skips revisions/autosaves; `$tags = apply_filters( 'bfag_cache_purge_tags', null, 'post', $post_id )`; array → `purge_tags()`, null → `purge_all()`. Same for `on_term_change( int $term_id, string $taxonomy )` with type `'term'`.
+- `on_post_change( int $post_id ): void` — skips revisions/autosaves; `$tags = apply_filters( 'bfag_cache_purge_tags', null, 'post', $post_id )`; array → `purge_tags()`, null → `purge_all()`. Same for `on_term_change( int $term_id, string $taxonomy )` with type `'term'` and for the comment hooks with type `'comment'`.
 - `purge_all(): void` — `flush_all()` + `do_action( 'bfag_cache_purged', 'all', [] )`
 - `purge_tags( string[] $tags ): void` — `bump_tags()` + `do_action( 'bfag_cache_purged', 'tags', $tags )`
 
@@ -196,8 +197,10 @@ passed through `apply_filters( 'bfag_dashboard_kpis', $kpis )`; `run()` stores i
 returns version, `kpis` (from transient), counts, `pro` (`apply_filters( 'bfag_is_pro', false )`).
 
 **`Rest\CacheController`** — `__construct( CacheStore )`. `POST /bfag/v1/cache/purge`,
-permission `current_user_can( Capabilities::MANAGE )`; body `tags` (array, optional) →
-`bump_tags` else `flush_all`; response `['purged'=>'all'|'tags', 'tags'=>[]]`.
+permission `current_user_can( Capabilities::MANAGE )`; body `tags` (optional; an array of
+strings or one comma-separated string, each sanitised by `CacheStore::sanitize_tag()` so
+`post:42` keeps its colon) → `bump_tags` else `flush_all`; response
+`['purged'=>'all'|'tags', 'tags'=>[]]`.
 
 ## Extension seams (the Pro add-on's contract)
 
@@ -207,7 +210,7 @@ permission `current_user_can( Capabilities::MANAGE )`; body `tags` (array, optio
 | `bfag_booted` | action | — | fired after; `Plugin::service()` available |
 | `bfag_is_pro` | filter | `false` | hides the upsell, reported by `/status` |
 | `bfag_cache_rule_limit` | filter | `1` | max cache rules |
-| `bfag_cache_purge_tags` | filter | `null` | `( null, 'post'|'term', $id )` → string[] of tags to bump instead of flushing all |
+| `bfag_cache_purge_tags` | filter | `null` | `( null, 'post'|'term'|'comment', $id )` → string[] of tags to bump instead of flushing all |
 | `bfag_cache_bypass` | filter | `false` | `( false, $request )` |
 | `bfag_cache_purged` | action | — | `( 'all'|'tags', string[] )` |
 | `bfag_rate_limit_rule_limit` | filter | `1` | |

@@ -98,13 +98,21 @@ final class KpiCron {
 	}
 
 	/**
-	 * Recompute and store. Returns what was stored.
+	 * Days of cache hit/miss buckets kept; older ones are pruned on each run.
+	 */
+	public const STATS_KEEP_DAYS = 7;
+
+	/**
+	 * Recompute and store, then prune cache-stats buckets older than
+	 * STATS_KEEP_DAYS — this cron is the table's only retention. Returns
+	 * what was stored.
 	 *
 	 * @return array<string, mixed>
 	 */
 	public function run(): array {
 		$kpis = $this->compute();
 		set_transient( self::TRANSIENT, $kpis, self::TTL );
+		$this->stats->prune( self::STATS_KEEP_DAYS );
 		return $kpis;
 	}
 

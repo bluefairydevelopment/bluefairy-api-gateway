@@ -149,7 +149,7 @@ final class CacheStore {
 	 * @param string $tag Tag name; sanitised to `[a-z0-9_:-]`.
 	 */
 	public function tag_generation( string $tag ): int {
-		$tag = $this->sanitize_tag( $tag );
+		$tag = self::sanitize_tag( $tag );
 		if ( '' === $tag ) {
 			return 1;
 		}
@@ -165,7 +165,7 @@ final class CacheStore {
 	public function bump_tags( array $tags ): void {
 		$seen = [];
 		foreach ( $tags as $tag ) {
-			$tag = $this->sanitize_tag( is_string( $tag ) ? $tag : '' );
+			$tag = self::sanitize_tag( is_string( $tag ) ? $tag : '' );
 			if ( '' === $tag || isset( $seen[ $tag ] ) ) {
 				continue;
 			}
@@ -182,11 +182,13 @@ final class CacheStore {
 	}
 
 	/**
-	 * Lower-case, `[a-z0-9_:-]` only, at most 50 characters.
+	 * Lower-case, `[a-z0-9_:-]` only, at most 50 characters. The one tag
+	 * sanitiser: every purge path (REST, AJAX, rules) must keep the `:` of
+	 * `post:42`, which `sanitize_key()` strips.
 	 *
 	 * @param string $tag Raw tag.
 	 */
-	private function sanitize_tag( string $tag ): string {
+	public static function sanitize_tag( string $tag ): string {
 		$tag = preg_replace( '/[^a-z0-9_:-]/', '', strtolower( trim( $tag ) ) ) ?? '';
 		return substr( $tag, 0, self::MAX_TAG_LENGTH );
 	}

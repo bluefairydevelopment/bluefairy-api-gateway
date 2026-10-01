@@ -282,6 +282,18 @@ final class AdminMenuTest extends TestCase {
 		$this->assertSame( [ 'success', 'Key revoked.' ], $menu->notices()['key_revoked'] );
 	}
 
+	/**
+	 * CacheRuleRepository clamps the TTL rather than refusing it, so the only
+	 * cause `cache_invalid` can name is the glob; the limit has its own code.
+	 */
+	public function test_cache_invalid_names_the_glob_only_and_cache_limit_names_the_allowance(): void {
+		$codes = $this->menu()->notices();
+		$this->assertSame( [ 'error', 'Cache rule not saved: check the route glob (letters, digits, / * ? . - _).' ], $codes['cache_invalid'] );
+		$this->assertStringNotContainsString( 'TTL', $codes['cache_invalid'][1], 'the TTL is clamped, never refused' );
+		$this->assertSame( [ 'error', 'Cache rule not added: the free plugin allows one rule.' ], $codes['cache_limit'] );
+		$this->assertNotSame( $codes['cache_invalid'], $codes['cache_limit'] );
+	}
+
 	public function test_render_notices_prints_the_requested_code_on_the_plugin_screen_only(): void {
 		$menu                = $this->menu();
 		$_GET['bfag_notice'] = 'cache_saved';
@@ -364,6 +376,23 @@ final class AdminMenuTest extends TestCase {
 		$this->assertSame( $generation + 1, $this->store->generation(), 'tags do not touch the global generation' );
 		$this->assertSame( $posts + 1, $this->store->tag_generation( 'posts' ) );
 		$this->assertSame( [ [ 'all', [] ], [ 'tags', [ 'posts', 'xy' ] ] ], $seen );
+	}
+
+	public function test_ajax_purge_keeps_the_colon_of_a_pro_tag(): void {
+		bfag_test_ajax_request( 'purge_cache', [ 'tags' => [ 'post:42', 'post:42', [ 'nested' ], 'Term:9' ] ] );
+		$exit = bfag_test_catch_exit( [ $this->menu(), 'ajax_purge_cache' ] );
+		$this->assertSame( 'json_success', $exit->kind );
+		$this->assertSame(
+			[
+				'purged' => 'tags',
+				'tags'   => [ 'post:42', 'term:9' ],
+			],
+			$exit->payload
+		);
+		$this->assertSame( 2, $this->store->tag_generation( 'post:42' ) );
+		$this->assertSame( 1, $this->store->tag_generation( 'post42' ), 'post42 is not post:42' );
+		$this->assertArrayHasKey( CacheStore::TAG_PREFIX . 'post:42', $GLOBALS['bfag_test_transients'] );
+		$this->assertArrayNotHasKey( CacheStore::TAG_PREFIX . 'post42', $GLOBALS['bfag_test_transients'] );
 	}
 
 	public function test_ajax_refresh_recomputes_stores_and_returns_the_kpis(): void {

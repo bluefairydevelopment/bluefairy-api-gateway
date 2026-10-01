@@ -286,7 +286,7 @@ final class AdminMenu {
 		$messages = [
 			'error'                 => [ 'error', __( 'That did not work. Please try again.', 'bluefairy-api-gateway' ) ],
 			'cache_saved'           => [ 'success', __( 'Cache rule saved.', 'bluefairy-api-gateway' ) ],
-			'cache_invalid'         => [ 'error', __( 'Cache rule not saved: check the route glob (letters, digits, / * ? . - _) and the TTL (1–86400 seconds).', 'bluefairy-api-gateway' ) ],
+			'cache_invalid'         => [ 'error', __( 'Cache rule not saved: check the route glob (letters, digits, / * ? . - _).', 'bluefairy-api-gateway' ) ],
 			'cache_limit'           => [ 'error', __( 'Cache rule not added: the free plugin allows one rule.', 'bluefairy-api-gateway' ) ],
 			'cache_deleted'         => [ 'success', __( 'Cache rule deleted.', 'bluefairy-api-gateway' ) ],
 			'cache_not_found'       => [ 'error', __( 'That cache rule no longer exists.', 'bluefairy-api-gateway' ) ],
@@ -351,7 +351,17 @@ final class AdminMenu {
 		}
 		$tags = [];
 		if ( isset( $_POST['tags'] ) && is_array( $_POST['tags'] ) ) {
-			$tags = array_values( array_filter( array_map( 'sanitize_key', wp_unslash( $_POST['tags'] ) ) ) );
+			// CacheStore::sanitize_tag, not sanitize_key(): a Pro tag such as `post:42` must keep its colon.
+			$tags = array_values(
+				array_unique(
+					array_filter(
+						array_map(
+							[ CacheStore::class, 'sanitize_tag' ],
+							array_map( 'sanitize_text_field', wp_unslash( $_POST['tags'] ) )
+						)
+					)
+				)
+			);
 		}
 		if ( [] === $tags ) {
 			$this->store->flush_all();

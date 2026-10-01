@@ -139,7 +139,7 @@ final class Installer {
 		$engine = 'ENGINE=InnoDB ' . $charset_collate;
 
 		return [
-			// One row in the free plugin (route_glob '*'); unlimited with Pro.
+			// One row in the free plugin (seeded with route_glob '**', matching everything); up to 500 with Pro.
 			'bfag_cache_rules'        => "CREATE TABLE {$prefix}bfag_cache_rules (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   label VARCHAR(100) NOT NULL DEFAULT '',

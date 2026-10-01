@@ -46,6 +46,22 @@ final class SettingsPageTest extends TestCase {
 		$this->assertSame( 'textarea', $groups['ratelimit']['fields']['trusted_proxies']['type'] );
 	}
 
+	/**
+	 * Nothing in the free plugin sends an alert; the two alert fields must
+	 * say the Pro add-on is what reads them, and must not promise that a
+	 * blank email makes the free plugin mail the admin.
+	 */
+	public function test_the_alert_fields_say_the_pro_add_on_is_what_reads_them(): void {
+		$fields = $this->page()->groups()['general']['fields'];
+		$this->assertSame( 'Where the Pro add-on sends failure alerts. Leave blank to use the site admin email.', $fields['notification_email']['description'] );
+		$this->assertSame( 'Consecutive webhook failures before the Pro add-on raises an alert. The free plugin stores this but sends nothing.', $fields['failure_threshold']['description'] );
+
+		$html = bfag_test_render( [ $this->page(), 'render' ] );
+		$this->assertStringContainsString( 'Where the Pro add-on sends failure alerts. Leave blank to use the site admin email.', $html );
+		$this->assertStringContainsString( 'before the Pro add-on raises an alert', $html );
+		$this->assertStringNotContainsString( 'Where alerts are sent.', $html, 'the free plugin sends no alerts' );
+	}
+
 	public function test_render_shows_every_field_with_its_value_and_fires_the_fields_hook_inside_the_table(): void {
 		update_option(
 			'bfag_settings',

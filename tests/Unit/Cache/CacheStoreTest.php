@@ -176,4 +176,11 @@ final class CacheStoreTest extends TestCase {
 		$this->assertSame( 2, $store->tag_generation( 'post:7' ), 'colons survive so post:7 is a distinct tag' );
 		$this->assertSame( 1, $store->tag_generation( 'post7' ), 'post7 is not post:7' );
 	}
+
+	public function test_sanitize_tag_is_the_shared_static_sanitiser(): void {
+		$this->assertSame( 'post:42', CacheStore::sanitize_tag( ' Post:42 ' ) );
+		$this->assertSame( 'ab_c-d', CacheStore::sanitize_tag( 'a.b_c-d!' ) );
+		$this->assertSame( '', CacheStore::sanitize_tag( '***' ) );
+		$this->assertSame( str_repeat( 'x', 50 ), CacheStore::sanitize_tag( str_repeat( 'x', 51 ) ) );
+	}
 }

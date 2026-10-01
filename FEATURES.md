@@ -605,12 +605,24 @@ the same name.
 ### Route → scope map
 
 `Capabilities::required_scope( $route, $method )` returns the API-key scope a
-route needs — `cache:purge` for `/bfag/v1/cache/purge`, `webhook:read` or
-`webhook:write` for `/bfag/v1/webhooks…` by method, `read` for everything
-else — and `Capabilities::scope_satisfied( $held, $required )` evaluates it
-(`webhook:write` implies `webhook:read`; nothing implies `cache:purge`). The
-map lives in the base so the two plugins cannot disagree about it; the Pro
-add-on enforces it.
+route needs, and `Capabilities::scope_satisfied( $held, $required )` evaluates
+it. The map lives in the base so the two plugins cannot disagree about it; the
+Pro add-on enforces it.
+
+| Scope | Grants | Routes |
+|---|---|---|
+| `read` | Read any route | GET/HEAD/OPTIONS anywhere, and `/bfag/v1/status` |
+| `write` | Create, update and delete through any REST route (acts as the key's user) | POST/PUT/PATCH/DELETE on every route outside `/bfag/v1` — `wp/v2`, `wc/v3`, … |
+| `cache:purge` | Purge the response cache | `POST /bfag/v1/cache/purge` |
+| `webhook:read` | List webhooks and their deliveries | GET on `/bfag/v1/webhooks…` |
+| `webhook:write` | Create, update, delete and retry webhooks | POST/PUT/PATCH/DELETE on `/bfag/v1/webhooks…` |
+
+`webhook:write` implies `webhook:read`; nothing else implies anything — `write`
+does not imply `read`, and neither implies `cache:purge`. A key acts as the
+user it is bound to, so `write` on an administrator's key is as powerful as that
+administrator's REST access: grant it only to integrations that must change
+content. `Capabilities::SCOPES` lists the tokens and `Capabilities::SCOPE_LABELS`
+their one-line descriptions, which the Pro add-on's API-key form shows.
 
 ---
 
@@ -649,7 +661,7 @@ plugin keeps doing exactly what it does now.
 | Salesforce, HubSpot and Mailchimp presets — the delivery becomes a CRM record | Yes | — |
 | Incoming webhook endpoint with per-vendor verification (`/bfag/v1/incoming/<preset>`) | Yes | — |
 | Webhook REST API — list, create, update, delete, deliveries, retry | Yes | — |
-| API keys with scopes (`X-BF-API-Key`) | Yes | — |
+| API keys with scopes (`X-BF-API-Key`) — `read`, `write`, `cache:purge`, `webhook:read`, `webhook:write` | Yes | — |
 | `GET /bfag/v1/status` and `POST /bfag/v1/cache/purge` | Yes | Yes |
 | Admin tabs | 6 | 5 |
 

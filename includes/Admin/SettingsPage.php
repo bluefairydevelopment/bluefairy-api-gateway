@@ -58,14 +58,14 @@ final class SettingsPage extends Page {
 					'notification_email' => [
 						'label'       => __( 'Notification email', 'bluefairy-api-gateway' ),
 						'type'        => 'email',
-						'description' => __( 'Where alerts are sent. Leave blank for the site admin email.', 'bluefairy-api-gateway' ),
+						'description' => __( 'Where the Pro add-on sends failure alerts. Leave blank to use the site admin email.', 'bluefairy-api-gateway' ),
 					],
 					'failure_threshold'  => [
 						'label'       => __( 'Failure threshold', 'bluefairy-api-gateway' ),
 						'type'        => 'number',
 						'min'         => 1,
 						'max'         => 100,
-						'description' => __( 'Consecutive webhook failures before an alert is raised.', 'bluefairy-api-gateway' ),
+						'description' => __( 'Consecutive webhook failures before the Pro add-on raises an alert. The free plugin stores this but sends nothing.', 'bluefairy-api-gateway' ),
 					],
 				],
 			],

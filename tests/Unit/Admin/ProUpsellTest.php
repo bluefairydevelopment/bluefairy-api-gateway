@@ -32,6 +32,33 @@ final class ProUpsellTest extends TestCase {
 		$this->assertSame( '', bfag_test_render( [ $upsell, 'render' ] ), 'hidden for Pro' );
 	}
 
+	/**
+	 * Every line must describe what Pro ships: a 500-row cap (never
+	 * "unlimited") and Salesforce/HubSpot/Mailchimp presets only.
+	 */
+	public function test_the_feature_list_claims_only_what_pro_ships(): void {
+		$upsell = new ProUpsell();
+		$html   = bfag_test_render( [ $upsell, 'render' ] );
+
+		foreach (
+			[
+				'Up to 500 cache rules and rate-limit rules (free: one of each)',
+				'Up to 500 webhooks with automatic retries and failure alerts (free: three, single attempt)',
+				'Salesforce, HubSpot and Mailchimp presets and a verified incoming-webhook endpoint',
+				'Purges narrowed to the tags a change touches',
+				'Rate limits per user and per API key, with DDoS auto-ban',
+				'API keys with scopes for integrations',
+				'WPGraphQL query caching',
+			] as $line
+		) {
+			$this->assertContains( $line, $upsell->features() );
+			$this->assertStringContainsString( esc_html( $line ), $html );
+		}
+		foreach ( [ 'Unlimited', 'unlimited', 'Slack', 'Zapier' ] as $false_claim ) {
+			$this->assertStringNotContainsString( $false_claim, $html, "the panel must not promise \"{$false_claim}\"" );
+		}
+	}
+
 	public function test_limit_line_names_the_allowance(): void {
 		$this->assertSame( 'The free plugin allows 1 cache rule — Pro removes the limit', ( new ProUpsell() )->limit_line( '1 cache rule' ) );
 	}

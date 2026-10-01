@@ -46,7 +46,6 @@ final class CacheRuleRepository {
 	 * Bounds.
 	 */
 	private const MAX_TAGS         = 20;
-	private const MAX_TAG_LENGTH   = 50;
 	private const MAX_LABEL_LENGTH = 100;
 	private const MIN_TTL          = 1;
 	private const MAX_TTL          = 86400;
@@ -286,8 +285,8 @@ final class CacheRuleRepository {
 	}
 
 	/**
-	 * Accept an array or a comma-separated string; keep `[a-z0-9_:-]`,
-	 * lower-cased, unique, at most 20.
+	 * Accept an array or a comma-separated string; keep `[a-z0-9_:-]`
+	 * (CacheStore::sanitize_tag), lower-cased, unique, at most 20.
 	 *
 	 * @param mixed $raw Raw tags.
 	 * @return string[]
@@ -304,8 +303,7 @@ final class CacheRuleRepository {
 			if ( ! is_string( $tag ) ) {
 				continue;
 			}
-			$tag = preg_replace( '/[^a-z0-9_:-]/', '', strtolower( trim( $tag ) ) ) ?? '';
-			$tag = substr( $tag, 0, self::MAX_TAG_LENGTH );
+			$tag = CacheStore::sanitize_tag( $tag );
 			if ( '' === $tag || in_array( $tag, $out, true ) ) {
 				continue;
 			}

@@ -118,6 +118,22 @@ final class KpiCronTest extends TestCase {
 		$this->assertNull( $cron->current(), 'expired' );
 	}
 
+	public function test_run_prunes_cache_stats_older_than_seven_days_but_compute_does_not(): void {
+		$cron   = $this->cron();
+		$needle = 'DELETE FROM ' . $this->wpdb->prefix . 'bfag_cache_stats';
+
+		$this->prime( 1, 1, [], 0 );
+		$cron->compute();
+		$this->assertSame( [], $this->wpdb->queries_matching( $needle ), 'compute() is read-only' );
+
+		$this->prime( 1, 1, [], 0 );
+		$cron->run();
+		$deletes = $this->wpdb->queries_matching( $needle );
+		$this->assertCount( 1, $deletes, 'run() prunes once' );
+		$this->assertSame( 1, preg_match( "/bucket_start < '([^']+)'/", $deletes[0], $m ) );
+		$this->assertEqualsWithDelta( time() - 7 * DAY_IN_SECONDS, strtotime( $m[1] . ' UTC' ), 5, 'buckets older than seven days go' );
+	}
+
 	public function test_a_non_array_transient_reads_as_cold(): void {
 		set_transient( 'bfag_kpis', 'garbage', 360 );
 		$this->assertNull( $this->cron()->current() );
