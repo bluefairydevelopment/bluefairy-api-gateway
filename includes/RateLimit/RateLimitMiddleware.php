@@ -26,8 +26,9 @@ use BlueFairy\ApiGateway\Support\RequestContext;
  * can carry headers through `WP_REST_Server::dispatch()`.
  *
  * Two seams for the Pro add-on: `bfag_rate_limit_is_blocked` (its ban list,
- * checked before any rule) and `bfag_rate_limit_breached` (its DDoS
- * mitigator, fired once per limited request).
+ * checked before any rule, after the editor exemption) and
+ * `bfag_rate_limit_breached` (its DDoS mitigator, fired once per NEW breach
+ * — a subject refused from the limited marker fires nothing).
  */
 final class RateLimitMiddleware {
 
@@ -101,6 +102,15 @@ final class RateLimitMiddleware {
 			return $result;
 		}
 
+		// The block editor, the media library and the customiser all drive the
+		// REST API from one browser; an editor's own session must not be
+		// throttled by the ceiling meant for anonymous traffic — nor refused
+		// by a ban on a shared address (R2-05): the exemption is decided
+		// before the ban list is asked and before any hits-table work.
+		if ( Settings::to_bool( $this->settings->get( 'rate_limit_exempt_editors' ) ) && is_user_logged_in() && current_user_can( 'edit_posts' ) ) {
+			return $result;
+		}
+
 		/**
 		 * Filters whether the client is blocked outright (the Pro ban list).
 		 *
@@ -112,13 +122,6 @@ final class RateLimitMiddleware {
 		 */
 		if ( true === apply_filters( 'bfag_rate_limit_is_blocked', false, $ip, $request ) ) {
 			return $this->blocked_response();
-		}
-
-		// The block editor, the media library and the customiser all drive the
-		// REST API from one browser; an editor's own session must not be
-		// throttled by the ceiling meant for anonymous traffic.
-		if ( Settings::to_bool( $this->settings->get( 'rate_limit_exempt_editors' ) ) && is_user_logged_in() && current_user_can( 'edit_posts' ) ) {
-			return $result;
 		}
 
 		foreach ( $this->rules->matching( $route ) as $rule ) {
@@ -146,16 +149,18 @@ final class RateLimitMiddleware {
 			$window = (int) $rule['window_seconds'];
 			$max    = (int) $rule['max_requests'];
 			// A subject that breached this rule within the window is refused
-			// from the marker alone: no INSERT, no COUNT, until it expires.
-			$marker = self::limited_key( $subject, (int) $rule['id'] );
-			$known  = $this->is_limited( $marker );
+			// from the marker alone: no INSERT, no COUNT, no breach action,
+			// until it expires. The marker is keyed on the rule's limits too,
+			// so editing the rule retires every marker it left (R2-07).
+			$marker = self::limited_key( $subject, (int) $rule['id'], $max, $window );
+			if ( $this->is_limited( $marker ) ) {
+				return $this->limited_response( $rule );
+			}
 			// Counted against the rule, not the path: one rule = one budget per
 			// subject, so neither a case variant nor a crawl of 10,000 distinct
 			// URLs under a `**` rule gets a fresh allowance.
-			if ( $known || $this->hits->consume( $subject, self::bucket( (int) $rule['id'] ), $window, $max, $route ) ) {
-				if ( ! $known ) {
-					$this->mark_limited( $marker, $window );
-				}
+			if ( $this->hits->consume( $subject, self::bucket( (int) $rule['id'] ), $window, $max, $route ) ) {
+				$this->mark_limited( $marker, $window );
 				Logger::log(
 					'rate limit breached',
 					[
@@ -168,16 +173,29 @@ final class RateLimitMiddleware {
 				);
 
 				/**
-				 * A subject exceeded a rule.
+				 * A subject newly exceeded a rule (once per window; a request
+				 * refused from the limited marker does not fire this).
 				 *
 				 * @since 1.0.0
 				 *
-				 * @param string               $subject The counted subject.
-				 * @param array<string, mixed> $rule    The rule row.
-				 * @param \WP_REST_Request     $request The request.
-				 * @param string               $ip      Client IP.
+				 * @param string               $subject                 The counted subject.
+				 * @param array<string, mixed> $rule                    The rule row.
+				 * @param \WP_REST_Request     $request                 The request.
+				 * @param string               $ip                      Client IP.
+				 * @param bool                 $forwarded_without_proxy True when a forwarded-address
+				 *                                                      header is present but REMOTE_ADDR
+				 *                                                      is not a trusted proxy: the IP is a
+				 *                                                      proxy's shared address and must not
+				 *                                                      be banned (R2-05).
 				 */
-				do_action( 'bfag_rate_limit_breached', $subject, $rule, $request, $ip );
+				do_action(
+					'bfag_rate_limit_breached',
+					$subject,
+					$rule,
+					$request,
+					$ip,
+					$this->context->forwarded_header_present() && ! $this->context->is_trusted_proxy()
+				);
 				return $this->limited_response( $rule );
 			}
 		}
@@ -233,13 +251,18 @@ final class RateLimitMiddleware {
 
 	/**
 	 * The marker key for a subject under a rule. The separator keeps
-	 * subject `10.0.0.1` + rule 12 apart from `10.0.0.11` + rule 2.
+	 * subject `10.0.0.1` + rule 12 apart from `10.0.0.11` + rule 2. The
+	 * rule's limits are part of the key, so a marker left under the old
+	 * `max_requests` or `window_seconds` no longer applies once the rule
+	 * is edited.
 	 *
 	 * @param string $subject The counted subject.
 	 * @param int    $rule_id The rule's id.
+	 * @param int    $max     The rule's max_requests.
+	 * @param int    $window  The rule's window_seconds.
 	 */
-	public static function limited_key( string $subject, int $rule_id ): string {
-		return 'limited:' . md5( $subject . '|' . self::bucket( $rule_id ) );
+	public static function limited_key( string $subject, int $rule_id, int $max, int $window ): string {
+		return 'limited:' . md5( $subject . '|' . self::bucket( $rule_id ) . '|' . $max . '|' . $window );
 	}
 
 	/**

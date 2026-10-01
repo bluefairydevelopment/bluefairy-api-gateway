@@ -37,8 +37,12 @@ foreach ( $events as $bfag_key => $bfag_spec ) {
 		<tr>
 			<th scope="row"><label for="bfag-wh-url"><?php esc_html_e( 'URL', 'bluefairy-api-gateway' ); ?></label></th>
 			<td>
-				<input type="url" id="bfag-wh-url" name="bfag[url]" class="large-text code" required value="<?php echo esc_attr( (string) $webhook['url'] ); ?>" placeholder="https://" />
+				<?php // Required unless a preset is chosen: a preset builds its own request (U-14); admin.js follows the Preset select. ?>
+				<input type="url" id="bfag-wh-url" name="bfag[url]" class="large-text code" data-bfag-preset-url<?php echo '' === (string) $webhook['preset'] ? ' required' : ''; ?> value="<?php echo esc_attr( (string) $webhook['url'] ); ?>" placeholder="https://" />
 				<p class="description"><?php esc_html_e( 'https only. Redirects are not followed.', 'bluefairy-api-gateway' ); ?></p>
+				<?php if ( [] !== $presets ) : ?>
+					<p class="description"><?php esc_html_e( 'Optional with a preset. If you remove the preset later, deliveries go to this URL as plain signed JSON.', 'bluefairy-api-gateway' ); ?></p>
+				<?php endif; ?>
 			</td>
 		</tr>
 		<tr>

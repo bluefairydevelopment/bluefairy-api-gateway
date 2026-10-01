@@ -69,7 +69,7 @@ final class SettingsPageTest extends TestCase {
 	public function test_the_alert_fields_say_the_pro_add_on_is_what_reads_them(): void {
 		$fields = $this->page()->groups()['general']['fields'];
 		$this->assertSame( 'Where the Pro add-on sends failure alerts. Leave blank to use the site admin email.', $fields['notification_email']['description'] );
-		$this->assertSame( 'Consecutive webhook failures before the Pro add-on raises an alert. The free plugin stores this but sends nothing.', $fields['failure_threshold']['description'] );
+		$this->assertSame( 'Consecutive webhook failures before an alert is sent.', $fields['failure_threshold']['description'], 'NF-29: shown only with Pro, so it does not talk about the free plugin' );
 
 		// U-23: without Pro the two fields are hidden inputs (values kept, nothing promised) and the General heading goes with them.
 		update_option( 'bfag_settings', [ 'notification_email' => 'ops@example.com' ] );
@@ -77,14 +77,17 @@ final class SettingsPageTest extends TestCase {
 		$this->assertStringContainsString( '<input type="hidden" name="bfag[notification_email]" value="ops@example.com" />', $html );
 		$this->assertStringContainsString( '<input type="hidden" name="bfag[failure_threshold]" value="5" />', $html );
 		$this->assertStringNotContainsString( 'Where the Pro add-on sends failure alerts', $html );
-		$this->assertStringNotContainsString( 'before the Pro add-on raises an alert', $html );
+		$this->assertStringNotContainsString( 'before an alert is sent', $html );
 		$this->assertStringNotContainsString( '>General</h2>', $html );
+		$this->assertStringContainsString( '<h2 id="bfag-group-ratelimit">', $html, 'NF-30: the proxy notice links to this anchor' );
+		$this->assertStringContainsString( 'name="bfag[trusted_proxies]"', $html );
+		$this->assertGreaterThan( strpos( $html, 'id="bfag-group-ratelimit"' ), strpos( $html, 'name="bfag[trusted_proxies]"' ), 'Trusted proxies is in the rate-limit group' );
 		$this->assertStringContainsString( '>Cache</h2>', $html );
 
 		add_filter( 'bfag_is_pro', '__return_true' );
 		$html = bfag_test_render( [ $this->page(), 'render' ] );
 		$this->assertStringContainsString( 'Where the Pro add-on sends failure alerts. Leave blank to use the site admin email.', $html );
-		$this->assertStringContainsString( 'before the Pro add-on raises an alert', $html );
+		$this->assertStringContainsString( 'Consecutive webhook failures before an alert is sent.', $html );
 		$this->assertStringContainsString( '>General</h2>', $html );
 		$this->assertStringContainsString( 'type="email" id="bfag-setting-notification-email"', $html );
 		$this->assertStringNotContainsString( 'Where alerts are sent.', $html, 'the free plugin sends no alerts' );

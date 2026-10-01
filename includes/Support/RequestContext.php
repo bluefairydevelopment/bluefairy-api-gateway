@@ -37,6 +37,15 @@ final class RequestContext {
 	private const CHAIN_HEADER = 'X-Forwarded-For';
 
 	/**
+	 * The $_SERVER keys of every forwarded-address header a proxy may set.
+	 * Presence is what `forwarded_header_present()` reports; only the
+	 * admin's chosen header is ever read for a value.
+	 *
+	 * @var list<string>
+	 */
+	public const FORWARDED_SERVER_KEYS = [ 'HTTP_X_FORWARDED_FOR', 'HTTP_CF_CONNECTING_IP', 'HTTP_TRUE_CLIENT_IP', 'HTTP_X_REAL_IP' ];
+
+	/**
 	 * Resolved once per request.
 	 *
 	 * @var string|null
@@ -60,8 +69,7 @@ final class RequestContext {
 		$remote = $this->server( 'REMOTE_ADDR' );
 		$ip     = IpUtils::is_valid_ip( $remote ) ? $remote : '';
 
-		$proxies = $this->settings->get( 'trusted_proxies' );
-		$proxies = is_array( $proxies ) ? $proxies : [];
+		$proxies = $this->trusted_proxies();
 		if ( '' !== $ip && [] !== $proxies && IpUtils::in_any_range( $ip, $proxies ) ) {
 			$header    = $this->forwarded_header();
 			$value     = $this->server( 'HTTP_' . strtoupper( str_replace( '-', '_', $header ) ) );
@@ -74,6 +82,34 @@ final class RequestContext {
 		}
 		$this->client_ip = $ip;
 		return $ip;
+	}
+
+	/**
+	 * Is REMOTE_ADDR one of the admin's trusted proxies? False when it is
+	 * missing, invalid, or no proxies are configured.
+	 */
+	public function is_trusted_proxy(): bool {
+		$remote = $this->server( 'REMOTE_ADDR' );
+		if ( ! IpUtils::is_valid_ip( $remote ) ) {
+			return false;
+		}
+		$proxies = $this->trusted_proxies();
+		return [] !== $proxies && IpUtils::in_any_range( $remote, $proxies );
+	}
+
+	/**
+	 * Does the request carry any forwarded-address header (whichever one,
+	 * whatever its value)? With `is_trusted_proxy()` false this means the
+	 * client IP is a proxy's shared address, which the Pro mitigator must
+	 * not ban (R2-05).
+	 */
+	public function forwarded_header_present(): bool {
+		foreach ( self::FORWARDED_SERVER_KEYS as $key ) {
+			if ( '' !== $this->server( $key ) ) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/**
@@ -90,6 +126,16 @@ final class RequestContext {
 	 */
 	public static function normalize_route( string $route ): string {
 		return ltrim( trim( $route ), '/' );
+	}
+
+	/**
+	 * The configured trusted proxy ranges, [] when none.
+	 *
+	 * @return string[]
+	 */
+	private function trusted_proxies(): array {
+		$proxies = $this->settings->get( 'trusted_proxies' );
+		return is_array( $proxies ) ? $proxies : [];
 	}
 
 	/**

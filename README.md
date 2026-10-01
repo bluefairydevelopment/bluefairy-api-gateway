@@ -26,7 +26,7 @@ For the customer-facing feature guide, including the Pro/free comparison table, 
 2. Activate it from the **Plugins** screen. Activation refuses to proceed on PHP below 8.1.
 3. Open **Settings → API Gateway**.
 
-Activation creates six database tables (listed below), seeds the one cache rule and the one rate-limit rule, grants the `bfag_manage_gateway` capability to the Administrator role, and schedules three WP-Cron jobs. Nothing is sent anywhere until you add a webhook.
+Activation creates six database tables (listed below), seeds the one cache rule and the one rate-limit rule, grants the `bfag_manage_gateway` capability to the Administrator role, and schedules four recurring WP-Cron jobs (a fifth, `bfag_cron_flush_pending`, is a single event scheduled on demand). Nothing is sent anywhere until you add a webhook.
 
 No Composer install is needed at runtime: the plugin autoloads its own namespace. `composer install` in the plugin folder pulls in the development tools only (PHPUnit, PHPCS, PHPStan).
 
@@ -115,7 +115,7 @@ Body (JSON or form): optional `tags` — an array of tag names, or a comma-separ
 { "purged": "tags", "tags": ["products"] }
 ```
 
-Tag names are lower-cased and reduced to `[a-z0-9_-]`; a purge naming a tag that no enabled rule carries is harmless (and logged when debug logging is on).
+Tag names are lower-cased and reduced to `[a-z0-9_:-]`, so `post:42` arrives intact; a purge naming a tag that no enabled rule carries is harmless (and logged when debug logging is on).
 
 ### Response headers on every REST request
 
@@ -149,7 +149,7 @@ Six tables, all prefixed with `$wpdb->prefix`, created with `dbDelta` on activat
 | `bfag_webhooks` | webhook subscriptions — label, URL, event, secret, headers (JSON), preset, enabled, max retries |
 | `bfag_webhook_deliveries` | the delivery log — payload, status, HTTP status, response body (first 2,000 characters), attempt, timestamps. DB version 1.0.1 adds `idx_webhook_id` and `idx_created_at`; `dbDelta` adds them on the first boot after upgrading |
 
-Options: `bfag_settings`, `bfag_db_version`, `bfag_version`, `bfag_cache_generation`, `bfag_tag_generations` (the generation of every tag an enabled rule carries, `tag => int` — entries for tags no rule carries any more are dropped on the next purge), `bfag_kpis`. Transients: `bfag_kpis`, and without a persistent object cache `bfag_resp_<key>` (stored responses) and `bfag_limited_<key>` (a client over a limit, for the rest of its window). Object-cache groups: `bfag` (rules, the generations, and with a persistent cache the rate-limit window counters, the cache-stats counters and the limited markers; five-minute TTL for the rule lists) and `bfag_responses` (stored responses, when a persistent object cache is present).
+Options: `bfag_settings`, `bfag_db_version`, `bfag_version`, `bfag_cache_generation`, `bfag_tag_generations` (the generation of every tag an enabled rule carries, `tag => int` — entries for tags no rule carries any more are dropped on the next purge), `bfag_kpis`, `bfag_install_error` (written when a table could not be created — the missing tables, the first database error and the time — rendered as an error notice on every admin screen and cleared by the next successful install). Transients: `bfag_kpis`, and without a persistent object cache `bfag_resp_<key>` (stored responses) and `bfag_limited_<key>` (a client over a limit, for the rest of its window). Object-cache groups: `bfag` (rules, the generations, and with a persistent cache the rate-limit window counters, the cache-stats counters and the limited markers; five-minute TTL for the rule lists) and `bfag_responses` (stored responses, when a persistent object cache is present).
 
 Cached responses go to the WordPress object cache group `bfag_responses` when `wp_using_ext_object_cache()` is true (Redis, Memcached), otherwise to transients — capped there at 64 KB per response and one hour, and swept every five minutes by `bfag_cron_prune_responses`. Purging never enumerates entries: every key embeds a generation number, and a purge bumps the generation so old entries are simply never looked up again and expire by their TTL. With a persistent object cache the rate-limit count and the cache hit/miss counters are `wp_cache_incr()` calls (the hit row is still written; the counters are flushed to `bfag_cache_stats` by the KPI cron), so a cached response costs one query — the hit-log INSERT.
 

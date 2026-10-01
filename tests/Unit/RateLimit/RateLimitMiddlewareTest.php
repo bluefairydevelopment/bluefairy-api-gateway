@@ -29,17 +29,26 @@ final class RateLimitMiddlewareTest extends TestCase {
 	 */
 	private array $breaches = [];
 
+	/**
+	 * The 5th argument of each firing: forwarded_without_proxy.
+	 *
+	 * @var list<bool>
+	 */
+	private array $breach_flags = [];
+
 	protected function setUp(): void {
 		parent::setUp();
-		$this->server   = new \WP_REST_Server();
-		$this->breaches = [];
+		$this->server       = new \WP_REST_Server();
+		$this->breaches     = [];
+		$this->breach_flags = [];
 		add_action(
 			'bfag_rate_limit_breached',
-			function ( string $subject, array $rule, \WP_REST_Request $request, string $ip ): void {
-				$this->breaches[] = [ $subject, (int) $rule['id'], $request->get_route(), $ip ];
+			function ( string $subject, array $rule, \WP_REST_Request $request, string $ip, bool $forwarded_without_proxy ): void {
+				$this->breaches[]     = [ $subject, (int) $rule['id'], $request->get_route(), $ip ];
+				$this->breach_flags[] = $forwarded_without_proxy;
 			},
 			10,
-			4
+			5
 		);
 	}
 
@@ -188,10 +197,10 @@ final class RateLimitMiddlewareTest extends TestCase {
 		$middleware = $this->middleware( $rules );
 
 		$this->assertSame( 429, $this->check( $middleware )->get_status() );
-		$marker = 'bfag_limited_' . RateLimitMiddleware::limited_key( '203.0.113.10', 3 );
+		$marker = 'bfag_limited_' . RateLimitMiddleware::limited_key( '203.0.113.10', 3, 5, 60 );
 		$this->assertEqualsWithDelta( time() + 60, get_transient( $marker ), 5, 'the marker holds the end of the window (real clock, as hit_at is)' );
 		$this->assertSame( 1_700_000_060, $GLOBALS['bfag_test_transients'][ $marker ]['expires'], 'and expires with it' );
-		$this->assertSame( 'limited:' . md5( '203.0.113.10|rule:3' ), RateLimitMiddleware::limited_key( '203.0.113.10', 3 ) );
+		$this->assertSame( 'limited:' . md5( '203.0.113.10|rule:3|5|60' ), RateLimitMiddleware::limited_key( '203.0.113.10', 3, 5, 60 ), 'the key carries the limits, so an edited rule retires its markers' );
 
 		$this->wpdb->calls = [];
 		$this->wpdb->queue( 'get_var', '0' );
@@ -199,7 +208,7 @@ final class RateLimitMiddlewareTest extends TestCase {
 		$this->assertSame( 429, $response->get_status() );
 		$this->assertSame( '5', $response->get_headers()['X-BF-RateLimit-Limit'] );
 		$this->assertSame( [], $this->wpdb->calls, 'no INSERT and no COUNT for a known-limited subject' );
-		$this->assertCount( 2, $this->breaches, 'the breach action fires per limited request, as before' );
+		$this->assertCount( 1, $this->breaches, 'R2-07: the breach action fired for the new breach only; a request refused from the marker fires nothing' );
 
 		$_SERVER['REMOTE_ADDR'] = '203.0.113.99';
 		$this->assertNull( $this->check( $this->middleware( $rules ) ), 'another subject (a fresh context: the IP is memoised per request) is counted; the queued count of 0 passes it' );
@@ -219,7 +228,7 @@ final class RateLimitMiddlewareTest extends TestCase {
 		$middleware = $this->middleware( [ $this->rule( [ 'id' => 1, 'max_requests' => 0, 'window_seconds' => 30 ] ) ] );
 
 		$this->assertSame( 429, $this->check( $middleware )->get_status(), 'max 0: the first hit breaches' );
-		$key = RateLimitMiddleware::limited_key( '203.0.113.10', 1 );
+		$key = RateLimitMiddleware::limited_key( '203.0.113.10', 1, 0, 30 );
 		$this->assertEqualsWithDelta( time() + 30, wp_cache_get( $key, 'bfag' ), 5 );
 		$this->assertSame( 1_700_000_030, $GLOBALS['bfag_test_cache_expires']['bfag'][ $key ] );
 		$this->assertSame( [], $GLOBALS['bfag_test_transients'], 'no transient' );
@@ -338,13 +347,14 @@ final class RateLimitMiddlewareTest extends TestCase {
 		$this->check( $this->middleware() );
 		$this->assertSame( [], Logger::lines(), 'silent without debug logging' );
 
+		$_SERVER['REMOTE_ADDR'] = '203.0.113.11'; // A fresh subject: the first breach left a marker, and a marker refusal logs nothing.
 		$this->wpdb->queue( 'get_var', '61' );
 		$middleware = $this->middleware( [], [ 'debug_logging' => true ] );
 		Logger::use_settings( new Settings() );
 		ini_set( 'error_log', '/dev/null' );
 		$this->check( $middleware );
 		$this->assertCount( 1, Logger::lines() );
-		$this->assertStringContainsString( 'rate limit breached {"subject":"203.0.113.10","rule":1,"route":"wp\/v2\/posts","max":60,"window":60}', Logger::lines()[0] );
+		$this->assertStringContainsString( 'rate limit breached {"subject":"203.0.113.11","rule":1,"route":"wp\/v2\/posts","max":60,"window":60}', Logger::lines()[0] );
 	}
 
 	// ------------------------------------------------------------------
@@ -477,10 +487,81 @@ final class RateLimitMiddlewareTest extends TestCase {
 		$this->assertNull( $this->check( $this->middleware( [], [ 'rate_limit_exempt_editors' => true ] ) ), 'control: exemption on' );
 	}
 
-	public function test_a_banned_editor_is_still_blocked(): void {
-		add_filter( 'bfag_rate_limit_is_blocked', '__return_true' );
+	/**
+	 * R2-05: the exemption is decided before the ban list is asked, so an
+	 * editor behind a banned shared address (an unconfigured proxy, a
+	 * loopback SSR caller) keeps working; everyone else on it is refused.
+	 */
+	public function test_an_exempt_editor_passes_even_when_the_address_is_banned(): void {
+		$asked = 0;
+		add_filter(
+			'bfag_rate_limit_is_blocked',
+			static function () use ( &$asked ): bool {
+				++$asked;
+				return true;
+			}
+		);
 		wp_set_current_user( 7 );
 		bfag_test_grant( 'edit_posts' );
-		$this->assertSame( 403, $this->check( $this->middleware() )->get_status(), 'the ban list is consulted before the exemption' );
+		$this->assertNull( $this->check( $this->middleware() ), 'the exemption wins over the ban' );
+		$this->assertSame( 0, $asked, 'the ban list is not even consulted for an exempt editor' );
+		$this->assertSame( [], $this->wpdb->calls, 'and no hits-table work' );
+
+		$this->assertSame( 403, $this->check( $this->middleware( [], [ 'rate_limit_exempt_editors' => false ] ) )->get_status(), 'control: exemption off, the editor is banned' );
+		$this->assertSame( 1, $asked );
+
+		wp_set_current_user( 0 );
+		$GLOBALS['bfag_test_caps'] = [];
+		$this->assertSame( 403, $this->check( $this->middleware() )->get_status(), 'control: anonymous traffic on the address is banned' );
+	}
+
+	/**
+	 * R2-05: the breach action's 5th argument tells the Pro mitigator the
+	 * IP is a proxy's shared address — a forwarded-address header arrived
+	 * but REMOTE_ADDR is not a trusted proxy — so it must not ban it.
+	 */
+	public function test_breached_action_reports_a_forwarded_header_without_a_trusted_proxy(): void {
+		$this->wpdb->queue( 'get_var', '61' );
+		$this->assertSame( 429, $this->check( $this->middleware() )->get_status() );
+		$this->assertSame( [ false ], $this->breach_flags, 'no forwarded header: false' );
+
+		$_SERVER['REMOTE_ADDR']          = '203.0.113.20';
+		$_SERVER['HTTP_X_FORWARDED_FOR'] = '198.51.100.9';
+		$this->wpdb->queue( 'get_var', '61' );
+		$this->assertSame( 429, $this->check( $this->middleware() )->get_status() );
+		$this->assertSame( [ false, true ], $this->breach_flags, 'XFF present, REMOTE_ADDR not a trusted proxy: true' );
+		$this->assertSame( '203.0.113.20', $this->breaches[1][3], 'the shared address is what breached' );
+
+		$_SERVER['REMOTE_ADDR'] = '10.0.0.5';
+		$this->wpdb->queue( 'get_var', '61' );
+		$this->assertSame( 429, $this->check( $this->middleware( [], [ 'trusted_proxies' => [ '10.0.0.0/8' ] ] ) )->get_status() );
+		$this->assertSame( [ false, true, false ], $this->breach_flags, 'XFF from a trusted proxy: false (the IP is the real client)' );
+		$this->assertSame( '198.51.100.9', $this->breaches[2][3] );
+	}
+
+	/**
+	 * R2-07: editing a rule's limits retires the markers it left, so a
+	 * subject limited under the old ceiling is counted afresh at once.
+	 */
+	public function test_editing_the_rules_limits_retires_its_limited_marker(): void {
+		bfag_test_set_time( 1_700_000_000 );
+		$this->wpdb->queue( 'get_var', '6' );
+		$this->assertSame( 429, $this->check( $this->middleware( [ $this->rule( [ 'id' => 3, 'max_requests' => 5, 'window_seconds' => 60 ] ) ] ) )->get_status() );
+		$this->assertCount( 1, $this->breaches );
+
+		$this->wpdb->calls = [];
+		$this->assertSame( 429, $this->check( $this->middleware( [ $this->rule( [ 'id' => 3, 'max_requests' => 5, 'window_seconds' => 60 ] ) ] ) )->get_status() );
+		$this->assertSame( [], $this->wpdb->calls, 'control: unchanged rule, refused from the marker' );
+		$this->assertCount( 1, $this->breaches, 'control: a marker refusal fires no breach action' );
+
+		$this->wpdb->calls = [];
+		$this->wpdb->queue( 'get_var', '1' );
+		$this->assertNull( $this->check( $this->middleware( [ $this->rule( [ 'id' => 3, 'max_requests' => 500, 'window_seconds' => 60 ] ) ] ) ), 'max raised: the old marker no longer applies, the request is counted and passes' );
+		$this->assertCount( 1, $this->wpdb->calls_to( 'insert' ) );
+
+		$this->wpdb->calls = [];
+		$this->wpdb->queue( 'get_var', '1' );
+		$this->assertNull( $this->check( $this->middleware( [ $this->rule( [ 'id' => 3, 'max_requests' => 5, 'window_seconds' => 120 ] ) ] ) ), 'window changed: same' );
+		$this->assertCount( 1, $this->wpdb->calls_to( 'insert' ) );
 	}
 }

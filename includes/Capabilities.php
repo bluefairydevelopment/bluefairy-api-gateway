@@ -124,14 +124,26 @@ final class Capabilities {
 	 * `cache:purge` key bound to "Nobody" must be able to purge, and a
 	 * `read` key must not (N3).
 	 *
-	 * @param \WP_REST_Request $request The request; the add-on sets
-	 *                                  `bfag_api_key_scope` on it.
+	 * The key's scope is asked for through the `bfag_request_key_scope`
+	 * filter, which the add-on answers from its own authenticated state.
+	 * Nothing here reads a request parameter: authorisation state carried in
+	 * `?bfag_api_key_scope=` or a body field would let any anonymous client
+	 * pass (R2-01).
+	 *
+	 * @param \WP_REST_Request $request The request being authorised.
 	 */
 	public static function request_allowed( \WP_REST_Request $request ): bool {
 		if ( self::current_user_can_manage() ) {
 			return true;
 		}
-		$scope = $request->get_param( 'bfag_api_key_scope' );
+		/**
+		 * The space-separated scopes of the API key that authenticated this
+		 * request, or null when no key did.
+		 *
+		 * @param string|null      $scope   null; the Pro middleware answers.
+		 * @param \WP_REST_Request $request The request being authorised.
+		 */
+		$scope = apply_filters( 'bfag_request_key_scope', null, $request );
 		if ( ! is_string( $scope ) || '' === trim( $scope ) ) {
 			return false;
 		}

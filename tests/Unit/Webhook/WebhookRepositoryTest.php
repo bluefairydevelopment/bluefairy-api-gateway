@@ -198,6 +198,30 @@ final class WebhookRepositoryTest extends TestCase {
 	// update(), set_enabled(), delete()
 	// ------------------------------------------------------------------
 
+	/**
+	 * U-14: a preset builds its own request, so a webhook with one may have
+	 * a blank URL; without one a blank URL is refused, on create and update.
+	 */
+	public function test_a_blank_url_is_accepted_only_with_a_preset(): void {
+		$repo = new WebhookRepository();
+		$this->wpdb->always( 'get_var', '0' );
+		$this->assertSame( 1, $repo->create( [ 'url' => '', 'preset' => 'hubspot' ] + self::VALID ) );
+		$this->assertSame( '', $this->wpdb->calls_to( 'insert' )[0]['data']['url'] );
+		$this->assertFalse( $repo->create( [ 'url' => '', 'preset' => '' ] + self::VALID ), 'no preset: refused' );
+		$this->assertFalse( $repo->create( [ 'url' => '   ' ] + self::VALID ), 'blank without a preset key: refused' );
+		$this->assertCount( 1, $this->wpdb->calls_to( 'insert' ) );
+
+		$this->assertTrue( $repo->update( 3, [ 'url' => '', 'preset' => 'hubspot' ] ), 'update with a preset in the same call' );
+		$this->assertSame( [ 'preset' => 'hubspot', 'url' => '' ], $this->wpdb->calls_to( 'update' )[0]['data'] );
+		$this->assertFalse( $repo->update( 3, [ 'url' => '', 'preset' => '' ] ), 'removing the preset with a blank URL: refused' );
+
+		$this->wpdb->queue( 'get_row', [ 'preset' => 'hubspot' ] + $this->row( 3 ) );
+		$this->assertTrue( $repo->update( 3, [ 'url' => '' ] ), 'no preset key: the stored preset counts' );
+		$this->wpdb->queue( 'get_row', $this->row( 3 ) );
+		$this->assertFalse( $repo->update( 3, [ 'url' => '' ] ), 'no preset key and none stored: refused' );
+		$this->assertCount( 2, $this->wpdb->calls_to( 'update' ) );
+	}
+
 	public function test_update_touches_only_supplied_columns_and_refuses_invalid_values(): void {
 		$repo = new WebhookRepository();
 		$this->assertTrue( $repo->update( 3, [ 'label' => 'New', 'headers' => [ 'X-A' => 'b' ], 'secret' => '' ] ) );

@@ -14,7 +14,7 @@ defined( 'ABSPATH' ) || exit;
 ?>
 <div class="bfag-upsell">
 	<h2><?php esc_html_e( 'API Gateway Pro', 'bluefairy-api-gateway' ); ?></h2>
-	<p><?php esc_html_e( 'This plugin caches, rate-limits and signs webhooks. Pro removes the limits and adds the parts integrations ask for:', 'bluefairy-api-gateway' ); ?></p>
+	<p><?php esc_html_e( 'This plugin caches, rate-limits and signs webhooks. Pro allows up to 500 rules and webhooks and adds the parts integrations ask for:', 'bluefairy-api-gateway' ); ?></p>
 	<ul>
 		<?php foreach ( $features as $bfag_feature ) : ?>
 			<li><?php echo esc_html( $bfag_feature ); ?></li>

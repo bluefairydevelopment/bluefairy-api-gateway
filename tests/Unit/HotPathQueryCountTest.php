@@ -295,7 +295,7 @@ final class HotPathQueryCountTest extends TestCase {
 
 		self::assertSame( [ 200, 200, 200, 200, 200, 429, 429 ], $statuses );
 		self::assertSame( [ 1 => 2, 2, 2, 2, 2, 2, 0 ], $hits_queries, 'INSERT + COUNT through the breach; nothing on the 7th' );
-		self::assertNotFalse( get_transient( 'bfag_limited_' . RateLimitMiddleware::limited_key( '203.0.113.9', 1 ) ), 'the marker is a transient without a persistent object cache' );
+		self::assertNotFalse( get_transient( 'bfag_limited_' . RateLimitMiddleware::limited_key( '203.0.113.9', 1, 5, 60 ) ), 'the marker is a transient without a persistent object cache' );
 		self::assertSame( 1, count( array_keys( $this->trace(), 'get_results:bfag_cache_rules', true ) ) + 0 * count( $this->trace() ), 'cache rules read once (object-cached after)' );
 	}
 
@@ -312,7 +312,7 @@ final class HotPathQueryCountTest extends TestCase {
 			self::assertSame( $n <= 5 ? 200 : 429, $status, "request {$n}" );
 			self::assertSame( $n <= 6 ? [ 'insert:bfag_rate_limit_hits' ] : [], $this->trace(), "request {$n}" );
 		}
-		self::assertNotFalse( wp_cache_get( RateLimitMiddleware::limited_key( '203.0.113.9', 1 ), 'bfag' ) );
+		self::assertNotFalse( wp_cache_get( RateLimitMiddleware::limited_key( '203.0.113.9', 1, 5, 60 ), 'bfag' ) );
 		self::assertSame( [], $GLOBALS['bfag_test_transients'], 'no transient when the object cache is persistent' );
 	}
 

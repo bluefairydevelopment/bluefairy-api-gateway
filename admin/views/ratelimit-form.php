@@ -59,12 +59,12 @@ $bfag_labels  = [
 			</td>
 		</tr>
 		<?php if ( $is_pro ) : ?>
-			<?php // The Pro mitigator bans IP addresses only: the row is shown, and the field enabled, for "Count by: IP address" alone (U-08; admin.js follows the select). ?>
+			<?php // The Pro mitigator blocks IP addresses only: the row is shown, and the field enabled, for "Count by: IP address" alone (U-08; admin.js follows the select). ?>
 			<tr data-bfag-penalty-row<?php echo 'ip' === (string) $rule['subject_type'] ? '' : ' hidden'; ?>>
 				<th scope="row"><label for="bfag-rl-penalty"><?php esc_html_e( 'Penalty (seconds)', 'bluefairy-api-gateway' ); ?></label></th>
 				<td>
 					<input type="number" id="bfag-rl-penalty" name="bfag[penalty_seconds]" class="small-text" min="0" max="2592000" value="<?php echo esc_attr( (string) (int) ( $rule['penalty_seconds'] ?? 0 ) ); ?>"<?php disabled( 'ip' !== (string) $rule['subject_type'] ); ?> />
-					<p class="description"><?php esc_html_e( 'IP-address rules only: how long the breaching address is banned. 0 disables.', 'bluefairy-api-gateway' ); ?></p>
+					<p class="description"><?php esc_html_e( 'IP-address rules only: how long the breaching address is blocked. 0 disables.', 'bluefairy-api-gateway' ); ?></p>
 				</td>
 			</tr>
 		<?php endif; ?>

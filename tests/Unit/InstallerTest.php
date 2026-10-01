@@ -259,6 +259,24 @@ final class InstallerTest extends TestCase {
 		$this->assertSame( array_keys( Installer::CRON ), array_keys( $GLOBALS['bfag_test_cron'] ) );
 	}
 
+	/**
+	 * R2-11: `$wpdb->last_error` holds the LAST statement's error, so it is
+	 * read after each dbDelta() and the first failure is what the install
+	 * error records — not the blank a later, successful table left behind.
+	 */
+	public function test_create_tables_records_the_first_db_error_of_the_six_statements(): void {
+		ini_set( 'error_log', '/dev/null' );
+		$this->wpdb->missing_tables( [ 'bfag_rate_limit_rules' ] );
+		$GLOBALS['bfag_test_db_delta_errors'] = [ '', "CREATE command denied to user 'wp'@'localhost'", '', 'Table is full', '', '' ];
+
+		$this->assertFalse( Installer::create_tables() );
+		$this->assertCount( 6, $GLOBALS['bfag_test_db_delta'], 'control: six statements ran' );
+		$this->assertSame( '', $this->wpdb->last_error, 'control: the last statement succeeded, so a read after the loop would see nothing' );
+		$error = get_option( Installer::INSTALL_ERROR_OPTION );
+		$this->assertIsArray( $error );
+		$this->assertSame( "CREATE command denied to user 'wp'@'localhost'", $error['db_error'], 'the first failure, not the last' );
+	}
+
 	public function test_an_upgrade_whose_tables_are_missing_keeps_the_old_version_so_the_next_boot_retries(): void {
 		ini_set( 'error_log', '/dev/null' );
 		update_option( 'bfag_db_version', '0.9.0' );

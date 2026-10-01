@@ -41,9 +41,9 @@ $bfag_int  = static function ( mixed $value ): string {
 		</span>
 	</div>
 	<?php if ( $is_pro ) : ?>
-		<?php // The Pro mitigator's figure is the count of active bans; a `blocked_label` key in the KPI array may rename the card (U-19). ?>
+		<?php // The Pro mitigator's figure is the count of active blocks; a `blocked_label` key in the KPI array may rename the card (U-19). ?>
 		<div class="bfag-kpi">
-			<span class="bfag-kpi__label"><?php echo esc_html( is_string( $kpis['blocked_label'] ?? null ) && '' !== $kpis['blocked_label'] ? $kpis['blocked_label'] : __( 'Active bans', 'bluefairy-api-gateway' ) ); ?></span>
+			<span class="bfag-kpi__label"><?php echo esc_html( is_string( $kpis['blocked_label'] ?? null ) && '' !== $kpis['blocked_label'] ? $kpis['blocked_label'] : __( 'Active blocks', 'bluefairy-api-gateway' ) ); ?></span>
 			<span class="bfag-kpi__value" data-bfag-kpi="blocked_today"><?php echo esc_html( $bfag_int( $kpis['blocked_today'] ?? null ) ); ?></span>
 			<span class="bfag-kpi__sub">
 				<span data-bfag-kpi="hits_table_rows"><?php echo esc_html( $bfag_int( $kpis['hits_table_rows'] ?? null ) ); ?></span> <?php esc_html_e( 'hits in the rate-limit log', 'bluefairy-api-gateway' ); ?>
@@ -53,7 +53,7 @@ $bfag_int  = static function ( mixed $value ): string {
 		<div class="bfag-kpi bfag-kpi--pro">
 			<span class="bfag-kpi__label"><?php esc_html_e( 'Blocked (Pro)', 'bluefairy-api-gateway' ); ?></span>
 			<span class="bfag-kpi__value">—</span>
-			<span class="bfag-kpi__sub"><?php esc_html_e( 'Bans need the Pro add-on', 'bluefairy-api-gateway' ); ?></span>
+			<span class="bfag-kpi__sub"><?php esc_html_e( 'Blocks need the Pro add-on', 'bluefairy-api-gateway' ); ?></span>
 		</div>
 	<?php endif; ?>
 </div>

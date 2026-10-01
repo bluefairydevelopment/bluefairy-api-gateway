@@ -91,7 +91,8 @@ final class DashboardPageTest extends TestCase {
 		// U-19: free: the third card says what it would show, instead of a permanent 0.
 		$this->assertStringContainsString( '<span class="bfag-kpi__label">Blocked (Pro)</span>', $html );
 		$this->assertStringContainsString( '<span class="bfag-kpi__value">—</span>', $html );
-		$this->assertStringContainsString( 'Bans need the Pro add-on', $html );
+		$this->assertStringContainsString( 'Blocks need the Pro add-on', $html );
+		$this->assertDoesNotMatchRegularExpression( '/\bbans?\b|\bbanned\b/i', $html, 'NF-16: the base UI says block, never ban' );
 		$this->assertStringNotContainsString( 'data-bfag-kpi="blocked_today"', $html );
 		$this->assertStringNotContainsString( 'Blocked today', $html );
 		$this->assertStringContainsString( 'A monitoring tool authenticated with an Application Password (or, with Pro, an API key) can read the same figures here:', $html, 'U-23: status-endpoint copy' );
@@ -157,7 +158,7 @@ final class DashboardPageTest extends TestCase {
 
 	/**
 	 * U-19: with Pro the third card is the count of active bans, named
-	 * "Active bans" unless the KPI array carries a `blocked_label`.
+	 * "Active blocks" unless the KPI array carries a `blocked_label`.
 	 */
 	public function test_with_pro_the_third_card_is_the_active_ban_count(): void {
 		add_filter( 'bfag_is_pro', '__return_true' );
@@ -172,10 +173,11 @@ final class DashboardPageTest extends TestCase {
 		);
 		$this->prime( [] );
 		$html = bfag_test_render( [ $this->page(), 'render' ] );
-		$this->assertStringContainsString( '<span class="bfag-kpi__label">Active bans</span>', $html );
+		$this->assertStringContainsString( '<span class="bfag-kpi__label">Active blocks</span>', $html );
 		$this->assertStringContainsString( 'data-bfag-kpi="blocked_today">9<', $html );
 		$this->assertStringNotContainsString( 'Blocked (Pro)', $html );
-		$this->assertStringNotContainsString( 'Bans need the Pro add-on', $html );
+		$this->assertStringNotContainsString( 'Blocks need the Pro add-on', $html );
+		$this->assertDoesNotMatchRegularExpression( '/\bbans?\b|\bbanned\b/i', $html, 'NF-16' );
 
 		set_transient(
 			'bfag_kpis',
@@ -189,6 +191,6 @@ final class DashboardPageTest extends TestCase {
 		$this->prime( [] );
 		$html = bfag_test_render( [ $this->page(), 'render' ] );
 		$this->assertStringContainsString( '<span class="bfag-kpi__label">Banned &lt;now&gt;</span>', $html, 'the KPI array may rename the card' );
-		$this->assertStringNotContainsString( 'Active bans', $html );
+		$this->assertStringNotContainsString( 'Active blocks', $html );
 	}
 }

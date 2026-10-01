@@ -85,7 +85,7 @@ final class SettingsPage extends Page {
 						'pro_only'    => true,
 						'min'         => 1,
 						'max'         => 100,
-						'description' => __( 'Consecutive webhook failures before the Pro add-on raises an alert. The free plugin stores this but sends nothing.', 'bluefairy-api-gateway' ),
+						'description' => __( 'Consecutive webhook failures before an alert is sent.', 'bluefairy-api-gateway' ),
 					],
 				],
 			],

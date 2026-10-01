@@ -115,7 +115,7 @@ final class WebhookPageTest extends TestCase {
 		$this->assertStringNotContainsString( 'secret-token', $html, 'the path never rendered' );
 		$this->assertStringNotContainsString( self::SECRET, $html, 'the signing secret never rendered' );
 		$this->assertStringContainsString( 'Post published', $html, 'event label, not key' );
-		$this->assertStringContainsString( '<td>slack</td>', $html );
+		$this->assertStringContainsString( '<td>slack</td>', $html, 'no presets registered: the slug' );
 		$this->assertStringContainsString( 'bfag-badge--failed">failed</a>', $html );
 		$this->assertStringContainsString( 'view=deliveries&amp;webhook_id=1', $html );
 		$this->assertStringContainsString( 'data-bfag-toggle="webhook" data-bfag-id="2" data-bfag-enabled="0"', $html );
@@ -160,7 +160,7 @@ final class WebhookPageTest extends TestCase {
 	public function test_at_the_limit_the_form_gives_way_to_the_upsell_line(): void {
 		$this->prime_list( [ $this->webhook( 1 ), $this->webhook( 2 ), $this->webhook( 3 ) ], [ null, null, null ] );
 		$html = bfag_test_render( [ $this->page(), 'render' ] );
-		$this->assertStringContainsString( 'The free plugin allows 3 webhooks — Pro removes the limit', $html );
+		$this->assertStringContainsString( 'The free plugin allows 3 webhooks — Pro allows up to 500', $html );
 		$this->assertStringNotContainsString( 'value="save_webhook"', $html );
 	}
 
@@ -192,6 +192,9 @@ final class WebhookPageTest extends TestCase {
 		$this->assertStringContainsString( 'X-Api-Key: k-123', $html );
 		$this->assertStringContainsString( 'name="bfag[preset]"', $html );
 		$this->assertMatchesRegularExpression( '/<option value="slack"\s+selected="selected">Slack/', $html );
+		// U-14: with a preset chosen the URL is optional; the line says what happens if the preset goes.
+		$this->assertMatchesRegularExpression( '/<input type="url" id="bfag-wh-url" name="bfag\[url\]" class="large-text code" data-bfag-preset-url value=/', $html, 'not required with a preset' );
+		$this->assertStringContainsString( 'Optional with a preset. If you remove the preset later, deliveries go to this URL as plain signed JSON.', $html );
 		$this->assertStringContainsString( 'name="bfag[max_retries]"', $html );
 		$this->assertStringContainsString( 'value="5"', $html );
 		$this->assertStringContainsString( 'Automatic retries after a failed delivery (Pro). 0 = none.', $html, 'U-23: Max retries help text' );
@@ -230,6 +233,12 @@ final class WebhookPageTest extends TestCase {
 		$this->assertStringContainsString( 'data-bfag-retry="10"', $html );
 		$this->assertStringNotContainsString( 'data-bfag-retry="11"', $html, 'a truncated payload cannot be retried' );
 		$this->assertStringContainsString( '>truncated</span>', $html );
+		// NF-20: each response block names its row.
+		$this->assertStringContainsString( 'Response to delivery #10', $html );
+		$this->assertStringContainsString( 'Response to delivery #13', $html );
+		$this->assertStringNotContainsString( 'Response to delivery #15', $html, 'an unfinished row has no response' );
+		// NF-06: a retrying row without a scheduled time announces none.
+		$this->assertStringNotContainsString( 'next attempt', $html );
 		$this->assertStringNotContainsString( 'data-bfag-retry="12"', $html, 'inbound rows are not resent' );
 		$this->assertStringContainsString( 'CRM &lt;sync&gt;', $html );
 		$this->assertStringNotContainsString( self::SECRET, $html );
@@ -239,6 +248,91 @@ final class WebhookPageTest extends TestCase {
 	/**
 	 * U-12: the helper itself — site-local output in the site's formats.
 	 */
+	/**
+	 * NF-06: the readme promises the next attempt time under a retrying
+	 * delivery; it is printed in site time, for `retrying` rows only.
+	 */
+	public function test_a_retrying_delivery_shows_its_next_attempt_in_site_time(): void {
+		$_GET = [ 'view' => 'deliveries' ];
+		update_option( 'date_format', 'd/m/Y' );
+		update_option( 'time_format', 'g:i a' );
+		$retrying = $this->delivery( 14, 'retrying' );
+		$failed   = $this->delivery( 10, 'failed' );
+		$retrying['next_retry_at'] = '2026-01-03 05:00:00';
+		$failed['next_retry_at']   = '2026-01-03 05:00:00';
+		$this->wpdb->queue( 'get_results', [ $this->webhook( 1 ) ] );
+		$this->wpdb->queue( 'get_results', [ $retrying, $failed ] );
+
+		$html = bfag_test_render( [ $this->page(), 'render' ] );
+
+		$this->assertSame( 1, substr_count( $html, 'next attempt' ), 'under the retrying badge only, not the failed row' );
+		$this->assertMatchesRegularExpression( '/data-bfag-delivery-status>retrying<\/span>\s*<span class="bfag-next-attempt description">\s*next attempt 03\/01\/2026 5:00 am\s*<\/span>/', $html, 'directly under the retrying badge, in site time and site formats' );
+		$this->assertDoesNotMatchRegularExpression( '/data-bfag-delivery-status>failed<\/span>\s*<span class="bfag-next-attempt/', $html, 'a failed row with a stale next_retry_at announces nothing' );
+		$this->assertStringNotContainsString( '2026-01-03 05:00:00', $html, 'the raw GMT string never reaches the page' );
+	}
+
+	/**
+	 * NF-21: the Preset column shows the label an add-on registered for
+	 * the slug, and the slug itself when the preset is no longer known.
+	 */
+	public function test_the_preset_column_shows_the_registered_label_or_the_slug(): void {
+		add_filter( 'bfag_webhook_presets', static fn(): array => [ 'slack' => 'Slack (incoming webhook)' ] );
+		$this->prime_list( [ $this->webhook( 1, 1, 'slack' ), $this->webhook( 2, 1, 'legacy' ), $this->webhook( 3, 1, '' ) ], [ null, null, null ] );
+		$html = bfag_test_render( [ $this->page(), 'render' ] );
+		$this->assertStringContainsString( '<td>Slack (incoming webhook)</td>', $html, 'the label' );
+		$this->assertStringNotContainsString( '<td>slack</td>', $html );
+		$this->assertStringContainsString( '<td>legacy</td>', $html, 'an unknown slug is shown as is' );
+		$this->assertStringContainsString( '<td>—</td>', $html, 'no preset' );
+	}
+
+	/**
+	 * U-14: without a preset the URL is required (server and form).
+	 */
+	public function test_the_url_is_required_only_when_no_preset_is_chosen(): void {
+		add_filter( 'bfag_webhook_presets', static fn(): array => [ 'slack' => 'Slack' ] );
+		$this->prime_list( [], [] );
+		$html = bfag_test_render( [ $this->page(), 'render' ] );
+		$this->assertStringContainsString( 'name="bfag[url]" class="large-text code" data-bfag-preset-url required value=""', $html, 'add form, no preset: required' );
+		$this->assertStringContainsString( 'If you remove the preset later, deliveries go to this URL as plain signed JSON.', $html );
+
+		unset( $GLOBALS['bfag_test_hooks']['bfag_webhook_presets'] );
+		$this->prime_list( [], [] );
+		$html = bfag_test_render( [ $this->page(), 'render' ] );
+		$this->assertStringContainsString( 'data-bfag-preset-url required value=""', $html, 'no presets at all: required' );
+		$this->assertStringNotContainsString( 'If you remove the preset later', $html, 'no presets: no line about them' );
+	}
+
+	public function test_a_blank_url_saves_with_a_preset_and_is_refused_without_one(): void {
+		$this->wpdb->always( 'get_var', '0' );
+		bfag_test_admin_request(
+			'save_webhook',
+			[
+				'label'  => 'x',
+				'url'    => '',
+				'event'  => 'post.published',
+				'preset' => 'slack',
+			]
+		);
+		$location = $this->redirect_of( [ $this->page(), 'handle_actions' ] );
+		$this->assertStringEndsWith( '&bfag_notice=webhook_secret_shown', $location, 'saved' );
+		$inserts = $this->wpdb->calls_to( 'insert' );
+		$this->assertCount( 1, $inserts );
+		$this->assertSame( '', $inserts[0]['data']['url'] );
+		$this->assertSame( 'slack', $inserts[0]['data']['preset'] );
+
+		bfag_test_admin_request(
+			'save_webhook',
+			[
+				'label'  => 'x',
+				'url'    => '',
+				'event'  => 'post.published',
+				'preset' => '',
+			]
+		);
+		$this->assertStringEndsWith( '&bfag_notice=webhook_url_invalid', $this->redirect_of( [ $this->page(), 'handle_actions' ] ), 'no preset: the URL is needed' );
+		$this->assertCount( 1, $this->wpdb->calls_to( 'insert' ), 'nothing more inserted' );
+	}
+
 	public function test_format_datetime_uses_the_site_formats_and_timezone_conversion(): void {
 		$this->assertSame( '2026-10-01 12:00', \BlueFairy\ApiGateway\Admin\Page::format_datetime( '2026-10-01 12:00:00' ), 'defaults: Y-m-d H:i' );
 		update_option( 'date_format', 'F j, Y' );

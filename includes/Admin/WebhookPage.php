@@ -101,6 +101,18 @@ final class WebhookPage extends Page {
 		$limit  = $this->webhooks->limit();
 		$status = $this->deliveries->last_statuses( array_map( static fn( array $row ): int => (int) $row['id'], $rows ) );
 
+		/**
+		 * Preset choices for the webhook form (`slug => label`). Empty in
+		 * the free plugin; when non-empty the form shows a Preset select
+		 * and the list shows the label in place of the slug.
+		 *
+		 * @since 1.0.0
+		 *
+		 * @param array<string, string> $presets Default [].
+		 */
+		$presets = apply_filters( 'bfag_webhook_presets', [] );
+		$presets = is_array( $presets ) ? $presets : [];
+
 		$this->view(
 			'webhooks',
 			[
@@ -112,6 +124,7 @@ final class WebhookPage extends Page {
 				'page'           => $this,
 				'deliveries_url' => $this->url( [ 'view' => 'deliveries' ] ),
 				'new_secret'     => $this->take_new_secret(),
+				'presets'        => $presets,
 			]
 		);
 
@@ -140,23 +153,13 @@ final class WebhookPage extends Page {
 			$webhook = array_merge( $webhook, $remembered );
 		}
 
-		/**
-		 * Preset choices for the webhook form (`slug => label`). Empty in
-		 * the free plugin; when non-empty the form shows a Preset select.
-		 *
-		 * @since 1.0.0
-		 *
-		 * @param array<string, string> $presets Default [].
-		 */
-		$presets = apply_filters( 'bfag_webhook_presets', [] );
-
 		$this->view(
 			'webhook-form',
 			[
 				'webhook'    => $webhook,
 				'events'     => $this->registry->all(),
 				'registry'   => $this->registry,
-				'presets'    => is_array( $presets ) ? $presets : [],
+				'presets'    => $presets,
 				'headers'    => is_string( $remembered['headers'] ?? null ) ? $remembered['headers'] : $this->headers_to_lines( $this->webhooks->headers_of( $webhook ) ),
 				'is_pro'     => $this->upsell->is_pro(),
 				'form_url'   => $this->url(),
@@ -240,8 +243,10 @@ final class WebhookPage extends Page {
 		if ( '' === $label || mb_strlen( $label ) > 200 ) {
 			$this->fail( 'webhook_label_invalid', $id, $fields );
 		}
-		$url = esc_url_raw( (string) ( $fields['url'] ?? '' ) );
-		if ( ! $this->url_acceptable( $url ) ) {
+		$preset = sanitize_key( (string) ( $fields['preset'] ?? '' ) );
+		$url    = esc_url_raw( trim( (string) ( $fields['url'] ?? '' ) ) );
+		// A preset builds its own request, so the URL may be blank with one (U-14); without one a webhook needs somewhere to go.
+		if ( ! ( '' === $url && '' !== $preset ) && ! $this->url_acceptable( $url ) ) {
 			$this->fail( 'webhook_url_invalid', $id, $fields );
 		}
 
@@ -250,7 +255,7 @@ final class WebhookPage extends Page {
 			'url'     => $url,
 			'event'   => $event,
 			'headers' => $this->lines_to_headers( (string) ( $fields['headers'] ?? '' ) ),
-			'preset'  => sanitize_key( (string) ( $fields['preset'] ?? '' ) ),
+			'preset'  => $preset,
 			'enabled' => self::flag( $fields, 'enabled' ),
 		];
 		if ( $this->upsell->is_pro() && array_key_exists( 'max_retries', $fields ) ) {

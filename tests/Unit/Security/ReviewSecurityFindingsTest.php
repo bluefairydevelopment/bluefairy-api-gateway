@@ -202,7 +202,7 @@ final class ReviewSecurityFindingsTest extends TestCase {
 			$this->assertInstanceOf( \WP_REST_Response::class, $response, "{$variant} is limited too" );
 			$this->assertSame( 429, $response->get_status(), $variant );
 		}
-		$this->assertCount( 4, $this->breaches, 'every limited request tells the DDoS mitigator' );
+		$this->assertCount( 1, $this->breaches, 'R2-07: the mitigator is told once, on the new breach; marker refusals fire nothing' );
 		$this->assertSame( 1, $this->distinct_hashes(), 'one rule = one bucket, whatever the spelling' );
 
 		$routes = $GLOBALS['wpdb']->pdo()->query( 'SELECT DISTINCT route FROM ' . $GLOBALS['wpdb']->prefix . 'bfag_rate_limit_hits' )->fetchAll( \PDO::FETCH_COLUMN );
@@ -671,7 +671,7 @@ final class ReviewSecurityFindingsTest extends TestCase {
 		$this->assertStringContainsString( 'RESPBODY-PLANTED', $html );
 		$this->assertStringNotContainsString( '<script>', $html, 'escaped' );
 		$this->assertStringContainsString( '&lt;script&gt;alert(1)&lt;/script&gt;', $html );
-		$this->assertStringContainsString( '<summary>Response</summary>', $html );
+		$this->assertMatchesRegularExpression( '/<summary>\s*Response to delivery #\d+\s*<\/summary>/', $html, 'NF-20: the summary names its row' );
 		$this->assertStringContainsString( 'HTTP 500', $html );
 		$this->assertStringContainsString( 'Transport error: Connection refused', $html );
 		$this->assertSame( 2, substr_count( $html, '<details' ), 'finished rows only; a pending row has nothing to show' );

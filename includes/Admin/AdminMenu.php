@@ -20,6 +20,7 @@ use BlueFairy\ApiGateway\Capabilities;
 use BlueFairy\ApiGateway\Installer;
 use BlueFairy\ApiGateway\RateLimit\RateLimitRuleRepository;
 use BlueFairy\ApiGateway\Settings;
+use BlueFairy\ApiGateway\Support\RequestContext;
 use BlueFairy\ApiGateway\Webhook\DeliveryRepository;
 use BlueFairy\ApiGateway\Webhook\EventRegistry;
 use BlueFairy\ApiGateway\Webhook\WebhookDispatcher;
@@ -56,13 +57,6 @@ final class AdminMenu {
 	 * @var list<string>
 	 */
 	private const PROXY_NOTICE_SCREENS = [ Assets::SCREEN_ID, 'plugins', 'plugins-network', 'dashboard', 'dashboard-network' ];
-
-	/**
-	 * `$_SERVER` keys of the forwarded-address headers a proxy writes.
-	 *
-	 * @var list<string>
-	 */
-	private const FORWARDED_SERVER_KEYS = [ 'HTTP_X_FORWARDED_FOR', 'HTTP_CF_CONNECTING_IP', 'HTTP_TRUE_CLIENT_IP', 'HTTP_X_REAL_IP' ];
 
 	/**
 	 * Base tabs, in display order.
@@ -437,7 +431,7 @@ final class AdminMenu {
 			return;
 		}
 		$this->assets->enqueue_assets();
-		$link = '<a href="' . esc_url( admin_url( 'options-general.php?page=' . self::MENU_SLUG . '&tab=' . SettingsPage::TAB ) ) . '">';
+		$link = '<a href="' . esc_url( admin_url( 'options-general.php?page=' . self::MENU_SLUG . '&tab=' . SettingsPage::TAB ) . '#bfag-group-ratelimit' ) . '">';
 		echo '<div class="notice notice-warning is-dismissible bfag-proxy-notice" data-bfag-dismiss="proxy"><p>'
 			. wp_kses(
 				sprintf(
@@ -468,7 +462,7 @@ final class AdminMenu {
 	 * presence matters; the value is never read here.
 	 */
 	private function forwarded_header_present(): bool {
-		foreach ( self::FORWARDED_SERVER_KEYS as $key ) {
+		foreach ( RequestContext::FORWARDED_SERVER_KEYS as $key ) {
 			if ( isset( $_SERVER[ $key ] ) && '' !== $_SERVER[ $key ] ) {
 				return true;
 			}

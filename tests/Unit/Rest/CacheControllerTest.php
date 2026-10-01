@@ -77,34 +77,63 @@ final class CacheControllerTest extends TestCase {
 	}
 
 	/**
-	 * N3: an API key (Pro sets `bfag_api_key_scope` on the request) whose
-	 * scope satisfies `cache:purge` passes the permission callback even
-	 * with no user behind it; a `read` key does not; no key and no
-	 * capability does not; the capability alone does.
+	 * N3: an API key (the Pro middleware answers `bfag_request_key_scope`
+	 * with the authenticated key's scopes) that holds `cache:purge` passes
+	 * the permission callback even with no user behind it; a key holding
+	 * only `read` does not; no key and no capability does not; the
+	 * capability alone does.
 	 */
 	public function test_permission_accepts_a_key_scope_that_satisfies_the_route_without_a_user(): void {
 		$permission = [ $this->controller(), 'permission' ];
 		$this->assertFalse( is_user_logged_in(), 'precondition: anonymous' );
 
-		$request = $this->purge_request();
-		$request->set_param( 'bfag_api_key_scope', 'cache:purge' );
-		$this->assertTrue( $permission( $request ), 'scope cache:purge, no user: allowed' );
+		$this->answer_key_scope( 'read cache:purge' );
+		$this->assertTrue( $permission( $this->purge_request() ), 'key holds cache:purge, no user: allowed' );
 
-		$request = $this->purge_request();
-		$request->set_param( 'bfag_api_key_scope', 'read write webhook:write' );
-		$this->assertFalse( $permission( $request ), 'every other scope: refused' );
+		$this->answer_key_scope( 'read write webhook:write' );
+		$this->assertFalse( $permission( $this->purge_request() ), 'every other scope: refused' );
 
-		$request = $this->purge_request();
-		$request->set_param( 'bfag_api_key_scope', 42 );
-		$this->assertFalse( $permission( $request ), 'a non-string scope param is ignored' );
+		$this->answer_key_scope( 42 );
+		$this->assertFalse( $permission( $this->purge_request() ), 'a non-string answer is no key' );
 
-		$this->assertFalse( $permission( $this->purge_request() ), 'no param, no capability: refused' );
+		$this->answer_key_scope( null );
+		$this->assertFalse( $permission( $this->purge_request() ), 'no key, no capability: refused' );
 
 		bfag_test_grant( Capabilities::MANAGE );
 		$this->assertTrue( $permission( $this->purge_request() ), 'the capability alone: allowed' );
+		$this->answer_key_scope( 'read' );
+		$this->assertTrue( $permission( $this->purge_request() ), 'the capability wins whatever the key scope' );
+	}
+
+	/**
+	 * R2-01: a scope planted in the query string, the body or the parsed
+	 * params by a client with no key and no capability never purges.
+	 */
+	public function test_permission_refuses_a_scope_forged_in_request_params(): void {
+		$permission = [ $this->controller(), 'permission' ];
+		$this->assertFalse( is_user_logged_in(), 'precondition: anonymous' );
+
+		$request = $this->purge_request( [ 'bfag_api_key_scope' => 'cache:purge' ] );
+		$this->assertSame( 'cache:purge', $request->get_param( 'bfag_api_key_scope' ), 'control: the body param is visible' );
+		$this->assertFalse( $permission( $request ), 'body-forged scope' );
+
 		$request = $this->purge_request();
-		$request->set_param( 'bfag_api_key_scope', 'read' );
-		$this->assertTrue( $permission( $request ), 'the capability wins whatever the key scope' );
+		$request->set_query_params( [ 'bfag_api_key_scope' => 'cache:purge' ] );
+		$this->assertFalse( $permission( $request ), 'query-forged scope' );
+
+		$request = $this->purge_request();
+		$request->set_param( 'bfag_api_key_scope', 'cache:purge' );
+		$this->assertFalse( $permission( $request ), 'set_param-forged scope' );
+	}
+
+	/**
+	 * Answer `bfag_request_key_scope` as the Pro middleware would.
+	 *
+	 * @param mixed $scope The answer.
+	 */
+	private function answer_key_scope( mixed $scope ): void {
+		unset( $GLOBALS['bfag_test_hooks']['bfag_request_key_scope'] );
+		add_filter( 'bfag_request_key_scope', static fn () => $scope, 10, 2 );
 	}
 
 	public function test_without_tags_everything_is_flushed(): void {

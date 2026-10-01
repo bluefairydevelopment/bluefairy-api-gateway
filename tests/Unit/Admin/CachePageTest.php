@@ -100,7 +100,7 @@ final class CachePageTest extends TestCase {
 		$this->assertStringContainsString( 'name="bfag_action" value="save_cache_rule"', $html, 'add form shown under the limit' );
 		$this->assertStringContainsString( 'name="_wpnonce" value="nonce-bfag_save_cache_rule"', $html );
 		$this->assertStringContainsString( 'Add cache rule', $html );
-		$this->assertStringNotContainsString( 'Pro removes the limit', $html );
+		$this->assertStringNotContainsString( 'Pro allows up to 500', $html );
 
 		$table = strpos( $html, '</table>' );
 		$after = strpos( $html, $marker );
@@ -165,7 +165,7 @@ final class CachePageTest extends TestCase {
 	public function test_at_the_limit_the_add_form_gives_way_to_the_upsell_line(): void {
 		$this->prime_render( [ $this->rule() ] );
 		$html = bfag_test_render( [ $this->page(), 'render' ] );
-		$this->assertStringContainsString( 'The free plugin allows 1 cache rule — Pro removes the limit', $html );
+		$this->assertStringContainsString( 'The free plugin allows 1 cache rule — Pro allows up to 500', $html );
 		$this->assertStringNotContainsString( 'value="save_cache_rule"', $html );
 	}
 
@@ -182,7 +182,7 @@ final class CachePageTest extends TestCase {
 		$this->assertStringContainsString( 'value="120"', $html );
 		$this->assertStringContainsString( 'value="posts,pages"', $html );
 		$this->assertStringContainsString( 'checked="checked"', $html );
-		$this->assertStringNotContainsString( 'Pro removes the limit', $html );
+		$this->assertStringNotContainsString( 'Pro allows up to 500', $html );
 	}
 
 	public function test_the_table_lists_rules_in_match_order_and_says_the_most_specific_wins(): void {

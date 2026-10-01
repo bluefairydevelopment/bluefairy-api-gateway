@@ -22,7 +22,7 @@ BlueFairy API Gateway sits in front of the WordPress REST API and does three thi
 
 **Dashboard.** Cache hit rate and webhook success rate over the last 24 hours, the current size of the rate-limit log, the ten most recent failed deliveries with a Retry button, and the same figures at `GET /bfag/v1/status` for a monitoring tool — a route that is never rate-limited.
 
-**Add API Gateway Pro** for up to 500 cache rules, rate-limit rules and webhooks; purges narrowed to the tags a change touches; rate limits per user and per API key with penalty bans; DDoS auto-ban with a blocked-IPs panel; automatic webhook retries with back-off and failure alerts by email; Salesforce, HubSpot and Mailchimp presets; a signed incoming-webhook endpoint; a webhook REST API; API keys with scopes; and WPGraphQL query caching. Pro installs alongside this plugin rather than replacing it.
+**Add API Gateway Pro** for up to 500 cache rules, rate-limit rules and webhooks; purges narrowed to the tags a change touches; rate limits per user and per API key with penalty blocks; DDoS auto-block with a blocked-IPs panel; automatic webhook retries with back-off and failure alerts by email; Salesforce, HubSpot and Mailchimp presets; a verified incoming-webhook endpoint (HubSpot signed; Salesforce and Mailchimp shared secret); a webhook REST API; API keys with scopes; and WPGraphQL query caching. Pro installs alongside this plugin rather than replacing it.
 
 == Installation ==
 
@@ -30,7 +30,7 @@ BlueFairy API Gateway sits in front of the WordPress REST API and does three thi
 2. Activate the plugin from the **Plugins** screen. PHP 8.1 or newer is required; activation refuses otherwise.
 3. Open **Settings → API Gateway**.
 
-Activation creates six database tables, seeds one cache rule and one rate-limit rule, grants the `bfag_manage_gateway` capability to administrators and schedules three WP-Cron jobs. The cache and the rate limiter are on from the first request; nothing is sent anywhere until you add a webhook.
+Activation creates six database tables, seeds one cache rule and one rate-limit rule, grants the `bfag_manage_gateway` capability to administrators and schedules four recurring WP-Cron jobs. The cache and the rate limiter are on from the first request; nothing is sent anywhere until you add a webhook.
 
 == Admin Instructions ==
 
@@ -44,7 +44,7 @@ Everything lives under **Settings → API Gateway**, in five tabs.
 
 **Webhooks** — the webhooks table with **Edit**, **Send test** and **Delete**, the **Delivery log** button, and the add/edit form: label, `https://` URL, event, signing secret (blank generates one and shows it once after saving), extra headers as `Name: value` lines, and an Enabled box. Press **Send test** on a new webhook: the notice reports the HTTP status, and the delivery log shows the receiver's response under each row.
 
-**Settings** — notification email and failure threshold (used by the Pro add-on's alerts), the cache switch and default TTL, the rate-limiting switch and trusted proxies, the stored-payload cap and delivery-log retention, debug logging, the WP-Cron notice switch and *Delete data on uninstall*.
+**Settings** — the cache switch and *New-rule TTL*; the rate-limiting switch, *Exempt editors*, *Trusted proxies* and *Client address header*; the stored-payload cap and delivery-log retention; debug logging, the WP-Cron notice switch and *Delete data on uninstall*. The notification email and failure threshold appear only with the Pro add-on, which is what sends the alerts.
 
 To confirm the cache from the command line, request a public route twice and read the header: `curl -sI https://example.com/wp-json/wp/v2/posts | grep -i x-bf-cache` — `MISS` then `HIT`.
 
@@ -68,7 +68,7 @@ Deleting the plugin always removes its options, transients, cron events and the 
 
 = How do retries work? =
 
-In the free plugin a failed delivery — any non-2xx answer, or no answer within ten seconds — is marked `failed` in the log and stays there. Press **Retry** — offered on failed deliveries only — on the dashboard or in the delivery log to resend the stored payload bytes as the next attempt, with a fresh timestamp and signature and the same `X-BF-Delivery` id. A delivery whose stored payload was truncated at the *Max stored payload* setting cannot be retried, because the stored bytes are no longer what was signed. Automatic retries with back-off (one minute, five minutes, thirty minutes, up to a per-webhook limit) and failure alerts are part of API Gateway Pro.
+In the free plugin a failed delivery — any non-2xx answer, or no answer within five seconds — is marked `failed` in the log and stays there. Press **Retry** — offered on failed deliveries only — on the dashboard or in the delivery log to resend the stored payload bytes as the next attempt, with a fresh timestamp and signature and the same `X-BF-Delivery` id. A delivery whose stored payload was truncated at the *Max stored payload* setting cannot be retried, because the stored bytes are no longer what was signed. Automatic retries with back-off (one minute, five minutes, thirty minutes, up to a per-webhook limit) and failure alerts are part of API Gateway Pro.
 
 = How does my receiver verify the signature? =
 
@@ -86,7 +86,9 @@ No. A request with a WordPress login cookie, an `Authorization` header (Applicat
 
 One cache rule, one rate-limit rule and three webhooks. Rate limiting counts by IP address only. The admin page tells you when you have reached a limit. Pro raises each to 500 and adds per-user and per-API-key counting.
 
-= The webhook will not save — "it needs a label, an https URL and a known event". =
+= The webhook will not save — "URL refused: it must start with https:// and resolve to a public address". =
+
+Each refused field has its own notice: *URL refused…* for the URL, *Webhook not saved: the label must be 1–200 characters* for the label, *Webhook not saved: choose an event from the list* for the event, and *Webhook not saved: check the extra headers (one Name: value per line) and the secret (255 characters at most)* for the rest. Your entries are kept in the form.
 
 The URL must start with `https://` and must pass WordPress's own `wp_http_validate_url()` check, which refuses loopback and private addresses such as `localhost`, `127.0.0.1` or `10.x.x.x`. For local development a developer can allow `http://` with the `bfag_webhook_allow_http` filter. The event must be one offered in the dropdown — a WooCommerce event disappears from the list when WooCommerce is deactivated.
 
@@ -96,7 +98,7 @@ A generated secret is shown exactly once, on the Webhooks tab right after you sa
 
 = Does it need WP-Cron? =
 
-The hit-log prune, the delivery-log prune and the dashboard figures run on WP-Cron. Webhook deliveries do not — they are sent at the end of the request that caused them. If `DISABLE_WP_CRON` is set the plugin shows a notice on its own screen; make sure a system cron runs `wp-cron.php`, then tick **Hide the WP-Cron notice**. There are no WP-CLI commands; `wp cron event run bfag_cron_prune_hits` runs a job on demand.
+The hit-log prune, the delivery-log prune and the dashboard figures run on WP-Cron. The first 20 webhook deliveries of a request are sent at the end of that request; the rest are queued and sent by `bfag_cron_flush_pending`, a single event scheduled on demand. If `DISABLE_WP_CRON` is set the plugin shows a notice on its own screen; make sure a system cron runs `wp-cron.php`, then tick **Hide the WP-Cron notice**. There are no WP-CLI commands; `wp cron event run bfag_cron_prune_hits` runs a job on demand.
 
 = Does it work with WooCommerce? =
 
@@ -104,7 +106,7 @@ Yes. While WooCommerce is active four more events are offered: order created, or
 
 = Does it support multisite? =
 
-The plugin contains no network-specific features. Each site keeps its own rules, webhooks and settings. Uninstalling cleans up on every site of the network.
+Network activation provisions every site — tables, the seeded rules, the capability and the cron jobs — and a site added later is provisioned when it is created. Each site keeps its own rules, webhooks and settings. Uninstalling cleans up on every site of the network.
 
 == Screenshots ==
 
@@ -112,7 +114,7 @@ The plugin contains no network-specific features. Each site keeps its own rules,
 2. Cache — the rules table with the seeded "All routes" rule, Purge all, and the add/edit form with route glob, TTL and tags.
 3. Rate limit — the rules table with the seeded per-IP rule and the form: count by, route glob, requests per window.
 4. Webhooks — the webhooks table with Send test, and the add/edit form: URL, event, signing secret and extra headers.
-5. Settings — the general, cache, rate-limit, webhook and advanced groups.
+5. Settings — the cache, rate-limit, webhooks and advanced groups (the General group's alert fields appear only with the Pro add-on).
 
 == Changelog ==
 

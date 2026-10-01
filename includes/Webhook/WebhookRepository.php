@@ -170,7 +170,7 @@ final class WebhookRepository {
 		if ( $id <= 0 ) {
 			return false;
 		}
-		$clean = $this->validate( $data, false );
+		$clean = $this->validate( $data, false, $id );
 		if ( null === $clean || [] === $clean ) {
 			return false;
 		}
@@ -279,10 +279,15 @@ final class WebhookRepository {
 	 *
 	 * @param array<string, mixed> $data   Raw input.
 	 * @param bool                 $create Whether defaults apply.
+	 * @param int                  $id     On update, the row: its stored preset decides whether a blank URL is allowed when none is supplied.
 	 * @return array<string, mixed>|null
 	 */
-	private function validate( array $data, bool $create ): ?array {
+	private function validate( array $data, bool $create, int $id = 0 ): ?array {
 		$clean = [];
+
+		if ( $create || array_key_exists( 'preset', $data ) ) {
+			$clean['preset'] = substr( sanitize_key( $data['preset'] ?? '' ), 0, 50 );
+		}
 
 		if ( $create || array_key_exists( 'label', $data ) ) {
 			$label = sanitize_text_field( is_scalar( $data['label'] ?? null ) ? (string) $data['label'] : '' );
@@ -294,11 +299,19 @@ final class WebhookRepository {
 		}
 
 		if ( $create || array_key_exists( 'url', $data ) ) {
-			$url = $this->validate_url( is_scalar( $data['url'] ?? null ) ? trim( (string) $data['url'] ) : '' );
-			if ( null === $url ) {
-				return null;
+			$raw_url = is_scalar( $data['url'] ?? null ) ? trim( (string) $data['url'] ) : '';
+			// A preset builds the request itself, so a webhook with one may have no URL (U-14). Without one, a
+			// blank URL is a row no delivery could ever reach. On update the stored preset counts when none is sent.
+			$preset = array_key_exists( 'preset', $clean ) ? (string) $clean['preset'] : (string) ( $this->find( $id )['preset'] ?? '' );
+			if ( '' === $raw_url && '' !== $preset ) {
+				$clean['url'] = '';
+			} else {
+				$url = $this->validate_url( $raw_url );
+				if ( null === $url ) {
+					return null;
+				}
+				$clean['url'] = $url;
 			}
-			$clean['url'] = $url;
 		}
 
 		if ( $create || array_key_exists( 'event', $data ) ) {
@@ -331,10 +344,6 @@ final class WebhookRepository {
 				return null;
 			}
 			$clean['headers'] = $headers;
-		}
-
-		if ( $create || array_key_exists( 'preset', $data ) ) {
-			$clean['preset'] = substr( sanitize_key( $data['preset'] ?? '' ), 0, 50 );
 		}
 
 		if ( $create || array_key_exists( 'enabled', $data ) ) {

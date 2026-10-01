@@ -105,6 +105,7 @@ function bfag_test_reset(): void {
 	$GLOBALS['bfag_test_roles']         = [ 'administrator' => new WP_Role( 'administrator', [] ) ];
 	$GLOBALS['bfag_test_posts']         = [];
 	$GLOBALS['bfag_test_db_delta']      = [];
+	$GLOBALS['bfag_test_db_delta_errors'] = [];
 	$GLOBALS['bfag_test_admin_pages']   = [];
 	$GLOBALS['bfag_test_enqueued']      = [];
 	$GLOBALS['bfag_test_output']        = [];
@@ -122,7 +123,7 @@ function bfag_test_reset(): void {
 	$GLOBALS['wpdb']                    = new BlueFairy\ApiGateway\Tests\FakeWpdb();
 	$_SERVER['REMOTE_ADDR']             = '203.0.113.10';
 	$_SERVER['REQUEST_METHOD']          = 'GET';
-	unset( $_SERVER['HTTP_X_FORWARDED_FOR'], $_SERVER['HTTP_CF_CONNECTING_IP'], $_SERVER['HTTP_X_REAL_IP'] );
+	unset( $_SERVER['HTTP_X_FORWARDED_FOR'], $_SERVER['HTTP_CF_CONNECTING_IP'], $_SERVER['HTTP_TRUE_CLIENT_IP'], $_SERVER['HTTP_X_REAL_IP'] );
 	$_POST    = [];
 	$_GET     = [];
 	$_REQUEST = [];
@@ -1034,6 +1035,10 @@ function get_post_types( array $args = [], string $output = 'names' ): array {
 }
 function dbDelta( mixed $queries = '', bool $execute = true ): array { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.FunctionNameInvalid
 	$GLOBALS['bfag_test_db_delta'][] = $queries;
+	// A queued per-call outcome: each dbDelta() consumes one and sets $wpdb->last_error to it, as core's driver would.
+	if ( [] !== ( $GLOBALS['bfag_test_db_delta_errors'] ?? [] ) ) {
+		$GLOBALS['wpdb']->last_error = (string) array_shift( $GLOBALS['bfag_test_db_delta_errors'] );
+	}
 	return [];
 }
 function add_menu_page( string $page_title, string $menu_title, string $capability, string $menu_slug, mixed $callback = '', string $icon_url = '', ?int $position = null ): string {

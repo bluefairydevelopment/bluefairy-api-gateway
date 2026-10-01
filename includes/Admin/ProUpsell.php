@@ -49,7 +49,7 @@ final class ProUpsell {
 		return [
 			__( 'Up to 500 cache rules and rate-limit rules (free: one of each)', 'bluefairy-api-gateway' ),
 			__( 'Purges narrowed to the tags a change touches', 'bluefairy-api-gateway' ),
-			__( 'Rate limits per user and per API key, with DDoS auto-ban', 'bluefairy-api-gateway' ),
+			__( 'Rate limits per user and per API key, with DDoS auto-block', 'bluefairy-api-gateway' ),
 			__( 'Up to 500 webhooks with automatic retries and failure alerts (free: three, single attempt)', 'bluefairy-api-gateway' ),
 			__( 'Salesforce, HubSpot and Mailchimp presets and a verified incoming-webhook endpoint', 'bluefairy-api-gateway' ),
 			__( 'API keys with scopes for integrations', 'bluefairy-api-gateway' ),
@@ -65,7 +65,7 @@ final class ProUpsell {
 	public function limit_line( string $what ): string {
 		return sprintf(
 			/* translators: %s: the free plugin's allowance, e.g. "1 cache rule" */
-			__( 'The free plugin allows %s — Pro removes the limit', 'bluefairy-api-gateway' ),
+			__( 'The free plugin allows %s — Pro allows up to 500', 'bluefairy-api-gateway' ),
 			$what
 		);
 	}

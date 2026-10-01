@@ -236,11 +236,15 @@
 		}
 	} );
 
-	// Show the preset-config block for the selected preset.
+	// Show the preset-config block for the selected preset, and require the
+	// URL only when there is no preset (a preset builds its own request, U-14).
 	function syncPreset( select ) {
 		var slug = select.value;
 		document.querySelectorAll( '[data-bfag-preset-config]' ).forEach( function ( block ) {
 			block.classList.toggle( 'is-active', block.getAttribute( 'data-bfag-preset-config' ) === slug );
+		} );
+		document.querySelectorAll( '[data-bfag-preset-url]' ).forEach( function ( input ) {
+			input.required = ! slug;
 		} );
 	}
 	document.querySelectorAll( '[data-bfag-preset-select]' ).forEach( function ( select ) {

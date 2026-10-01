@@ -668,7 +668,7 @@ final class AdminMenuTest extends TestCase {
 		$html = bfag_test_render( [ $this->menu(), 'render_proxy_notice' ] );
 		$this->assertStringContainsString( '<div class="notice notice-warning is-dismissible bfag-proxy-notice" data-bfag-dismiss="proxy"><p>', $html );
 		$this->assertStringContainsString( self::PROXY_NOTICE_TEXT, $html );
-		$this->assertStringContainsString( '<a href="https://example.com/wp-admin/options-general.php?page=bfag-gateway&amp;tab=settings">Add your proxy ranges under Settings → API Gateway → Settings</a>, or switch rate limiting off.', $html );
+		$this->assertStringContainsString( '<a href="https://example.com/wp-admin/options-general.php?page=bfag-gateway&amp;tab=settings#bfag-group-ratelimit">Add your proxy ranges under Settings → API Gateway → Settings</a>, or switch rate limiting off.', $html, 'NF-30: the link lands on the rate-limit group, where Trusted proxies lives' );
 		$this->assertSame( [ 'bfag-admin-js' ], $GLOBALS['bfag_test_enqueued']['script'], 'the dismiss handler is loaded on a screen that is not ours' );
 		$this->assertArrayHasKey( 'dismiss', $GLOBALS['bfag_test_enqueued']['localize']['bfag-admin-js']['bfagAdmin']['nonces'] );
 

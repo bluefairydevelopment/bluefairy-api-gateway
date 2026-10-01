@@ -363,10 +363,16 @@ final class Installer {
 
 		require_once ABSPATH . 'wp-admin/includes/upgrade.php';
 
+		// last_error is per statement, so it is read after EACH dbDelta() and
+		// the first failure is kept: read once after the loop, a later table
+		// that succeeded would have blanked it (R2-11).
+		$db_error = '';
 		foreach ( self::schema( $wpdb->prefix, $wpdb->get_charset_collate() ) as $sql ) {
 			dbDelta( $sql );
+			if ( '' === $db_error ) {
+				$db_error = (string) $wpdb->last_error;
+			}
 		}
-		$db_error = (string) $wpdb->last_error;
 
 		$missing = [];
 		foreach ( self::TABLES as $table ) {

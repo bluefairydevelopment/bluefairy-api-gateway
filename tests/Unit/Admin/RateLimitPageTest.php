@@ -113,7 +113,8 @@ final class RateLimitPageTest extends TestCase {
 		$this->assertMatchesRegularExpression( '/<option value="user"\s*>/', $html );
 		// U-08: the row is marked for admin.js, shown for an IP rule, and carries the IP-only help text.
 		$this->assertStringContainsString( '<tr data-bfag-penalty-row>', $html );
-		$this->assertStringContainsString( 'IP-address rules only: how long the breaching address is banned. 0 disables.', $html );
+		$this->assertStringContainsString( 'IP-address rules only: how long the breaching address is blocked. 0 disables.', $html, 'NF-16' );
+		$this->assertDoesNotMatchRegularExpression( '/\bbans?\b|\bbanned\b/i', $html, 'NF-16: the base UI says block, never ban' );
 		$this->assertStringNotContainsString( 'How long a subject that breaches this rule is blocked outright', $html );
 		$this->assertStringNotContainsString( 'disabled="disabled"', $html );
 
@@ -199,7 +200,7 @@ final class RateLimitPageTest extends TestCase {
 	public function test_at_the_limit_the_add_form_gives_way_to_the_upsell_line(): void {
 		$this->prime_render( [ $this->rule() ] );
 		$html = bfag_test_render( [ $this->page(), 'render' ] );
-		$this->assertStringContainsString( 'The free plugin allows 1 rate-limit rule — Pro removes the limit', $html );
+		$this->assertStringContainsString( 'The free plugin allows 1 rate-limit rule — Pro allows up to 500', $html );
 		$this->assertStringNotContainsString( 'value="save_rate_limit_rule"', $html );
 
 		$_GET = [

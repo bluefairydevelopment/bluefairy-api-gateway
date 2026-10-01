@@ -105,21 +105,81 @@ final class CapabilitiesTest extends TestCase {
 	 * N3: request_allowed() is the permission callback of the base routes.
 	 */
 	public function test_request_allowed_passes_the_capability_or_a_satisfying_key_scope(): void {
-		$purge = new \WP_REST_Request( 'POST', '/bfag/v1/cache/purge' );
-		$this->assertFalse( Capabilities::request_allowed( $purge ), 'anonymous, no key' );
-		$purge->set_param( 'bfag_api_key_scope', 'read' );
-		$this->assertFalse( Capabilities::request_allowed( $purge ), 'read does not cover cache:purge' );
-		$purge->set_param( 'bfag_api_key_scope', 'cache:purge' );
-		$this->assertTrue( Capabilities::request_allowed( $purge ), 'a cache:purge key bound to nobody may purge' );
-
+		$purge  = new \WP_REST_Request( 'POST', '/bfag/v1/cache/purge' );
 		$status = new \WP_REST_Request( 'GET', '/bfag/v1/status' );
-		$status->set_param( 'bfag_api_key_scope', 'read' );
-		$this->assertTrue( Capabilities::request_allowed( $status ) );
-		$status->set_param( 'bfag_api_key_scope', '   ' );
-		$this->assertFalse( Capabilities::request_allowed( $status ), 'blank scope' );
+		$this->assertFalse( Capabilities::request_allowed( $purge ), 'anonymous, no key' );
+		$this->assertFalse( Capabilities::request_allowed( $status ), 'anonymous, no key' );
 
+		// The filter answers exactly what the authenticated key holds.
+		$this->answer_key_scope( 'read' );
+		$this->assertFalse( Capabilities::request_allowed( $purge ), 'read does not cover cache:purge' );
+		$this->assertTrue( Capabilities::request_allowed( $status ), 'read covers status' );
+
+		$this->answer_key_scope( 'cache:purge' );
+		$this->assertTrue( Capabilities::request_allowed( $purge ), 'a cache:purge key bound to nobody may purge' );
+		$this->assertFalse( Capabilities::request_allowed( $status ), 'cache:purge alone does not imply read' );
+
+		$this->answer_key_scope( 'read cache:purge' );
+		$this->assertTrue( Capabilities::request_allowed( $purge ) );
+		$this->assertTrue( Capabilities::request_allowed( $status ) );
+
+		$this->answer_key_scope( '   ' );
+		$this->assertFalse( Capabilities::request_allowed( $status ), 'blank scope' );
+		$this->answer_key_scope( 42 );
+		$this->assertFalse( Capabilities::request_allowed( $status ), 'a non-string answer is no key' );
+
+		unset( $GLOBALS['bfag_test_hooks']['bfag_request_key_scope'] );
 		bfag_test_grant( Capabilities::MANAGE );
 		$this->assertTrue( Capabilities::request_allowed( new \WP_REST_Request( 'POST', '/bfag/v1/cache/purge' ) ), 'the capability alone' );
+	}
+
+	/**
+	 * R2-01: a scope is never read from the request. A client that plants
+	 * `bfag_api_key_scope` in the query string, the body or the parsed
+	 * params — with no key and no capability — is refused on every route.
+	 */
+	public function test_request_allowed_ignores_a_scope_forged_in_request_params(): void {
+		$this->assertFalse( is_user_logged_in(), 'precondition: anonymous' );
+		$seen = [];
+		add_filter(
+			'bfag_request_key_scope',
+			static function ( $scope, \WP_REST_Request $request ) use ( &$seen ) {
+				$seen[] = $request->get_route();
+				return $scope;
+			},
+			10,
+			2
+		);
+		foreach ( [ [ 'POST', '/bfag/v1/cache/purge' ], [ 'GET', '/bfag/v1/status' ] ] as [ $method, $route ] ) {
+			$request = new \WP_REST_Request( $method, $route );
+			$request->set_query_params( [ 'bfag_api_key_scope' => 'read cache:purge' ] );
+			$this->assertSame( 'read cache:purge', $request->get_param( 'bfag_api_key_scope' ), 'control: the param is visible' );
+			$this->assertFalse( Capabilities::request_allowed( $request ), "query-forged scope on $route" );
+
+			$request = new \WP_REST_Request( $method, $route );
+			$request->set_body_params( [ 'bfag_api_key_scope' => 'read cache:purge' ] );
+			$this->assertFalse( Capabilities::request_allowed( $request ), "body-forged scope on $route" );
+
+			$request = new \WP_REST_Request( $method, $route );
+			$request->set_param( 'bfag_api_key_scope', 'read cache:purge' );
+			$this->assertFalse( Capabilities::request_allowed( $request ), "set_param-forged scope on $route" );
+		}
+		$this->assertCount( 6, $seen, 'the filter was asked once per request, with the request' );
+	}
+
+	/**
+	 * Answer `bfag_request_key_scope` as the Pro middleware would.
+	 *
+	 * @param mixed $scope The answer.
+	 */
+	private function answer_key_scope( mixed $scope ): void {
+		unset( $GLOBALS['bfag_test_hooks']['bfag_request_key_scope'] );
+		add_filter(
+			'bfag_request_key_scope',
+			static fn () => $scope,
+			10,
+			2
+		);
 	}
 
 	public function test_scopes_constant_lists_every_scope_the_map_can_require(): void {

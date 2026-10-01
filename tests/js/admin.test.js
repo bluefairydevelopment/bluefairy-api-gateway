@@ -271,6 +271,26 @@ it( 'the Penalty row follows the "Count by" select: IP shows and enables it, any
 	assert.strictEqual( input.disabled, true );
 } );
 
+it( 'the URL field is required only while no preset is chosen (U-14)', () => {
+	const select = element( 'select', { 'data-bfag-preset-select': '' } );
+	select.value = 'slack';
+	const url = element( 'input', { 'data-bfag-preset-url': '', name: 'bfag[url]' } );
+	const block = element( 'div', { 'data-bfag-preset-config': 'slack' } );
+	load( element( 'div', {}, [ select, url, block ] ) );
+
+	assert.strictEqual( url.required, false, 'on load, a preset makes the URL optional' );
+	assert.strictEqual( block.classList.contains( 'is-active' ), true, 'control: the preset block is shown' );
+
+	select.value = '';
+	select.dispatch( 'change' );
+	assert.strictEqual( url.required, true, 'no preset: required again' );
+	assert.strictEqual( block.classList.contains( 'is-active' ), false );
+
+	select.value = 'hubspot';
+	select.dispatch( 'change' );
+	assert.strictEqual( url.required, false );
+} );
+
 it( 'the fake DOM selector matcher can tell elements apart (self-check)', () => {
 	const a = element( 'span', { class: 'bfag-kpi-updated' } );
 	const b = element( 'button', { class: 'notice-dismiss' } );

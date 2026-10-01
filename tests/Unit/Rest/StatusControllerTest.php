@@ -47,11 +47,36 @@ final class StatusControllerTest extends TestCase {
 	public function test_permission_accepts_a_read_key_scope_without_a_user(): void {
 		$permission = [ $this->controller(), 'permission' ];
 		$request    = new \WP_REST_Request( 'GET', '/bfag/v1/status' );
-		$request->set_param( 'bfag_api_key_scope', 'read' );
-		$this->assertTrue( $permission( $request ) );
+		$this->assertFalse( is_user_logged_in(), 'precondition: anonymous' );
+
+		add_filter( 'bfag_request_key_scope', static fn () => 'read', 10, 2 );
+		$this->assertTrue( $permission( $request ), 'a key holding read' );
+
+		unset( $GLOBALS['bfag_test_hooks']['bfag_request_key_scope'] );
+		add_filter( 'bfag_request_key_scope', static fn () => 'write cache:purge', 10, 2 );
+		$this->assertFalse( $permission( $request ), 'neither write nor cache:purge implies read' );
+	}
+
+	/**
+	 * R2-01: a scope forged in the query string, the body or the parsed
+	 * params — no key, no capability — never reads the status.
+	 */
+	public function test_permission_refuses_a_scope_forged_in_request_params(): void {
+		$permission = [ $this->controller(), 'permission' ];
+		$this->assertFalse( is_user_logged_in(), 'precondition: anonymous' );
+
 		$request = new \WP_REST_Request( 'GET', '/bfag/v1/status' );
-		$request->set_param( 'bfag_api_key_scope', 'write cache:purge' );
-		$this->assertFalse( $permission( $request ) );
+		$request->set_query_params( [ 'bfag_api_key_scope' => 'read' ] );
+		$this->assertSame( 'read', $request->get_param( 'bfag_api_key_scope' ), 'control: the query param is visible' );
+		$this->assertFalse( $permission( $request ), 'query-forged scope' );
+
+		$request = new \WP_REST_Request( 'GET', '/bfag/v1/status' );
+		$request->set_body_params( [ 'bfag_api_key_scope' => 'read' ] );
+		$this->assertFalse( $permission( $request ), 'body-forged scope' );
+
+		$request = new \WP_REST_Request( 'GET', '/bfag/v1/status' );
+		$request->set_param( 'bfag_api_key_scope', 'read' );
+		$this->assertFalse( $permission( $request ), 'set_param-forged scope' );
 	}
 
 	/**

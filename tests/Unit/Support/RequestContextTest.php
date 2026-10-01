@@ -80,6 +80,33 @@ final class RequestContextTest extends TestCase {
 		$this->assertSame( '203.0.113.11', $ctx->client_ip() );
 	}
 
+	/**
+	 * R2-05: the two facts the breach action's 5th argument is built from.
+	 */
+	public function test_is_trusted_proxy_and_forwarded_header_present(): void {
+		$_SERVER['REMOTE_ADDR'] = '203.0.113.10';
+		$this->assertFalse( $this->context()->is_trusted_proxy(), 'no proxies configured' );
+		$this->assertFalse( $this->context( [ '10.0.0.0/8' ] )->is_trusted_proxy(), 'not in the range' );
+		$this->assertFalse( $this->context()->forwarded_header_present(), 'no header' );
+
+		$_SERVER['REMOTE_ADDR'] = '10.0.0.5';
+		$this->assertTrue( $this->context( [ '10.0.0.0/8' ] )->is_trusted_proxy() );
+		$this->assertTrue( $this->context( [ '10.0.0.5' ] )->is_trusted_proxy(), 'a single address' );
+		$this->assertFalse( $this->context()->is_trusted_proxy(), 'still no proxies configured' );
+
+		$_SERVER['REMOTE_ADDR'] = 'garbage';
+		$this->assertFalse( $this->context( [ '0.0.0.0/0' ] )->is_trusted_proxy(), 'an invalid REMOTE_ADDR is never a proxy' );
+
+		foreach ( RequestContext::FORWARDED_SERVER_KEYS as $key ) {
+			$_SERVER[ $key ] = '198.51.100.9';
+			$this->assertTrue( $this->context()->forwarded_header_present(), $key );
+			$_SERVER[ $key ] = '   ';
+			$this->assertFalse( $this->context()->forwarded_header_present(), "$key blank" );
+			unset( $_SERVER[ $key ] );
+		}
+		$this->assertSame( [ 'HTTP_X_FORWARDED_FOR', 'HTTP_CF_CONNECTING_IP', 'HTTP_TRUE_CLIENT_IP', 'HTTP_X_REAL_IP' ], RequestContext::FORWARDED_SERVER_KEYS );
+	}
+
 	public function test_normalize_route_strips_leading_slash(): void {
 		$this->assertSame( 'wp/v2/posts', RequestContext::normalize_route( ' /wp/v2/posts ' ) );
 		$this->assertSame( '', RequestContext::normalize_route( '/' ) );

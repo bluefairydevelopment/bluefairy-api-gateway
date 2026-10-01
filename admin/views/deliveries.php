@@ -65,6 +65,17 @@ defined( 'ABSPATH' ) || exit;
 				<td><code><?php echo esc_html( (string) $bfag_row['event'] ); ?></code></td>
 				<td>
 					<span class="bfag-badge bfag-badge--<?php echo esc_attr( $bfag_status ); ?>" data-bfag-delivery-status><?php echo esc_html( $bfag_status ); ?></span>
+					<?php if ( 'retrying' === $bfag_status && is_string( $bfag_row['next_retry_at'] ?? null ) && '' !== $bfag_row['next_retry_at'] ) : ?>
+						<span class="bfag-next-attempt description">
+							<?php
+							printf(
+								/* translators: %s: the next attempt's date and time in the site's timezone */
+								esc_html__( 'next attempt %s', 'bluefairy-api-gateway' ),
+								esc_html( \BlueFairy\ApiGateway\Admin\Page::format_datetime( (string) $bfag_row['next_retry_at'] ) )
+							);
+							?>
+						</span>
+					<?php endif; ?>
 					<?php if ( $bfag_truncated ) : ?>
 						<span class="bfag-badge bfag-badge--muted" title="<?php esc_attr_e( 'The stored payload was cut to the configured maximum; it cannot be resent.', 'bluefairy-api-gateway' ); ?>"><?php esc_html_e( 'truncated', 'bluefairy-api-gateway' ); ?></span>
 					<?php endif; ?>
@@ -83,7 +94,15 @@ defined( 'ABSPATH' ) || exit;
 				<tr class="bfag-row-detail">
 					<td colspan="9">
 						<details>
-							<summary><?php esc_html_e( 'Response', 'bluefairy-api-gateway' ); ?></summary>
+							<summary>
+								<?php
+								printf(
+									/* translators: %d: the delivery id */
+									esc_html__( 'Response to delivery #%d', 'bluefairy-api-gateway' ),
+									(int) $bfag_id
+								);
+								?>
+							</summary>
 							<pre class="bfag-response"><?php echo esc_html( $bfag_response ); ?></pre>
 						</details>
 					</td>

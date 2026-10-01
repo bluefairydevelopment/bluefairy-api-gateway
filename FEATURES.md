@@ -78,8 +78,10 @@ matches its route. Disable the only rule and nothing is cached.
 | **Tags** | Comma-separated. Lower-cased and reduced to `[a-z0-9_:-]`, at most 50 characters each, at most 20 per rule. Purging a tag orphans every response cached under it. **A rule with no tags is purged on every content change; add tags to narrow purging to those tags** (an untagged rule is keyed on the implicit tag `all`). In the free plugin tags matter only for a manual purge by tag (`POST /bfag/v1/cache/purge` with `tags`); the Pro add-on uses them to narrow the automatic purge on content change. |
 | **Enabled** | *Apply this rule.* |
 
-A rejected save (an invalid glob) comes back as *Cache rule not saved: check
-the route glob…*; a successful one as *Cache rule saved.*
+A rejected save (an invalid glob) comes back as *Cache rule not saved: the route
+glob may contain only letters, digits and / \* ? . - _ % : @ = & + ~ (up to 500
+characters). Your entries are kept in the form below.*; a successful one as
+*Cache rule saved.*
 
 ### How the cache decides: HIT, MISS or BYPASS
 
@@ -177,7 +179,7 @@ hours.
 
 ### The rules table
 
-**Rate-limit rules** shows label, subject (`ip`), route glob, limit as
+**Rate-limit rules** shows label, **Count by** (*IP address*), route glob, limit as
 `N per M s`, the **Enabled** toggle badge and **Edit** | **Delete**. The
 counter reads `1 of 1`: the seeded rule *Global per-IP limit* (300 per 60 s on
 `**`) is the one rule the free plugin allows. The note under the table says what
@@ -195,8 +197,13 @@ server. Edit it to taste.
 | **Requests … per … seconds** | Requests 1–65535; window 1–86400 seconds. Unlike the cache TTL, a value outside its range is **rejected**, not clamped — a rule that silently became "1 request per day" would be a worse surprise than a refused save. |
 | **Enabled** | *Apply this rule.* |
 
-A rejected save comes back as *Rate-limit rule not saved: check the subject
-type, route glob, requests (1–65535) and window (1–86400 seconds).*
+A rejected save names its cause: *Rate-limit rule not saved: that "Count by"
+subject type is not available (per-user and per-API-key limits need the Pro
+add-on).*, *Rate-limit rule not saved: the route glob may contain only letters,
+digits and / \* ? . - _ % : @ = & + ~ (up to 500 characters).* or *Rate-limit
+rule not saved: requests must be 1–65535, the window 1–86400 seconds and the
+penalty 0–2592000 seconds.* — each ending *Your entries are kept in the form
+below.*
 
 ### How the counter works
 
@@ -304,10 +311,16 @@ Deleting a webhook deletes its delivery log with it, inside one transaction.
 | **Max retries** | Appears only with the Pro add-on (stored as 3 otherwise). Its help text: *Automatic retries after a failed delivery (Pro). 0 = none.* |
 | **Enabled** | *Deliver this webhook.* |
 
-*Webhook not saved: it needs a label, an https URL and a known event* is what
-an invalid form comes back with; *Webhook not saved: that event is not
-available* when the event is not in the registry (a WooCommerce event after
-WooCommerce was deactivated, for example).
+An invalid form comes back with the notice for the field that failed: *URL
+refused: it must start with https:// and resolve to a public address (localhost,
+127.0.0.1, private ranges and non-standard ports are refused).*, *Webhook not
+saved: the label must be 1–200 characters.*, *Webhook not saved: choose an event
+from the list (a WooCommerce event disappears when WooCommerce is deactivated).*
+or *Webhook not saved: check the extra headers (one Name: value per line) and
+the secret (255 characters at most).* — each ending *Your entries are kept in
+the form below.* With a preset chosen (Pro) the URL may be left blank: the
+preset builds the request; if the preset is removed later, deliveries go to the
+URL as plain signed JSON.
 
 ### Events
 
@@ -470,7 +483,7 @@ app.post('/hooks/wordpress', express.raw({ type: '*/*' }), (req, res) => {
 ```
 
 Answer with any 2xx status to mark the delivery `success`; anything else, or
-no answer within ten seconds, marks it `failed`.
+no answer within five seconds, marks it `failed`.
 
 ### The delivery log
 
@@ -487,7 +500,7 @@ its row.
 - **Response** — the first 2,000 characters of what the receiver returned (`HTTP 500` then the body), or `Transport error: <message>` when there was no HTTP response at all (DNS, connection refused, timeout). *Send test* reports the same status in its notice: *Test delivery failed (HTTP 503)* or *(no HTTP response: transport error)*.
 - **Truncated** — the stored payload was cut at *Max stored payload (bytes)*. The receiver got the full body; the log did not keep it, so the delivery cannot be resent as signed.
 - **Retry** resends the stored bytes as attempt + 1 with a new timestamp and signature. It is the only retry in the free plugin; automatic retries with back-off are a Pro feature. Only outgoing rows can be resent: an inbound row (Pro's receiving endpoint) was written by whoever called it, and the plugin will not sign someone else's payload with the site's secret.
-- **Retention** — `bfag_cron_prune_deliveries` removes `success` and `failed` rows older than *Delivery log retention* once a day, 5,000 at a time. Pending rows are kept.
+- **Retention** — `bfag_cron_prune_deliveries` removes `success` and `failed` rows older than *Delivery log retention* once a day, 5,000 at a time. `pending` and `retrying` rows older than a day are removed whatever the retention, so a row the cron never reached cannot live for ever.
 
 ---
 
@@ -500,7 +513,7 @@ its two fields, so they are kept as hidden values rather than shown.
 
 | Field | Behaviour |
 |---|---|
-| **Notification email** | Where the Pro add-on's failure alerts are sent. The free plugin stores the address and sends nothing. (The field's note says a blank falls back to the site admin email; the Pro notifier in fact sends nothing when the field is blank or invalid.) |
+| **Notification email** | Where the Pro add-on's failure alerts are sent. Blank or invalid: the alert goes to the site admin email. The free plugin stores the address and sends nothing. |
 | **Failure threshold** | 1–100 consecutive failures before the Pro add-on alerts. Stored, unused by the free plugin. |
 
 ### Cache
@@ -569,8 +582,9 @@ wp option get bfag_settings --format=json
 wp transient delete bfag_kpis
 ```
 
-Webhook deliveries do not depend on cron at all in the free plugin — they are
-sent at the end of the request that caused them.
+In the free plugin the first 20 webhook deliveries of a request are sent at the
+end of that request; the rest are queued and sent by `bfag_cron_flush_pending`,
+a single event scheduled on demand and re-armed while queued rows remain.
 
 ---
 
@@ -602,9 +616,10 @@ events and the capability.
 The Pro add-on is built entirely on these hooks; they are public API and
 changing one is a breaking change. `Plugin::service( $id )` hands out the
 shared instances (`settings`, `request`, `cache.store`, `cache.rules`,
-`cache.stats`, `cache.manager`, `ratelimit.rules`, `ratelimit.hits`,
-`webhook.repository`, `webhook.deliveries`, `webhook.dispatcher`,
-`webhook.events`) once `bfag_booted` has fired.
+`cache.stats`, `cache.manager`, `cache.purger`, `ratelimit.rules`,
+`ratelimit.hits`, `webhook.repository`, `webhook.deliveries`,
+`webhook.dispatcher`, `webhook.events`, `kpi.cron`) once `bfag_booted` has
+fired.
 
 ### Lifecycle
 
@@ -666,8 +681,8 @@ shared instances (`settings`, `request`, `cache.store`, `cache.rules`,
 Admin forms post back to `options-general.php?page=bfag-gateway&tab=<id>`
 with `bfag_action=<action>` and `wp_nonce_field( 'bfag_<action>' )`. AJAX
 actions are `bfag_ajax_purge_cache`, `bfag_ajax_refresh_kpis`,
-`bfag_ajax_retry_webhook` and `bfag_ajax_toggle_rule`, each with a nonce of
-the same name.
+`bfag_ajax_retry_webhook`, `bfag_ajax_toggle_rule` and
+`bfag_ajax_dismiss_notice`, each with a nonce of the same name.
 
 ### Route → scope map
 
@@ -696,8 +711,10 @@ The gateway's own two routes use `Capabilities::request_allowed( $request )`
 as their permission callback: the `bfag_manage_gateway` capability passes, and
 so does a request the Pro add-on authenticated with an API key whose scope
 covers the route (`cache:purge` for the purge endpoint, `read` for status) —
-even a key bound to *Nobody*. The add-on sets the key's scope on the request as
-the `bfag_api_key_scope` parameter.
+even a key bound to *Nobody*. The base asks for the key's scope through the
+`bfag_request_key_scope` filter, which the add-on answers from the key it
+authenticated; a scope a client plants in the query string or the body is
+never read.
 
 ---
 
@@ -722,10 +739,10 @@ plugin keeps doing exactly what it does now.
 | Per-IP sliding-window rate limiting with `429` and `Retry-After` | Yes | Yes |
 | Rate-limit rules | Up to 500 | 1 |
 | Count by logged-in user or by API key | Yes | — |
-| Penalty: ban an IP for N seconds when it breaches a rule | Yes | — |
-| DDoS auto-ban across all routes, with an allow-list | Yes | — |
-| Blocked IPs panel — see, lift and add bans by hand | Yes | — |
-| *Active bans* dashboard card | Live count of banned addresses | *Blocked (Pro)* placeholder |
+| Penalty: block an IP for N seconds when it breaches a rule | Yes | — |
+| DDoS auto-block across all routes, with an allow-list | Yes | — |
+| Blocked IPs panel — see, lift and add blocks by hand | Yes | — |
+| *Active blocks* dashboard card | Live count of blocked addresses | *Blocked (Pro)* placeholder |
 | Forwarded-IP resolution behind trusted proxies | Yes | Yes |
 | Signed outbound webhooks (`X-BF-Signature`, HMAC-SHA256) | Yes | Yes |
 | Webhooks | Up to 500 | 3 |
