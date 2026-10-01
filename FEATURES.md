@@ -693,6 +693,7 @@ fired.
 | `bfag_cache_page_after` | action | `()` | Render below the cache rules table and its add/edit form. |
 | `bfag_ratelimit_page_after` | action | `()` | Render below the rate-limit rules table and its add/edit form. |
 | `bfag_webhook_form_fields` | action | `( array $webhook )` | Extra rows in the add/edit webhook form; `$webhook` never contains the secret. |
+| `bfag_webhook_form_defaults` | filter | `( array $defaults )` | Values the Add webhook form opens with (Pro sets `max_retries`) |
 | `bfag_webhook_presets` | filter | `( array $presets = [] )` | `slug => label`. Non-empty makes the form show a **Preset** select and store the choice. |
 | `bfag_webhook_sanitize` | filter | `( array $data, array $raw )` | Sanitise your own form fields into the columns about to be stored. |
 | `bfag_admin_notices` | filter | `( array $messages )` | Add notice codes for `?bfag_notice=<code>`: `code => [ 'success'\|'error'\|'warning'\|'info', text ]`. |

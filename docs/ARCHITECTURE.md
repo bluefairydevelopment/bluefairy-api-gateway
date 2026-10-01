@@ -262,6 +262,7 @@ strings or one comma-separated string, each sanitised by `CacheStore::sanitize_t
 | `bfag_ratelimit_page_after` | action | — | rendered below the rate-limit rules table and its add/edit form (Pro's Blocked IPs panel) |
 | `bfag_cache_page_after` | action | — | rendered below the cache rules table and its add/edit form |
 | `bfag_webhook_form_fields` | action | — | `( array $webhook )` — extra rows in the add/edit webhook form |
+| `bfag_webhook_form_defaults` | filter | built-in add-form values | `( array $defaults )` — values the Add webhook form opens with; Pro sets `max_retries` to its *Retries per delivery* default. `id` is always forced back to 0 |
 | `bfag_webhook_presets` | filter | `[]` | `slug => label`; when non-empty the base form shows a Preset `<select>` and stores `preset` |
 | `bfag_webhook_sanitize` | filter | data | `( array $data, array $raw )` — add-on sanitises its own form fields before `create()`/`update()` |
 | `bfag_admin_notices` | filter | codes | `( array $messages )` — `code => [ 'type', 'text' ]` for `?bfag_notice=<code>` |

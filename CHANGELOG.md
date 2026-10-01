@@ -22,7 +22,7 @@ First release. The free base plugin of a pair: BlueFairy API Gateway Pro is an a
 - `GET /bfag/v1/status` and `POST /bfag/v1/cache/purge`, gated by the `bfag_manage_gateway` capability (granted to administrators on activation) or, with Pro, an API key whose scope covers the route.
 - Settings: cache on/off and new-rule TTL; rate limiting on/off, exempt editors, trusted proxies and client address header; max stored payload and delivery-log retention; debug logging; the WP-Cron notice switch; *Delete data on uninstall*. Notification email and failure threshold are stored for the Pro add-on and shown only with it.
 - Four recurring WP-Cron jobs (hit-log prune, delivery-log prune, KPI recompute and transient prune) on a five-minute or daily schedule. Multisite: network activation provisions every site, and a site created later is provisioned as it is born.
-- Thirty-five documented `bfag_*` actions and filters as the add-on contract, and `Plugin::service()` for shared instances.
+- Thirty-six documented `bfag_*` actions and filters as the add-on contract, and `Plugin::service()` for shared instances.
 
 ### Security
 - Requests from logged-in users or carrying `Authorization`, `X-BF-API-Key` or `X-WP-Nonce` are never cached; responses that are not 2xx, that stream, that set a cookie or that say `no-store`, `private`, `no-cache` or `max-age=0` are never stored.

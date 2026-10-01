@@ -157,6 +157,29 @@ final class WebhookPageTest extends TestCase {
 		$this->assertSame( 4, preg_match_all( '/class="bfag-badge bfag-badge--(failed|success|pending)">/', $html ), 'four status badges for five rows' );
 	}
 
+	public function test_the_add_form_opens_with_the_filtered_defaults(): void {
+		add_filter( 'bfag_is_pro', '__return_true' );
+		$this->prime_list( [], [] );
+		$html = bfag_test_render( [ $this->page(), 'render' ] );
+		$this->assertMatchesRegularExpression( '/id="bfag-wh-retries"[^>]*value="3"/', $html, 'control: the built-in default' );
+
+		bfag_test_reset();
+		$this->wpdb = $GLOBALS['wpdb'];
+		add_filter( 'bfag_is_pro', '__return_true' );
+		add_filter(
+			'bfag_webhook_form_defaults',
+			static function ( array $d ): array {
+				$d['max_retries'] = 7;
+				$d['id']          = 99;
+				return $d;
+			}
+		);
+		$this->prime_list( [], [] );
+		$html = bfag_test_render( [ $this->page(), 'render' ] );
+		$this->assertMatchesRegularExpression( '/id="bfag-wh-retries"[^>]*value="7"/', $html );
+		$this->assertStringNotContainsString( 'value="99"', $html, 'a filter cannot turn the add form into an edit of row 99' );
+	}
+
 	public function test_at_the_limit_the_form_gives_way_to_the_upsell_line(): void {
 		$this->prime_list( [ $this->webhook( 1 ), $this->webhook( 2 ), $this->webhook( 3 ) ], [ null, null, null ] );
 		$html = bfag_test_render( [ $this->page(), 'render' ] );

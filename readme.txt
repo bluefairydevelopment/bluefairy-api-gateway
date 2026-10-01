@@ -124,7 +124,7 @@ Network activation provisions every site — tables, the seeded rules, the capab
 * Sliding-window rate limiting per IP and rule with `429`, `Retry-After` and `X-BF-RateLimit-*` headers; one rule seeded at 300 per 60 s; editors exempt by default; trusted-proxy IP resolution from one chosen header; refused requests served from a marker with no database work.
 * Up to three signed outbound webhooks on six WordPress events and four WooCommerce events, HMAC-SHA256 `X-BF-Signature` over `timestamp.body`, delivery after the response (twenty at most, fifteen seconds at most, the rest by WP-Cron), a delivery log with Send test and Retry on failed outgoing deliveries, payload truncation and retention pruning.
 * Dashboard figures recomputed every five minutes, `GET /bfag/v1/status` for monitors, the `bfag_manage_gateway` capability, multisite provisioning.
-* Thirty-five `bfag_*` actions and filters as the add-on contract.
+* Thirty-six `bfag_*` actions and filters as the add-on contract.
 * Compatibility: tested against WordPress 7.1; requires PHP 8.1 or newer. Database schema version 1.0.2 (internal).
 
 == Upgrade Notice ==

@@ -134,16 +134,29 @@ final class WebhookPage extends Page {
 			return;
 		}
 
-		$webhook = $editing ?? [
-			'id'          => 0,
-			'label'       => '',
-			'url'         => '',
-			'event'       => '',
-			'headers'     => '',
-			'preset'      => '',
-			'enabled'     => 1,
-			'max_retries' => 3,
-		];
+		/**
+		 * Values the Add webhook form opens with. The Pro add-on sets
+		 * `max_retries` to its "Retries per delivery" default.
+		 *
+		 * @since 1.0.0
+		 *
+		 * @param array<string, mixed> $defaults Field defaults.
+		 */
+		$defaults       = (array) apply_filters(
+			'bfag_webhook_form_defaults',
+			[
+				'id'          => 0,
+				'label'       => '',
+				'url'         => '',
+				'event'       => '',
+				'headers'     => '',
+				'preset'      => '',
+				'enabled'     => 1,
+				'max_retries' => 3,
+			]
+		);
+		$defaults['id'] = 0;
+		$webhook        = $editing ?? $defaults;
 		// The secret never reaches the view, even when editing.
 		unset( $webhook['secret'] );
 		// A failed save re-fills the form once with what was typed (U-11).
