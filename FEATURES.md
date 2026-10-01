@@ -218,9 +218,9 @@ The limiter runs on `rest_pre_dispatch` at priority 5 — ahead of the cache at
 priority 10 — so a limited client is refused before it can be served from
 cache, and cached hits count towards the limit like any other request.
 
-1. The route is normalised: leading slash removed, lower-cased. WordPress matches REST routes case-insensitively, so `/wp/v2/Posts` is the same endpoint as `/wp/v2/posts` and is treated as such everywhere below. If *Enable rate limiting* is off, or the route is `/bfag/v1/status` (in any case), nothing is counted. Nor is anything counted for an internal dispatch — WP-CLI, WP-Cron, or a `rest_do_request()` made from admin-ajax or the front end — because those run as the server itself, and a penalty rule could otherwise ban 127.0.0.1. Only the top-level HTTP REST request (`wp_is_serving_rest_request()` / `REST_REQUEST`) is limited.
+1. The route is normalised: leading slash removed, lower-cased. WordPress matches REST routes case-insensitively, so `/wp/v2/Posts` is the same endpoint as `/wp/v2/posts` and is treated as such everywhere below. If *Enable rate limiting* is off, or the route is `/bfag/v1/status` (in any case), nothing is counted. Nor is anything counted for an internal dispatch — WP-CLI, WP-Cron, or a `rest_do_request()` made from admin-ajax or the front end — because those run as the server itself, and a penalty rule could otherwise block 127.0.0.1. Only the top-level HTTP REST request (`wp_is_serving_rest_request()` / `REST_REQUEST`) is limited.
 2. The client IP is resolved (see *Trusted proxies* below). An unknown address is not counted. A logged-in user who can edit posts is exempt unless *Exempt editors* is unticked under Settings → Rate limit: the block editor, the media library and the customiser all drive the REST API from one browser.
-3. `bfag_rate_limit_is_blocked` is asked; the free plugin has no ban list, so this is always `false`. (Pro answers `true` for a banned IP and the request gets `403 bfag_blocked` before any rule is counted.)
+3. `bfag_rate_limit_is_blocked` is asked; the free plugin has no block list, so this is always `false`. (Pro answers `true` for a blocked IP and the request gets `403 bfag_blocked` before any rule is counted.)
 4. **Every** enabled rule whose glob matches the route is applied, in id order. For each, one row is **inserted** into `bfag_rate_limit_hits` (subject, the normalised route, a 16-hex-character SHA-256 prefix of the **rule key** `rule:<id>`, GMT timestamp) and **then** the rows for that subject and rule newer than `now − window` are counted. Insert-then-count means every request's own row is in the count it reads, so a hundred concurrent requests cannot all read "59" and all pass.
 5. The first rule whose count exceeds its limit answers the request:
 
@@ -230,7 +230,11 @@ Retry-After: <window seconds>
 X-BF-RateLimit-Limit: <max requests>
 X-BF-RateLimit-Window: <window seconds>
 
-{"code":"bfag_rate_limited","message":"Too many requests. Please slow down and try again shortly.","data":{"status":429}}
+{
+  "code": "bfag_rate_limited",
+  "message": "Too many requests. Please slow down and try again shortly.",
+  "data": { "status": 429 }
+}
 ```
 
 It is a sliding window: a client allowed 300 per 60 s who sends 300 requests in
@@ -426,7 +430,10 @@ plus your sanitised extra headers.
 ### How the signature is computed
 
 ```
-X-BF-Signature: sha256=<hex HMAC-SHA256( key = secret, message = X-BF-Timestamp + "." + body )>
+X-BF-Signature: sha256=<hex HMAC-SHA256(
+    key     = secret,
+    message = X-BF-Timestamp + "." + body
+)>
 ```
 
 The message is the timestamp **as sent in the header**, a single `.`, and the
@@ -459,7 +466,8 @@ if ( ! hash_equals( $expected, $signature ) ) {
 }
 
 $payload = json_decode( $body, true );
-// $_SERVER['HTTP_X_BF_EVENT'] names the event; $_SERVER['HTTP_X_BF_DELIVERY'] is the delivery id.
+// $_SERVER['HTTP_X_BF_EVENT'] names the event;
+// $_SERVER['HTTP_X_BF_DELIVERY'] is the delivery id.
 http_response_code( 200 );
 ```
 
@@ -664,7 +672,7 @@ fired.
 | `bfag_rate_limit_subject_types` | filter | `( string[] $types = [ 'ip' ] )` | Subject types a rule may count by. Pro adds `user` and `apikey`. |
 | `bfag_rate_limit_subject` | filter | `( string\|null $subject, string $type, WP_REST_Request $request, string $ip )` | The subject a rule counts this request against. Default is the IP for type `ip`, `null` otherwise; `null` or `''` means the rule does not apply to this request. |
 | `bfag_rate_limit_is_blocked` | filter | `( bool $blocked = false, string $ip, WP_REST_Request $request )` | Return `true` to answer `403 bfag_blocked` before any rule is counted. |
-| `bfag_rate_limit_breached` | action | `( string $subject, array $rule, WP_REST_Request $request, string $ip, bool $forwarded_without_proxy )` | A subject newly exceeded a rule: fired once per window, when the marker is set, never for a request the marker refuses. `$forwarded_without_proxy` is true when a forwarded-address header arrived but the sender is not a trusted proxy — the IP is a shared address and must not be banned. |
+| `bfag_rate_limit_breached` | action | `( string $subject, array $rule, WP_REST_Request $request, string $ip, bool $forwarded_without_proxy )` | A subject newly exceeded a rule: fired once per window, when the marker is set, never for a request the marker refuses. `$forwarded_without_proxy` is true when a forwarded-address header arrived but the sender is not a trusted proxy — the IP is a shared address and must not be blocked. |
 | `bfag_rate_limit_refused` | action | `( string $subject, array $rule, string $ip, int $refused_so_far )` | Every request refused from the limited marker, with the running count of refusals of this subject under this rule in the current window (this one included; the breaching request is not a refusal). Fired with no database work — the count lives in the marker — so a DDoS threshold can mean "requests over the limit" without a `COUNT(*)` per `429`. |
 | `bfag_rate_limit_max_window` | filter | `( int $seconds )` | The oldest hit the prune cron must keep; default is the largest enabled window (or 60). Raise it if you count across a longer window yourself. |
 
@@ -752,51 +760,77 @@ plugin keeps doing exactly what it does now.
 
 | Feature | API Gateway Pro | API Gateway (free) |
 |---|---|---|
-| REST response cache with `X-BF-Cache: HIT` / `MISS` / `BYPASS` | Yes | Yes |
+| REST response cache, every response labelled `X-BF-Cache: HIT` / `MISS` / `BYPASS` | Yes | Yes |
 | Cache rules | Up to 500 | 1 |
-| Automatic purge narrowed to the tags a change touches — `post:<id>`, `type:<post_type>`, `term:<id>`, `tax:<taxonomy>`, `all` | Yes | — (every change flushes everything) |
-| Purge all — button, AJAX and `POST /bfag/v1/cache/purge` | Yes | Yes |
-| WPGraphQL query caching (anonymous, error-free queries) | Yes | — |
+| What a content change purges | Only the tags it touches: `post:<id>`, `type:<post_type>`, `term:<id>`, `tax:<taxonomy>`, `all` | Everything |
+| **Purge all** button and `POST /bfag/v1/cache/purge` | Yes | Yes |
+| **WPGraphQL query caching** (anonymous, error-free queries) | Yes | — |
 | Per-IP sliding-window rate limiting with `429` and `Retry-After` | Yes | Yes |
 | Rate-limit rules | Up to 500 | 1 |
-| Count by logged-in user or by API key | Yes | — |
-| Penalty: block an IP for N seconds when it breaches an IP-counted rule | Yes | — |
-| DDoS auto-block once a rule has refused an IP the threshold number of requests over its limit, with a never-block list | Yes | — |
-| Blocked IP addresses panel — see, lift and add blocks by hand | Yes | — |
-| *Active blocks* dashboard card | Live count of blocked addresses | *Blocked (Pro)* placeholder |
-| Forwarded-IP resolution behind trusted proxies | Yes | Yes |
+| **Count a rule by logged-in user or by API key** | Yes | — |
+| **Penalty block** — an address that breaches an IP rule is blocked for N seconds | Yes | — |
+| **DDoS auto-block**, with a never-block list | Yes | — |
+| **Blocked IP addresses panel** — see, lift and add blocks by hand | Yes | — |
+| Dashboard *Active blocks* card | Live count of blocked addresses | *Blocked (Pro)* placeholder |
+| Real client address behind trusted proxies | Yes | Yes |
 | Signed outbound webhooks (`X-BF-Signature`, HMAC-SHA256) | Yes | Yes |
 | Webhooks | Up to 500 | 3 |
 | Events — six WordPress, four WooCommerce | Yes | Yes |
-| Delivery log with manual Retry on failed outgoing deliveries | Yes | Yes |
-| Automatic retries with back-off (1 min, 5 min, 30 min), up to a per-webhook limit | Yes | — |
-| Email alert after N consecutive failures | Yes | — |
-| Salesforce, HubSpot and Mailchimp presets — the delivery becomes a CRM record | Yes | — |
-| Incoming webhook endpoint with per-vendor verification (`/bfag/v1/incoming/<preset>`) | Yes | — |
-| Webhook REST API — list, create, update, delete, deliveries, retry | Yes | — |
-| API keys with scopes (`X-BF-API-Key`, REST requests only) — `read`, `write`, `cache:purge`, `webhook:read`, `webhook:write` | Yes | — |
-| `GET /bfag/v1/status` and `POST /bfag/v1/cache/purge` | Yes | Yes |
-| Admin tabs | 6 | 5 |
+| Delivery log with a manual **Retry** on failed deliveries | Yes | Yes |
+| **Automatic retries** — 1 min, 5 min, then 30 min, by a five-minute sweep, up to each webhook's *Max retries* (0–10) | Yes | — |
+| **Retries per delivery** — a site-wide default for new webhooks | Yes | — |
+| **Failure alert email** — on the first failure, after N in a row, or after the last retry | Yes | — (sends no alerts) |
+| **Salesforce, HubSpot and Mailchimp presets** — the delivery becomes a CRM record | Yes | — |
+| **Verified incoming webhooks** at `/bfag/v1/incoming/<preset>` | Yes | — |
+| **Webhook REST API** — list, create, update, delete, read the log, retry | Yes | — |
+| **Scoped API keys** (`read`, `write`, `cache:purge`, `webhook:read`, `webhook:write`) | Yes | — |
+| `GET /bfag/v1/status` for a monitoring tool | Yes | Yes |
+| Admin tabs | 6 (adds **API Keys**) | 5 |
 
 ### Why the missing rows cost you
 
-**A failed delivery stays failed.** The CRM was down for two minutes, the
-lead is in your log marked `failed`, and it stays there until someone opens
-the dashboard and presses Retry. Pro books the retry itself — one minute later,
-then five, then thirty — and emails you if a webhook keeps failing.
+**A failed delivery stays failed, and nobody tells you.** Your fulfilment service
+was down for two minutes at three in the morning. The new order is in your delivery log
+marked `failed`, and this plugin does nothing more about it: no second attempt,
+no email. It waits there until someone happens to open the dashboard and press
+**Retry** — by which time that order has sat unfulfilled for hours. Pro
+retries it for you one minute later, then five, then thirty, up to the limit
+you set per webhook, and emails you at the moment you choose: on the first
+failure, after a run of failures, or only once the last retry has failed.
 
-**A blog post edit empties the product cache.** This plugin has one rule and
-one answer to any change: flush everything. Pro tags what each change touches,
-so editing a post leaves responses tagged `type:product` warm.
+**Your CRM receives JSON it cannot read.** This plugin sends one signed JSON
+shape to one URL. Salesforce, HubSpot and Mailchimp each want their own format,
+their own endpoint and their own authentication, so today you need a relay
+service in the middle — another thing to pay for and another thing to go down.
+Pro's presets turn the delivery into a Salesforce Lead, a HubSpot contact, deal
+or ticket, or a Mailchimp subscriber directly, and verify the webhooks those
+vendors send back to you.
 
-**A client that is hammering you is just slowed down.** The free limiter
-answers 429 and keeps counting. Pro blocks the address — for the rule's
-penalty, or for an hour once a rule has refused it the DDoS threshold number
-of requests over its limit — and shows you the list of blocks.
+**One blog post edit empties the product cache.** This plugin has one cache
+rule and one answer to any content change: flush everything. Every post you
+publish turns your whole API cache cold again. Pro tags what each change
+touches, so editing a post leaves responses tagged `type:product` warm, and with
+up to 500 rules every route can have the lifetime it deserves. If your front end
+speaks WPGraphQL, Pro caches those queries too; this plugin does not.
 
-**Every integration shares the administrator's login.** Pro mints API keys with
-scopes, so a build server can purge the cache and nothing else, and a
-dashboard can read webhooks without being able to change them.
+**A client that is hammering you is only slowed down.** The free limiter answers
+`429` and keeps counting, request after request, for as long as the client cares
+to keep sending them. Pro blocks the address outright — for the penalty you set
+on the rule, or for an hour by default once a rule has refused the DDoS threshold
+number of its requests over the limit — and gives you a panel listing every block, its
+reason and its expiry, with **Unblock** and a form to block an address by hand.
+
+**One rule means one budget for everyone.** Your search endpoint, your user
+routes and your product feed all draw on the same per-IP allowance. Pro gives each
+route its own rule and lets a rule count per logged-in user or per API key, so a
+partner integration gets its own allowance instead of sharing an office IP.
+
+**Every integration shares the administrator's login.** Today a build server
+that needs to purge the cache holds a credential that can do anything the
+administrator can. Pro mints API keys with scopes — a deploy pipeline can purge
+the cache and nothing else, a dashboard can read webhooks without being able to
+change them — each one stored hashed, with an optional expiry and a revoke that
+takes effect at once.
 
 ### Get Pro
 
