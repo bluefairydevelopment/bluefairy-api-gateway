@@ -1,0 +1,216 @@
+<?php
+/**
+ * The Settings tab.
+ *
+ * @package BlueFairy\ApiGateway
+ */
+
+declare(strict_types=1);
+
+namespace BlueFairy\ApiGateway\Admin;
+
+use BlueFairy\ApiGateway\Settings;
+
+/**
+ * Every `Settings::DEFAULTS` key as a field, grouped, then the add-on's own
+ * rows through `bfag_settings_fields`. Saving goes through
+ * Settings::update() — the only sanitiser — and then `bfag_settings_saved`
+ * carries the raw POST to the add-on.
+ */
+final class SettingsPage extends Page {
+
+	public const TAB = 'settings';
+
+	/**
+	 * Constructor.
+	 *
+	 * @param Settings $settings Plugin settings.
+	 */
+	public function __construct( private readonly Settings $settings ) {}
+
+	/**
+	 * Tab id.
+	 */
+	public function tab(): string {
+		return self::TAB;
+	}
+
+	/**
+	 * Actions this tab handles.
+	 *
+	 * @return list<string>
+	 */
+	public function actions(): array {
+		return [ 'save_settings' ];
+	}
+
+	/**
+	 * Field definitions, grouped. Every key of Settings::DEFAULTS appears
+	 * exactly once; the test asserts it.
+	 *
+	 * @return array<string, array{label:string, fields:array<string, array{label:string, type:string, description:string, min?:int, max?:int}>}>
+	 */
+	public function groups(): array {
+		return [
+			'general'   => [
+				'label'  => __( 'General', 'bluefairy-api-gateway' ),
+				'fields' => [
+					'notification_email' => [
+						'label'       => __( 'Notification email', 'bluefairy-api-gateway' ),
+						'type'        => 'email',
+						'description' => __( 'Where alerts are sent. Leave blank for the site admin email.', 'bluefairy-api-gateway' ),
+					],
+					'failure_threshold'  => [
+						'label'       => __( 'Failure threshold', 'bluefairy-api-gateway' ),
+						'type'        => 'number',
+						'min'         => 1,
+						'max'         => 100,
+						'description' => __( 'Consecutive webhook failures before an alert is raised.', 'bluefairy-api-gateway' ),
+					],
+				],
+			],
+			'cache'     => [
+				'label'  => __( 'Cache', 'bluefairy-api-gateway' ),
+				'fields' => [
+					'cache_enabled'     => [
+						'label'       => __( 'Enable response cache', 'bluefairy-api-gateway' ),
+						'type'        => 'checkbox',
+						'description' => __( 'Serve anonymous GET responses from the cache when a rule matches.', 'bluefairy-api-gateway' ),
+					],
+					'default_cache_ttl' => [
+						'label'       => __( 'Default TTL (seconds)', 'bluefairy-api-gateway' ),
+						'type'        => 'number',
+						'min'         => 1,
+						'max'         => 86400,
+						'description' => __( 'Used when a rule has no TTL of its own.', 'bluefairy-api-gateway' ),
+					],
+				],
+			],
+			'ratelimit' => [
+				'label'  => __( 'Rate limit', 'bluefairy-api-gateway' ),
+				'fields' => [
+					'rate_limit_enabled' => [
+						'label'       => __( 'Enable rate limiting', 'bluefairy-api-gateway' ),
+						'type'        => 'checkbox',
+						'description' => __( 'Return 429 when a subject exceeds a matching rule.', 'bluefairy-api-gateway' ),
+					],
+					'trusted_proxies'    => [
+						'label'       => __( 'Trusted proxies', 'bluefairy-api-gateway' ),
+						'type'        => 'textarea',
+						'description' => __( 'One IP or CIDR per line. Forwarded-for headers are honoured only from these addresses.', 'bluefairy-api-gateway' ),
+					],
+				],
+			],
+			'webhooks'  => [
+				'label'  => __( 'Webhooks', 'bluefairy-api-gateway' ),
+				'fields' => [
+					'max_payload_bytes' => [
+						'label'       => __( 'Max stored payload (bytes)', 'bluefairy-api-gateway' ),
+						'type'        => 'number',
+						'min'         => 1024,
+						'max'         => 16777215,
+						'description' => __( 'Longer payloads are sent in full but stored truncated, and cannot be retried.', 'bluefairy-api-gateway' ),
+					],
+					'retention_days'    => [
+						'label'       => __( 'Delivery log retention (days)', 'bluefairy-api-gateway' ),
+						'type'        => 'number',
+						'min'         => 1,
+						'max'         => 365,
+						'description' => __( 'Finished deliveries older than this are pruned daily.', 'bluefairy-api-gateway' ),
+					],
+				],
+			],
+			'advanced'  => [
+				'label'  => __( 'Advanced', 'bluefairy-api-gateway' ),
+				'fields' => [
+					'debug_logging'            => [
+						'label'       => __( 'Debug logging', 'bluefairy-api-gateway' ),
+						'type'        => 'checkbox',
+						'description' => __( 'Write gateway decisions to the PHP error log.', 'bluefairy-api-gateway' ),
+					],
+					'disable_cron_notice'      => [
+						'label'       => __( 'Hide the WP-Cron notice', 'bluefairy-api-gateway' ),
+						'type'        => 'checkbox',
+						'description' => __( 'Tick when a system cron runs wp-cron.php and DISABLE_WP_CRON is intentional.', 'bluefairy-api-gateway' ),
+					],
+					'delete_data_on_uninstall' => [
+						'label'       => __( 'Delete data on uninstall', 'bluefairy-api-gateway' ),
+						'type'        => 'checkbox',
+						'description' => __( 'Drop the plugin tables and options when the plugin is deleted.', 'bluefairy-api-gateway' ),
+					],
+				],
+			],
+		];
+	}
+
+	/**
+	 * Print the tab.
+	 */
+	public function render(): void {
+		$this->view(
+			'settings',
+			[
+				'groups'   => $this->groups(),
+				'values'   => $this->settings->all(),
+				'settings' => $this->settings,
+				'form_url' => $this->url(),
+			]
+		);
+	}
+
+	/**
+	 * Hooked to admin_notices: warn when WP-Cron is off and the admin has not said so
+	 * is intentional. Only on the plugin's own screen.
+	 */
+	public function render_cron_notice(): void {
+		if ( ! $this->cron_notice_due() ) {
+			return;
+		}
+		$screen = get_current_screen();
+		if ( ! is_object( $screen ) || Assets::SCREEN_ID !== $screen->id ) {
+			return;
+		}
+		echo '<div class="notice notice-warning"><p>'
+			. esc_html__( 'WP-Cron is disabled (DISABLE_WP_CRON). The gateway prunes its logs and recomputes dashboard figures on WP-Cron: make sure a system cron runs wp-cron.php, then tick "Hide the WP-Cron notice" under Settings › Advanced.', 'bluefairy-api-gateway' )
+			. '</p></div>';
+	}
+
+	/**
+	 * Should the WP-Cron notice show?
+	 */
+	public function cron_notice_due(): bool {
+		if ( ! defined( 'DISABLE_WP_CRON' ) || ! constant( 'DISABLE_WP_CRON' ) ) {
+			return false;
+		}
+		return ! Settings::to_bool( $this->settings->get( 'disable_cron_notice' ) );
+	}
+
+	/**
+	 * Dispatch a verified action.
+	 *
+	 * @param string               $action Action name.
+	 * @param array<string, mixed> $fields Sanitised fields (unused: Settings sanitises its own).
+	 * @param array<string, mixed> $raw    Unslashed POST.
+	 */
+	protected function run_action( string $action, array $fields, array $raw ): void {
+		unset( $fields );
+		if ( 'save_settings' !== $action ) {
+			$this->redirect( 'error' );
+		}
+		$values = isset( $raw['bfag'] ) && is_array( $raw['bfag'] ) ? $raw['bfag'] : [];
+		$clean  = $this->settings->update( $values );
+
+		/**
+		 * The base settings were saved. The add-on stores its own fields
+		 * from $raw here.
+		 *
+		 * @since 1.0.0
+		 *
+		 * @param array<string, mixed> $clean What Settings stored.
+		 * @param array<string, mixed> $raw   The whole unslashed POST body.
+		 */
+		do_action( 'bfag_settings_saved', $clean, $raw );
+
+		$this->redirect( 'settings_saved' );
+	}
+}

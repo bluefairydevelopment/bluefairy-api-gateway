@@ -1,0 +1,238 @@
+/* BlueFairy API Gateway — admin screen. Plain WP admin markup plus these helpers. */
+
+.bfag-layout {
+	display: flex;
+	gap: 24px;
+	align-items: flex-start;
+	margin-top: 16px;
+}
+
+.bfag-main {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+.bfag-side {
+	flex: 0 0 300px;
+}
+
+@media (max-width: 1100px) {
+	.bfag-layout {
+		flex-direction: column;
+	}
+
+	.bfag-side {
+		flex-basis: auto;
+		width: 100%;
+	}
+}
+
+/* KPI cards */
+.bfag-kpis {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+	gap: 16px;
+	margin: 8px 0 12px;
+}
+
+.bfag-kpi {
+	background: #fff;
+	border: 1px solid #c3c4c7;
+	border-radius: 4px;
+	padding: 14px 16px;
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.bfag-kpi__label {
+	color: #50575e;
+	font-size: 12px;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+}
+
+.bfag-kpi__value {
+	font-size: 28px;
+	font-weight: 600;
+	line-height: 1.2;
+	color: #1d2327;
+}
+
+.bfag-kpi__sub {
+	color: #646970;
+	font-size: 12px;
+}
+
+.bfag-kpi-actions {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	flex-wrap: wrap;
+}
+
+.bfag-kpi-updated {
+	color: #646970;
+}
+
+/* Toolbar above each table */
+.bfag-toolbar {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	flex-wrap: wrap;
+	margin-top: 8px;
+}
+
+.bfag-toolbar h2 {
+	margin: 0;
+}
+
+.bfag-count {
+	color: #646970;
+}
+
+.bfag-status {
+	color: #646970;
+	font-style: italic;
+}
+
+.bfag-status.is-error {
+	color: #d63638;
+	font-style: normal;
+}
+
+.bfag-table {
+	margin-top: 10px;
+}
+
+.bfag-table td,
+.bfag-table th {
+	vertical-align: middle;
+}
+
+.bfag-counts th {
+	width: 60%;
+	font-weight: 400;
+}
+
+/* Status badges */
+.bfag-badge {
+	display: inline-block;
+	padding: 2px 8px;
+	border-radius: 10px;
+	font-size: 11px;
+	line-height: 1.6;
+	text-decoration: none;
+	border: 1px solid transparent;
+	background: #f0f0f1;
+	color: #3c434a;
+}
+
+a.bfag-badge:hover,
+a.bfag-badge:focus {
+	border-color: #8c8f94;
+	color: #1d2327;
+}
+
+.bfag-badge--success {
+	background: #edfaef;
+	color: #007017;
+	border-color: #68de7c;
+}
+
+.bfag-badge--failed {
+	background: #fcf0f1;
+	color: #8a2424;
+	border-color: #f1a5a9;
+}
+
+.bfag-badge--pending,
+.bfag-badge--retrying {
+	background: #fcf9e8;
+	color: #6e5a00;
+	border-color: #f0c33c;
+}
+
+.bfag-badge--muted {
+	background: #f0f0f1;
+	color: #646970;
+	border-color: #dcdcde;
+}
+
+.bfag-badge.is-busy {
+	opacity: 0.5;
+	pointer-events: none;
+}
+
+/* Monospace key / URL box */
+.bfag-keybox {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+}
+
+.bfag-keybox code {
+	font-family: Consolas, Monaco, monospace;
+	font-size: 12px;
+	padding: 6px 10px;
+	background: #f6f7f7;
+	border: 1px solid #c3c4c7;
+	border-radius: 3px;
+	user-select: all;
+	word-break: break-all;
+}
+
+/* Limit line shown instead of an add form */
+.bfag-limit-line {
+	margin: 16px 0;
+	padding: 10px 12px;
+	border-left: 4px solid #2271b1;
+	background: #f0f6fc;
+}
+
+/* Upsell panel */
+.bfag-upsell {
+	background: #eff6ff;
+	border: 1px solid #bfdbfe;
+	border-radius: 4px;
+	padding: 14px 16px;
+}
+
+.bfag-upsell h2 {
+	margin: 0 0 8px;
+	font-size: 14px;
+}
+
+.bfag-upsell ul {
+	list-style: disc;
+	margin: 0 0 12px 18px;
+}
+
+.bfag-upsell li {
+	margin-bottom: 4px;
+}
+
+.bfag-form .form-table th {
+	width: 180px;
+}
+
+.bfag-group-heading h2 {
+	margin: 12px 0 0;
+	font-size: 15px;
+	border-bottom: 1px solid #dcdcde;
+	padding-bottom: 6px;
+}
+
+.bfag-delete {
+	color: #b32d2e;
+}
+
+[data-bfag-preset-config] {
+	display: none;
+}
+
+[data-bfag-preset-config].is-active {
+	display: table-row;
+}
