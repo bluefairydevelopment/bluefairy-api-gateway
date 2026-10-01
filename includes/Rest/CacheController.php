@@ -102,15 +102,22 @@ final class CacheController {
 	 * @param \WP_REST_Request $request The request.
 	 */
 	public function purge( \WP_REST_Request $request ): \WP_REST_Response {
-		$tags = $this->sanitize_tags( $request->get_param( 'tags' ) );
-		if ( [] === $tags ) {
+		$requested = $this->sanitize_tags( $request->get_param( 'tags' ) );
+		if ( [] === $requested ) {
 			$this->purger->purge_all();
+			$purged = 'all';
+			$tags   = [];
 		} else {
-			$tags = $this->purger->purge_tags( $tags );
+			// Decided from what was REQUESTED, not from what was bumped: tags no
+			// enabled rule carries are dropped by the purger, and an answer of
+			// "all" would then tell a deploy script the whole cache was flushed
+			// when nothing was (D-AG-1).
+			$tags   = $this->purger->purge_tags( $requested );
+			$purged = 'tags';
 		}
 		return new \WP_REST_Response(
 			[
-				'purged' => [] === $tags ? 'all' : 'tags',
+				'purged' => $purged,
 				'tags'   => $tags,
 			],
 			200

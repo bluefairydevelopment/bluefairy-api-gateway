@@ -194,6 +194,29 @@ final class CacheControllerTest extends TestCase {
 	}
 
 	/**
+	 * D-AG-1 (found by the rig E2E suite): a purge naming only tags no
+	 * enabled rule carries bumps nothing — it must answer "tags" with an
+	 * empty list, never "all", or a deploy script believes everything was
+	 * flushed while every entry stays warm.
+	 */
+	public function test_a_purge_of_only_unknown_tags_answers_tags_not_all_and_flushes_nothing(): void {
+		$this->rule_carrying( 'products' );
+		$generation = $this->store->generation();
+
+		$response = $this->controller()->purge( $this->purge_request( [ 'tags' => [ 'nobody-has-this' ] ] ) );
+
+		$this->assertSame(
+			[
+				'purged' => 'tags',
+				'tags'   => [],
+			],
+			$response->get_data()
+		);
+		$this->assertSame( $generation, $this->store->generation(), 'nothing was flushed' );
+		$this->assertSame( 1, $this->store->tag_generation( 'nobody-has-this' ) );
+	}
+
+	/**
 	 * `sanitize_key()` would turn `post:42` into `post42`, a tag the Pro
 	 * purger never bumps; the endpoint must keep the colon.
 	 */
