@@ -244,6 +244,13 @@ a.bfag-badge:focus {
 	display: table-row;
 }
 
+/* A preset block that is a <tbody> (Pro renders its rows that way) is a row
+   GROUP; as `table-row` its rows collapse into one anonymous cell with their
+   own column grid and the form's two halves stop lining up (Step 3b). */
+tbody[data-bfag-preset-config].is-active {
+	display: table-row-group;
+}
+
 .bfag-row-detail td {
 	border-top: 0;
 	padding-top: 0;
