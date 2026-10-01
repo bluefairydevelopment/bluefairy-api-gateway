@@ -168,8 +168,11 @@ hours.
 
 **Rate-limit rules** shows label, subject (`ip`), route glob, limit as
 `N per M s`, the **Enabled** toggle badge and **Edit** | **Delete**. The
-counter reads `1 of 1`: the seeded rule *Global per-IP limit* (60 per 60 s on
-`**`) is the one rule the free plugin allows. Edit it to taste.
+counter reads `1 of 1`: the seeded rule *Global per-IP limit* (300 per 60 s on
+`**`) is the one rule the free plugin allows. The note under the table says what
+it is for: a sensible ceiling for anonymous API traffic from one address; lower
+it for a public site, raise it for a headless front end that calls from one
+server. Edit it to taste.
 
 ### The add / edit form
 
@@ -190,8 +193,8 @@ The limiter runs on `rest_pre_dispatch` at priority 5 — ahead of the cache at
 priority 10 — so a limited client is refused before it can be served from
 cache, and cached hits count towards the limit like any other request.
 
-1. The route is normalised: leading slash removed, lower-cased. WordPress matches REST routes case-insensitively, so `/wp/v2/Posts` is the same endpoint as `/wp/v2/posts` and is treated as such everywhere below. If *Enable rate limiting* is off, or the route is `/bfag/v1/status` (in any case), nothing is counted.
-2. The client IP is resolved (see *Trusted proxies* below).
+1. The route is normalised: leading slash removed, lower-cased. WordPress matches REST routes case-insensitively, so `/wp/v2/Posts` is the same endpoint as `/wp/v2/posts` and is treated as such everywhere below. If *Enable rate limiting* is off, or the route is `/bfag/v1/status` (in any case), nothing is counted. Nor is anything counted for an internal dispatch — WP-CLI, WP-Cron, or a `rest_do_request()` made from admin-ajax or the front end — because those run as the server itself, and a penalty rule could otherwise ban 127.0.0.1. Only the top-level HTTP REST request (`wp_is_serving_rest_request()` / `REST_REQUEST`) is limited.
+2. The client IP is resolved (see *Trusted proxies* below). An unknown address is not counted. A logged-in user who can edit posts is exempt unless *Exempt editors* is unticked under Settings → Rate limit: the block editor, the media library and the customiser all drive the REST API from one browser.
 3. `bfag_rate_limit_is_blocked` is asked; the free plugin has no ban list, so this is always `false`. (Pro answers `true` for a banned IP and the request gets `403 bfag_blocked` before any rule is counted.)
 4. **Every** enabled rule whose glob matches the route is applied, in id order. For each, one row is **inserted** into `bfag_rate_limit_hits` (subject, the normalised route, a 16-hex-character SHA-256 prefix of the **rule key** `rule:<id>`, GMT timestamp) and **then** the rows for that subject and rule newer than `now − window` are counted. Insert-then-count means every request's own row is in the count it reads, so a hundred concurrent requests cannot all read "59" and all pass.
 5. The first rule whose count exceeds its limit answers the request:
@@ -205,11 +208,11 @@ X-BF-RateLimit-Window: <window seconds>
 {"code":"bfag_rate_limited","message":"Too many requests. Please slow down and try again shortly.","data":{"status":429}}
 ```
 
-It is a sliding window: a client allowed 60 per 60 s who sends 60 requests in
+It is a sliding window: a client allowed 300 per 60 s who sends 300 requests in
 the first second is refused for the next 59 seconds, and admitted again one
 request at a time as the oldest rows age out. The budget is **per subject and
 per rule**, not per path: every route a rule matches draws on the same
-allowance, so the `**` seeded rule means "60 per minute in total", and neither
+allowance, so the `**` seeded rule means "300 per minute in total", and neither
 a crawl of 10,000 distinct URLs nor `/wp/v2/Posts` spelled ten different ways
 gets a fresh budget. Give a route its own allowance with its own rule (Pro;
 the free plugin has one rule). The `route` column of the hit log still shows
@@ -473,7 +476,8 @@ its row.
 | Field | Behaviour |
 |---|---|
 | **Enable rate limiting** | Return 429 when a subject exceeds a matching rule. Off: nothing is counted. |
-| **Trusted proxies** | One IP or CIDR per line (IPv4 or IPv6). Invalid lines are discarded on save. See *Trusted proxies* above. |
+| **Exempt editors** | On by default. Do not rate-limit logged-in users who can edit posts (the block editor's own REST calls). |
+| **Trusted proxies** | One IP or CIDR per line (IPv4 or IPv6). Invalid lines are discarded on save. Needed behind Cloudflare, a load balancer or a CDN: without it the proxy's address is the client IP and all visitors share one bucket; with it, the chosen header is read only from these addresses so visitors cannot forge their IP. While it is empty and a request arrives carrying a forwarded-address header, a dismissible notice says so on the plugin's screen, the Plugins screen and the Dashboard. See *Trusted proxies* above. |
 | **Client address header** | `X-Forwarded-For` (default), `CF-Connecting-IP`, `X-Real-IP` or `True-Client-IP`: the header your proxy writes the real client address into. Only this header is read, and only when the request comes from a trusted proxy — so a visitor cannot pick their own address. Anything else submitted is stored as the default. |
 
 ### Webhooks

@@ -58,6 +58,8 @@ final class Plugin {
 		self::$booted = true;
 
 		Installer::maybe_upgrade();
+		// A site created after a network activation is provisioned as it is born.
+		add_action( 'wp_initialize_site', [ Installer::class, 'initialize_site' ], 20 );
 
 		$settings = new Settings();
 		Logger::use_settings( $settings );

@@ -16,7 +16,7 @@ For the customer-facing feature guide, including the Pro/free comparison table, 
 ## What it does
 
 - **Response cache** — anonymous `GET`/`HEAD` requests to the REST API are stored and served back with an `X-BF-Cache: HIT` header. Every REST response passing through is labelled `HIT`, `MISS` or `BYPASS`, so you can see the decision from `curl`. One cache rule in the free plugin (seeded as `**`, "All routes", 60 s). Purged automatically when a post, term or comment changes; purged by hand from the Cache tab or `POST /bfag/v1/cache/purge`.
-- **Rate limiting** — a sliding-window counter per client IP and rule. The breaching request gets `429` with `Retry-After`, `X-BF-RateLimit-Limit` and `X-BF-RateLimit-Window`. One rule in the free plugin (seeded as 60 requests per 60 s on `**`). One forwarded-IP header of your choosing is honoured, only from the proxies you list.
+- **Rate limiting** — a sliding-window counter per client IP and rule. The breaching request gets `429` with `Retry-After`, `X-BF-RateLimit-Limit` and `X-BF-RateLimit-Window`. One rule in the free plugin (seeded as 300 requests per 60 s on `**`; logged-in users who can edit posts are exempt by default). One forwarded-IP header of your choosing is honoured, only from the proxies you list.
 - **Outbound webhooks** — up to three webhooks subscribing to six WordPress events (ten with WooCommerce). Each delivery is a JSON `POST` signed with `X-BF-Signature: sha256=HMAC-SHA256(timestamp.body, secret)`, logged with its HTTP status and response, and can be resent from the delivery log.
 - **Dashboard** — cache hit rate, webhook success rate and the rate-limit log size over the last 24 hours, the ten most recent failed deliveries with a Retry button, and the same figures at `GET /bfag/v1/status` for a monitor.
 
@@ -43,12 +43,12 @@ X-BF-Cache: HIT
 
 A `BYPASS` means the request or the response was not cacheable — the list of reasons is in `FEATURES.md` under *How the cache decides*.
 
-**See the rate limit working.** The seeded rule allows 60 requests per 60 seconds per IP on every route. The 61st request within the window answers:
+**See the rate limit working.** The seeded rule allows 300 requests per 60 seconds per IP on every route. The 301st request within the window answers:
 
 ```
 HTTP/1.1 429 Too Many Requests
 Retry-After: 60
-X-BF-RateLimit-Limit: 60
+X-BF-RateLimit-Limit: 300
 X-BF-RateLimit-Window: 60
 
 {"code":"bfag_rate_limited","message":"Too many requests. Please slow down and try again shortly.","data":{"status":429}}
@@ -69,7 +69,8 @@ All settings live in the single option `bfag_settings` and are edited on **Setti
 | Enable response cache | `cache_enabled` | `true` | checkbox | Off: nothing is served from or stored in the cache; every response is `BYPASS`. |
 | Default TTL (seconds) | `default_cache_ttl` | `60` | 1–86400 | Used when the matching rule's own TTL is below 1. Every rule saved through the admin form carries a TTL of its own, so in practice the rule wins. |
 | Enable rate limiting | `rate_limit_enabled` | `true` | checkbox | Off: no rule is counted and no `429` is ever returned. |
-| Trusted proxies | `trusted_proxies` | `[]` | IPs or CIDRs, one per line; invalid entries discarded | When `REMOTE_ADDR` is one of these, the client IP is taken from the *Client address header* below. |
+| Exempt editors | `rate_limit_exempt_editors` | `true` | checkbox | Do not rate-limit logged-in users who can edit posts (the block editor's own REST calls). |
+| Trusted proxies | `trusted_proxies` | `[]` | IPs or CIDRs, one per line; invalid entries discarded | When `REMOTE_ADDR` is one of these, the client IP is taken from the *Client address header* below. Needed behind Cloudflare, a load balancer or a CDN; without it every visitor shares the proxy's bucket, and a notice says so while a forwarded-address header is arriving. |
 | Client address header | `forwarded_header` | `X-Forwarded-For` | `X-Forwarded-For`, `CF-Connecting-IP`, `X-Real-IP` or `True-Client-IP`; anything else saves as the default | The one header read from a trusted proxy (`X-Forwarded-For`: right-most address that is not itself a trusted proxy). Every other header is ignored, so a visitor cannot pick their own address. |
 | Max stored payload (bytes) | `max_payload_bytes` | `65535` | 1024–16777215 | A delivery whose JSON body is longer is still sent in full, but the stored copy is cut here and flagged *truncated*, and cannot be retried. |
 | Delivery log retention (days) | `retention_days` | `30` | 1–365 | Finished (`success`/`failed`) deliveries older than this are deleted by the daily prune. |

@@ -78,6 +78,9 @@ final class RateLimitMiddleware {
 		if ( ! Settings::to_bool( $this->settings->get( 'rate_limit_enabled' ) ) ) {
 			return $result;
 		}
+		if ( $this->is_internal_dispatch() ) {
+			return $result;
+		}
 		// Normalised once: no leading slash, lower-cased. WP_REST_Server matches
 		// routes case-insensitively, so `/wp/v2/Posts` is the same endpoint as
 		// `/wp/v2/posts` and must not get its own budget or dodge the exemption.
@@ -87,6 +90,9 @@ final class RateLimitMiddleware {
 		}
 
 		$ip = $this->context->client_ip();
+		if ( '' === $ip ) {
+			return $result;
+		}
 
 		/**
 		 * Filters whether the client is blocked outright (the Pro ban list).
@@ -99,6 +105,13 @@ final class RateLimitMiddleware {
 		 */
 		if ( true === apply_filters( 'bfag_rate_limit_is_blocked', false, $ip, $request ) ) {
 			return $this->blocked_response();
+		}
+
+		// The block editor, the media library and the customiser all drive the
+		// REST API from one browser; an editor's own session must not be
+		// throttled by the ceiling meant for anonymous traffic.
+		if ( Settings::to_bool( $this->settings->get( 'rate_limit_exempt_editors' ) ) && is_user_logged_in() && current_user_can( 'edit_posts' ) ) {
+			return $result;
 		}
 
 		foreach ( $this->rules->matching( $route ) as $rule ) {
@@ -202,6 +215,30 @@ final class RateLimitMiddleware {
 	 */
 	public static function bucket( int $rule_id ): string {
 		return self::BUCKET_PREFIX . $rule_id;
+	}
+
+	/**
+	 * Is this dispatch something other than the top-level HTTP REST request?
+	 *
+	 * `rest_pre_dispatch` also fires for every internal `rest_do_request()`
+	 * — WP-CLI commands (WooCommerce's CLI runner issues several per
+	 * command), cron jobs and wp-admin widgets that render through the REST
+	 * server. Those run as the server itself, and counting them against
+	 * 127.0.0.1 let a penalty rule ban the site's own loopback. On
+	 * WordPress 6.5+ `wp_is_serving_rest_request()` is true only for the
+	 * real REST request; earlier versions have only the REST_REQUEST
+	 * constant, and both are false for an internal dispatch from
+	 * admin-ajax or the front end.
+	 */
+	private function is_internal_dispatch(): bool {
+		if ( defined( 'WP_CLI' ) && constant( 'WP_CLI' ) ) {
+			return true;
+		}
+		if ( wp_doing_cron() ) {
+			return true;
+		}
+		$not_serving = function_exists( 'wp_is_serving_rest_request' ) && ! wp_is_serving_rest_request();
+		return $not_serving && ! ( defined( 'REST_REQUEST' ) && constant( 'REST_REQUEST' ) );
 	}
 
 	/**

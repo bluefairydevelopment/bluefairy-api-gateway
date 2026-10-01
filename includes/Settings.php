@@ -32,18 +32,19 @@ final class Settings {
 	 * @var array<string, mixed>
 	 */
 	public const DEFAULTS = [
-		'cache_enabled'            => true,
-		'default_cache_ttl'        => 60,
-		'rate_limit_enabled'       => true,
-		'trusted_proxies'          => [],
-		'forwarded_header'         => 'X-Forwarded-For',
-		'max_payload_bytes'        => 65535,
-		'retention_days'           => 30,
-		'failure_threshold'        => 5,
-		'notification_email'       => '',
-		'debug_logging'            => false,
-		'disable_cron_notice'      => false,
-		'delete_data_on_uninstall' => false,
+		'cache_enabled'             => true,
+		'default_cache_ttl'         => 60,
+		'rate_limit_enabled'        => true,
+		'rate_limit_exempt_editors' => true,
+		'trusted_proxies'           => [],
+		'forwarded_header'          => 'X-Forwarded-For',
+		'max_payload_bytes'         => 65535,
+		'retention_days'            => 30,
+		'failure_threshold'         => 5,
+		'notification_email'        => '',
+		'debug_logging'             => false,
+		'disable_cron_notice'       => false,
+		'delete_data_on_uninstall'  => false,
 	];
 
 	/**

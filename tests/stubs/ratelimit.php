@@ -104,7 +104,7 @@ class SqliteWpdb extends FakeWpdb {
 	}
 
 	private function is_hits_query( string $query ): bool {
-		return str_contains( $query, $this->prefix . 'bfag_rate_limit_hits' );
+		return str_contains( $query, $this->prefix . 'bfag_rate_limit_hits' ) && ! str_starts_with( $query, 'SHOW TABLES' );
 	}
 
 	private function translate( string $query ): string {

@@ -277,4 +277,15 @@ final class WebhookRepositoryTest extends TestCase {
 		$this->assertSame( [ 'X-A' => 'x' ], $repo->headers_of( [ 'headers' => '{"X-A":"x","X-Obj":{"a":1},"":"empty"}' ] ) );
 		$this->assertSame( [ 'X-Arr' => 'v' ], $repo->headers_of( [ 'headers' => [ 'X-Arr' => 'v' ] ] ), 'already-decoded arrays pass through' );
 	}
+
+	public function test_create_refuses_userinfo_and_ports_outside_the_safe_list_as_core_does(): void {
+		$repo = new WebhookRepository();
+		$this->wpdb->always( 'get_var', '0' );
+		$this->assertFalse( $repo->create( [ 'url' => 'https://hooks.example.com:8443/in' ] + self::VALID ), 'a port outside http_allowed_safe_ports (80, 443, 8080)' );
+		$this->assertFalse( $repo->create( [ 'url' => 'https://user:p4ss@hooks.example.com/in' ] + self::VALID ), 'userinfo' );
+		$this->assertCount( 0, $this->wpdb->calls_to( 'insert' ) );
+
+		$this->assertSame( 1, $repo->create( [ 'url' => 'https://hooks.example.com:8080/in' ] + self::VALID ), 'control: 8080 is a safe port' );
+		$this->assertSame( 'https://hooks.example.com:8080/in', $this->wpdb->calls_to( 'insert' )[0]['data']['url'] );
+	}
 }

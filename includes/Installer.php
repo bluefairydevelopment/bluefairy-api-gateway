@@ -52,7 +52,14 @@ final class Installer {
 		'bfag_cache_generation',
 		'bfag_tag_generations',
 		'bfag_kpis',
+		'bfag_install_error',
 	];
+
+	/**
+	 * Option that records a failed table creation: the missing table names
+	 * and the database error. Present only while the tables are missing.
+	 */
+	public const INSTALL_ERROR_OPTION = 'bfag_install_error';
 
 	/**
 	 * Recurring cron hooks and their schedules.
@@ -66,22 +73,68 @@ final class Installer {
 	];
 
 	/**
-	 * Activation hook.
+	 * Activation hook. A network-wide activation provisions every site;
+	 * otherwise only the current one.
+	 *
+	 * @param bool $network_wide True when activated for the whole network.
 	 */
-	public static function activate(): void {
+	public static function activate( bool $network_wide = false ): void {
 		self::check_requirements();
-		self::create_tables();
-		self::seed_default_rules();
-		Capabilities::add_caps();
+		if ( $network_wide && is_multisite() ) {
+			foreach ( get_sites(
+				[
+					'fields' => 'ids',
+					'number' => 0,
+				]
+			) as $site_id ) {
+				switch_to_blog( (int) $site_id );
+				self::provision_site();
+				restore_current_blog();
+			}
+			return;
+		}
+		self::provision_site();
+	}
 
+	/**
+	 * Everything one site needs: the capability, settings, tables, the
+	 * seeded rules, the version markers and the crons. Idempotent. Stops
+	 * after a failed table creation (recorded in INSTALL_ERROR_OPTION, shown
+	 * by the admin notice) so nothing is seeded into tables that do not exist
+	 * and no version is recorded for an install that did not happen.
+	 */
+	public static function provision_site(): void {
+		Capabilities::add_caps();
 		if ( ! get_option( 'bfag_settings' ) ) {
 			update_option( 'bfag_settings', Settings::DEFAULTS, false );
 		}
+		if ( ! self::create_tables() ) {
+			return;
+		}
+		self::seed_default_rules();
 		add_option( 'bfag_cache_generation', 1, '', false );
 		update_option( 'bfag_version', BFAG_VERSION, false );
 		update_option( 'bfag_db_version', BFAG_DB_VERSION, false );
-
 		self::schedule_cron();
+	}
+
+	/**
+	 * Hooked to `wp_initialize_site` (priority 20): provision a site created
+	 * after the plugin was network-activated, which the activation hook
+	 * never saw.
+	 *
+	 * @param \WP_Site $site The new site.
+	 */
+	public static function initialize_site( \WP_Site $site ): void {
+		if ( ! function_exists( 'is_plugin_active_for_network' ) ) {
+			require_once ABSPATH . 'wp-admin/includes/plugin.php';
+		}
+		if ( ! is_plugin_active_for_network( plugin_basename( BFAG_FILE ) ) ) {
+			return;
+		}
+		switch_to_blog( (int) $site->blog_id );
+		self::provision_site();
+		restore_current_blog();
 	}
 
 	/**
@@ -95,15 +148,27 @@ final class Installer {
 	}
 
 	/**
-	 * Called on every boot; runs dbDelta only when the DB version moved.
+	 * Called on every boot. A site with no DB version at all (a sub-site the
+	 * activation hook never ran on) is provisioned in full; a site whose
+	 * version is behind gets dbDelta, and the capability and crons are
+	 * re-asserted. The version is recorded only when the tables verifiably
+	 * exist, so a failed upgrade is retried on the next boot instead of
+	 * being remembered as done.
 	 */
 	public static function maybe_upgrade(): void {
-		$current = get_option( 'bfag_db_version', '0' );
+		$current = get_option( 'bfag_db_version', '' );
+		if ( '' === $current || false === $current ) {
+			self::provision_site();
+			return;
+		}
 		if ( version_compare( (string) $current, BFAG_DB_VERSION, '>=' ) ) {
 			return;
 		}
-		self::create_tables();
-		update_option( 'bfag_db_version', BFAG_DB_VERSION, false );
+		if ( self::create_tables() ) {
+			update_option( 'bfag_db_version', BFAG_DB_VERSION, false );
+		}
+		Capabilities::add_caps();
+		self::schedule_cron();
 	}
 
 	/**
@@ -241,9 +306,17 @@ final class Installer {
 	}
 
 	/**
-	 * Run dbDelta for every table.
+	 * Run dbDelta for every table, then verify each one exists. dbDelta
+	 * reports nothing useful when CREATE TABLE fails (a database user
+	 * without CREATE, a full disk), so the check is `SHOW TABLES LIKE`.
+	 *
+	 * @return bool True when every table exists afterwards. False records the
+	 *              missing names and the database error in
+	 *              INSTALL_ERROR_OPTION and writes to the PHP error log
+	 *              unconditionally — this is not a gateway decision but a
+	 *              broken install, and the opt-in Logger would hide it.
 	 */
-	public static function create_tables(): void {
+	public static function create_tables(): bool {
 		global $wpdb;
 
 		require_once ABSPATH . 'wp-admin/includes/upgrade.php';
@@ -251,11 +324,43 @@ final class Installer {
 		foreach ( self::schema( $wpdb->prefix, $wpdb->get_charset_collate() ) as $sql ) {
 			dbDelta( $sql );
 		}
+		$db_error = (string) $wpdb->last_error;
+
+		$missing = [];
+		foreach ( self::TABLES as $table ) {
+			$name = $wpdb->prefix . $table;
+			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- install-time existence check of the plugin's own tables.
+			$found = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $wpdb->esc_like( $name ) ) );
+			if ( ! is_string( $found ) || 0 !== strcasecmp( $found, $name ) ) {
+				$missing[] = $name;
+			}
+		}
+
+		if ( [] === $missing ) {
+			delete_option( self::INSTALL_ERROR_OPTION );
+			return true;
+		}
+
+		update_option(
+			self::INSTALL_ERROR_OPTION,
+			[
+				'tables'   => $missing,
+				'db_error' => $db_error,
+				'at'       => time(),
+			],
+			false
+		);
+		// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- a failed install must be visible whatever the debug_logging setting.
+		error_log( '[bfag] could not create tables: ' . implode( ', ', $missing ) . ( '' !== $db_error ? ' — ' . $db_error : '' ) );
+		return false;
 	}
 
 	/**
 	 * Seed the one cache rule and the one rate-limit rule the free plugin
-	 * allows, if the tables are empty. Idempotent.
+	 * allows, if the tables are empty. Idempotent. The rate-limit rule is
+	 * 300 requests per 60 s per IP: a ceiling for anonymous API traffic from
+	 * one address, generous enough that a headless front end calling from
+	 * one server is not cut off on day one.
 	 */
 	public static function seed_default_rules(): void {
 		global $wpdb;
@@ -281,7 +386,7 @@ final class Installer {
 					'label'          => 'Global per-IP limit',
 					'subject_type'   => 'ip',
 					'route_glob'     => '**',
-					'max_requests'   => 60,
+					'max_requests'   => 300,
 					'window_seconds' => 60,
 					'enabled'        => 1,
 				],

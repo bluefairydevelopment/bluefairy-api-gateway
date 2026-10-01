@@ -244,4 +244,15 @@
 			syncPreset( select );
 		} );
 	} );
+
+	// Remember a dismissed notice ([data-bfag-dismiss]) for this user. WordPress
+	// adds the × button after DOMContentLoaded, so the listener is delegated.
+	document.addEventListener( 'click', function ( event ) {
+		var button = event.target && event.target.closest ? event.target.closest( '.notice-dismiss' ) : null;
+		var notice = button ? button.closest( '[data-bfag-dismiss]' ) : null;
+		if ( ! notice || ! cfg.nonces || ! cfg.nonces.dismiss ) {
+			return;
+		}
+		post( 'bfag_ajax_dismiss_notice', cfg.nonces.dismiss, { notice: notice.getAttribute( 'data-bfag-dismiss' ) } ).catch( function () {} );
+	} );
 }() );

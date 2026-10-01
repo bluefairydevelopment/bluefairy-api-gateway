@@ -22,6 +22,9 @@ $bfag_autoload = dirname( __DIR__ ) . '/vendor/autoload.php';
 if ( file_exists( $bfag_autoload ) ) {
 	require_once $bfag_autoload;
 }
+// Prepended (third argument): Composer resolves __DIR__ through symlinks, so a
+// worktree whose vendor/ is a symlink to the main checkout would otherwise test
+// the main checkout's includes/ while reporting on the worktree's tests.
 spl_autoload_register(
 	static function ( string $class ): void {
 		$map = [
@@ -37,7 +40,9 @@ spl_autoload_register(
 				return;
 			}
 		}
-	}
+	},
+	true,
+	true
 );
 
 // ------------------------------------------------------------------
@@ -81,6 +86,7 @@ function bfag_test_reset(): void {
 	$GLOBALS['bfag_test_options']       = [];
 	$GLOBALS['bfag_test_transients']    = [];
 	$GLOBALS['bfag_test_cache']         = [];
+	$GLOBALS['bfag_test_cache_expires'] = [];
 	$GLOBALS['bfag_test_hooks']         = [];
 	$GLOBALS['bfag_test_fired']         = [];
 	$GLOBALS['bfag_test_rest_routes']   = [];
@@ -103,6 +109,16 @@ function bfag_test_reset(): void {
 	$GLOBALS['bfag_test_enqueued']      = [];
 	$GLOBALS['bfag_test_output']        = [];
 	$GLOBALS['bfag_test_screen']        = null;
+	$GLOBALS['bfag_test_user_meta']     = [];
+	$GLOBALS['bfag_test_multisite']     = false;
+	$GLOBALS['bfag_test_sites']         = [];
+	$GLOBALS['bfag_test_blog_id']       = 1;
+	$GLOBALS['bfag_test_blog_stack']    = [];
+	$GLOBALS['bfag_test_site_state']    = [];
+	$GLOBALS['bfag_test_switched']      = [];
+	$GLOBALS['bfag_test_network_active'] = true;
+	$GLOBALS['bfag_test_doing_cron']    = false;
+	$GLOBALS['bfag_test_serving_rest']  = true;
 	$GLOBALS['wpdb']                    = new BlueFairy\ApiGateway\Tests\FakeWpdb();
 	$_SERVER['REMOTE_ADDR']             = '203.0.113.10';
 	$_SERVER['REQUEST_METHOD']          = 'GET';
@@ -119,7 +135,13 @@ function bfag_test_reset(): void {
 // Options, transients, object cache.
 // ------------------------------------------------------------------
 function get_option( string $option, mixed $default_value = false ): mixed {
-	return $GLOBALS['bfag_test_options'][ $option ] ?? $default_value;
+	if ( ! array_key_exists( $option, $GLOBALS['bfag_test_options'] ) ) {
+		return $default_value;
+	}
+	$value = $GLOBALS['bfag_test_options'][ $option ];
+	// As core: a scalar comes back from the options table as a string
+	// (`4` → '4', true → '1', false → ''); arrays and objects are unserialised.
+	return is_scalar( $value ) || null === $value ? (string) $value : $value;
 }
 function update_option( string $option, mixed $value, bool|string|null $autoload = null ): bool {
 	$GLOBALS['bfag_test_options'][ $option ] = $value;
@@ -160,38 +182,52 @@ function delete_transient( string $transient ): bool {
 	unset( $GLOBALS['bfag_test_transients'][ $transient ] );
 	return $existed;
 }
+// Entries live in $GLOBALS['bfag_test_cache'][group][key] (the value, so a
+// test may read it directly); an expiry, when one was given, sits beside it in
+// $GLOBALS['bfag_test_cache_expires'] and is checked against bfag_test_now().
 function wp_cache_get( int|string $key, string $group = '', bool $force = false, mixed &$found = null ): mixed {
 	$found = isset( $GLOBALS['bfag_test_cache'][ $group ][ $key ] );
-	return $GLOBALS['bfag_test_cache'][ $group ][ $key ] ?? false;
+	if ( $found ) {
+		$expires = $GLOBALS['bfag_test_cache_expires'][ $group ][ $key ] ?? 0;
+		if ( 0 !== $expires && $expires < bfag_test_now() ) {
+			wp_cache_delete( $key, $group );
+			$found = false;
+		}
+	}
+	return $found ? $GLOBALS['bfag_test_cache'][ $group ][ $key ] : false;
 }
 function wp_cache_set( int|string $key, mixed $data, string $group = '', int $expire = 0 ): bool {
-	$GLOBALS['bfag_test_cache'][ $group ][ $key ] = $data;
+	$GLOBALS['bfag_test_cache'][ $group ][ $key ]         = $data;
+	$GLOBALS['bfag_test_cache_expires'][ $group ][ $key ] = $expire > 0 ? bfag_test_now() + $expire : 0;
 	return true;
 }
 function wp_cache_add( int|string $key, mixed $data, string $group = '', int $expire = 0 ): bool {
-	if ( isset( $GLOBALS['bfag_test_cache'][ $group ][ $key ] ) ) {
+	wp_cache_get( $key, $group, false, $found );
+	if ( $found ) {
 		return false;
 	}
 	return wp_cache_set( $key, $data, $group, $expire );
 }
 function wp_cache_delete( int|string $key, string $group = '' ): bool {
 	$existed = isset( $GLOBALS['bfag_test_cache'][ $group ][ $key ] );
-	unset( $GLOBALS['bfag_test_cache'][ $group ][ $key ] );
+	unset( $GLOBALS['bfag_test_cache'][ $group ][ $key ], $GLOBALS['bfag_test_cache_expires'][ $group ][ $key ] );
 	return $existed;
 }
 function wp_cache_incr( int|string $key, int $offset = 1, string $group = '' ): int|false {
-	if ( ! isset( $GLOBALS['bfag_test_cache'][ $group ][ $key ] ) ) {
+	$current = wp_cache_get( $key, $group, false, $found );
+	if ( ! $found ) {
 		return false;
 	}
-	$GLOBALS['bfag_test_cache'][ $group ][ $key ] = (int) $GLOBALS['bfag_test_cache'][ $group ][ $key ] + $offset;
+	$GLOBALS['bfag_test_cache'][ $group ][ $key ] = (int) $current + $offset;
 	return $GLOBALS['bfag_test_cache'][ $group ][ $key ];
 }
 function wp_cache_flush_group( string $group ): bool {
-	unset( $GLOBALS['bfag_test_cache'][ $group ] );
+	unset( $GLOBALS['bfag_test_cache'][ $group ], $GLOBALS['bfag_test_cache_expires'][ $group ] );
 	return true;
 }
 function wp_cache_flush(): bool {
-	$GLOBALS['bfag_test_cache'] = [];
+	$GLOBALS['bfag_test_cache']         = [];
+	$GLOBALS['bfag_test_cache_expires'] = [];
 	return true;
 }
 function wp_cache_supports( string $feature ): bool {
@@ -358,7 +394,8 @@ function wp_kses_post( mixed $data ): string {
 	return is_scalar( $data ) ? (string) $data : '';
 }
 function wp_kses( mixed $data, mixed $allowed ): string {
-	return strip_tags( is_scalar( $data ) ? (string) $data : '' );
+	// Keeps the allowed elements (attributes unchecked), strips everything else.
+	return strip_tags( is_scalar( $data ) ? (string) $data : '', is_array( $allowed ) ? array_map( 'strval', array_keys( $allowed ) ) : [] );
 }
 function __( string $text, string $domain = 'default' ): string {
 	return $text;
@@ -493,6 +530,12 @@ function mysql2date( string $format, string $date, bool $translate = true ): str
 // ------------------------------------------------------------------
 // Users, capabilities, roles.
 // ------------------------------------------------------------------
+class WP_Site {
+	public string $blog_id = '0';
+	public function __construct( int $id = 0 ) {
+		$this->blog_id = (string) $id;
+	}
+}
 class WP_Role {
 	/** @var array<string, bool> */
 	public array $capabilities = [];
@@ -562,26 +605,95 @@ function get_userdata( int $user_id ): WP_User|false {
 function is_admin(): bool {
 	return (bool) $GLOBALS['bfag_test_is_admin'];
 }
+// Multisite: $GLOBALS['bfag_test_multisite'] switches it on and
+// $GLOBALS['bfag_test_sites'] lists the site ids. Options, cron events and
+// roles are per-site in core (they are options), so switch_to_blog() parks the
+// current site's copies in $GLOBALS['bfag_test_site_state'] and loads the
+// target site's; $wpdb->prefix becomes `bfw_<id>_` as core does. Every switch
+// is recorded in $GLOBALS['bfag_test_switched'].
 function is_multisite(): bool {
-	return false;
+	return (bool) $GLOBALS['bfag_test_multisite'];
+}
+function get_current_blog_id(): int {
+	return (int) $GLOBALS['bfag_test_blog_id'];
+}
+function bfag_test_load_site( int $blog_id ): void {
+	$state                              = $GLOBALS['bfag_test_site_state'][ $blog_id ] ?? [];
+	$GLOBALS['bfag_test_blog_id']       = $blog_id;
+	$GLOBALS['bfag_test_options']       = $state['options'] ?? [];
+	$GLOBALS['bfag_test_cron']          = $state['cron'] ?? [];
+	$GLOBALS['bfag_test_single_events'] = $state['single_events'] ?? [];
+	$GLOBALS['bfag_test_roles']         = $state['roles'] ?? [ 'administrator' => new WP_Role( 'administrator', [] ) ];
+	$GLOBALS['wpdb']->prefix            = 1 === $blog_id ? 'bfw_' : 'bfw_' . $blog_id . '_';
+	$GLOBALS['wpdb']->options           = $GLOBALS['wpdb']->prefix . 'options';
+}
+function bfag_test_park_site(): void {
+	$GLOBALS['bfag_test_site_state'][ get_current_blog_id() ] = [
+		'options'       => $GLOBALS['bfag_test_options'],
+		'cron'          => $GLOBALS['bfag_test_cron'],
+		'single_events' => $GLOBALS['bfag_test_single_events'],
+		'roles'         => $GLOBALS['bfag_test_roles'],
+	];
 }
 function switch_to_blog( int $new_blog_id ): bool {
+	$GLOBALS['bfag_test_switched'][]  = $new_blog_id;
+	$GLOBALS['bfag_test_blog_stack'][] = get_current_blog_id();
+	bfag_test_park_site();
+	bfag_test_load_site( $new_blog_id );
 	return true;
 }
 function restore_current_blog(): bool {
+	if ( [] === $GLOBALS['bfag_test_blog_stack'] ) {
+		return false;
+	}
+	bfag_test_park_site();
+	bfag_test_load_site( (int) array_pop( $GLOBALS['bfag_test_blog_stack'] ) );
 	return true;
 }
+/**
+ * The scripted site ids, honouring `number` and `offset` (so a paging loop
+ * terminates as it would against core) and `fields => ids`.
+ */
 function get_sites( array $args = [] ): array {
-	return [];
+	$ids    = array_values( array_map( 'intval', (array) $GLOBALS['bfag_test_sites'] ) );
+	$offset = (int) ( $args['offset'] ?? 0 );
+	$number = (int) ( $args['number'] ?? 100 );
+	$page   = array_slice( $ids, $offset, $number > 0 ? $number : null );
+	if ( 'ids' === ( $args['fields'] ?? '' ) ) {
+		return $page;
+	}
+	return array_map( static fn( int $id ): object => (object) [ 'blog_id' => (string) $id, 'id' => $id ], $page );
+}
+function is_plugin_active_for_network( string $plugin ): bool {
+	return (bool) $GLOBALS['bfag_test_network_active'];
 }
 function wp_doing_ajax(): bool {
 	return false;
 }
 function wp_doing_cron(): bool {
-	return false;
+	return (bool) $GLOBALS['bfag_test_doing_cron'];
+}
+function wp_is_serving_rest_request(): bool {
+	return (bool) $GLOBALS['bfag_test_serving_rest'];
 }
 function wp_is_json_request(): bool {
 	return false;
+}
+function get_user_meta( int $user_id, string $key = '', bool $single = false ): mixed {
+	if ( ! isset( $GLOBALS['bfag_test_user_meta'][ $user_id ][ $key ] ) ) {
+		return $single ? '' : [];
+	}
+	$value = $GLOBALS['bfag_test_user_meta'][ $user_id ][ $key ];
+	return $single ? $value : [ $value ];
+}
+function update_user_meta( int $user_id, string $meta_key, mixed $meta_value, mixed $prev_value = '' ): int|bool {
+	$GLOBALS['bfag_test_user_meta'][ $user_id ][ $meta_key ] = $meta_value;
+	return true;
+}
+function delete_user_meta( int $user_id, string $meta_key, mixed $meta_value = '' ): bool {
+	$existed = isset( $GLOBALS['bfag_test_user_meta'][ $user_id ][ $meta_key ] );
+	unset( $GLOBALS['bfag_test_user_meta'][ $user_id ][ $meta_key ] );
+	return $existed;
 }
 
 // ------------------------------------------------------------------
@@ -793,6 +905,13 @@ function wp_http_validate_url( string $url ): string|false {
 	if ( ! is_array( $parts ) || empty( $parts['host'] ) || ! in_array( strtolower( $parts['scheme'] ?? '' ), [ 'http', 'https' ], true ) ) {
 		return false;
 	}
+	// As core: no userinfo, and only the ports `http_allowed_safe_ports` lists.
+	if ( isset( $parts['user'] ) || isset( $parts['pass'] ) ) {
+		return false;
+	}
+	if ( isset( $parts['port'] ) && ! in_array( (int) $parts['port'], [ 80, 443, 8080 ], true ) ) {
+		return false;
+	}
 	$host = strtolower( $parts['host'] );
 	if ( 'localhost' === $host || str_ends_with( $host, '.local' ) ) {
 		return false;
@@ -833,7 +952,21 @@ function wp_next_scheduled( string $hook, array $args = [] ): int|false {
 	}
 	return false;
 }
+// As core: an event is identified by hook AND md5( serialize( $args ) ), so
+// clearing with no args removes only the events scheduled with no args.
+// wp_unschedule_hook() is the one that removes every event for a hook.
 function wp_clear_scheduled_hook( string $hook, array $args = [], bool $wp_error = false ): int|false {
+	$key   = md5( serialize( $args ) );
+	$count = 0;
+	if ( isset( $GLOBALS['bfag_test_cron'][ $hook ] ) && md5( serialize( $GLOBALS['bfag_test_cron'][ $hook ]['args'] ) ) === $key ) {
+		unset( $GLOBALS['bfag_test_cron'][ $hook ] );
+		$count = 1;
+	}
+	$before                             = count( $GLOBALS['bfag_test_single_events'] );
+	$GLOBALS['bfag_test_single_events'] = array_values( array_filter( $GLOBALS['bfag_test_single_events'], static fn( array $e ): bool => $e['hook'] !== $hook || md5( serialize( $e['args'] ) ) !== $key ) );
+	return $count + ( $before - count( $GLOBALS['bfag_test_single_events'] ) );
+}
+function wp_unschedule_hook( string $hook, bool $wp_error = false ): int|false {
 	$count = isset( $GLOBALS['bfag_test_cron'][ $hook ] ) ? 1 : 0;
 	unset( $GLOBALS['bfag_test_cron'][ $hook ] );
 	$before                             = count( $GLOBALS['bfag_test_single_events'] );

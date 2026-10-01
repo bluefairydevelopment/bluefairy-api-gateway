@@ -14,6 +14,8 @@ use BlueFairy\ApiGateway\RateLimit\RateLimitRuleRepository;
 use BlueFairy\ApiGateway\Settings;
 use BlueFairy\ApiGateway\Support\RequestContext;
 use BlueFairy\ApiGateway\Tests\TestCase;
+use PHPUnit\Framework\Attributes\PreserveGlobalState;
+use PHPUnit\Framework\Attributes\RunInSeparateProcess;
 
 final class RateLimitMiddlewareTest extends TestCase {
 
@@ -317,5 +319,114 @@ final class RateLimitMiddlewareTest extends TestCase {
 		$this->assertSame( [ 'status' => 403 ], $response->get_data()['data'] );
 		$this->assertNotSame( '', $response->get_data()['message'] );
 		$this->assertArrayNotHasKey( 'Retry-After', $response->get_headers() );
+	}
+
+	// ------------------------------------------------------------------
+	// N1: internal dispatches are not limited
+	// ------------------------------------------------------------------
+
+	#[RunInSeparateProcess]
+	#[PreserveGlobalState( false )]
+	public function test_under_wp_cli_nothing_is_counted_or_limited(): void {
+		define( 'WP_CLI', true );
+		$this->wpdb->queue( 'get_var', '999' );
+		$this->assertNull( $this->check( $this->middleware() ) );
+		$this->assertSame( [], $this->wpdb->calls, 'no INSERT, no COUNT' );
+		$this->assertSame( [], $this->breaches );
+	}
+
+	public function test_a_cron_request_is_not_limited(): void {
+		$GLOBALS['bfag_test_doing_cron'] = true;
+		$this->wpdb->queue( 'get_var', '999' );
+		$this->assertNull( $this->check( $this->middleware() ) );
+		$this->assertSame( [], $this->wpdb->calls );
+
+		$GLOBALS['bfag_test_doing_cron'] = false;
+		$this->wpdb->queue( 'get_var', '999' );
+		$this->assertSame( 429, $this->check( $this->middleware() )->get_status(), 'control: the same request outside cron is limited' );
+	}
+
+	public function test_an_internal_rest_do_request_dispatch_is_not_limited_but_the_top_level_request_is(): void {
+		$this->assertFalse( defined( 'REST_REQUEST' ), 'precondition: no REST_REQUEST in this process' );
+		// admin-ajax, a dashboard widget or the front end calling rest_do_request(): the server is not serving an HTTP REST request.
+		$GLOBALS['bfag_test_serving_rest'] = false;
+		$this->wpdb->queue( 'get_var', '999' );
+		$this->assertNull( $this->check( $this->middleware() ) );
+		$this->assertSame( [], $this->wpdb->calls, 'not even counted: a penalty rule must never be able to ban 127.0.0.1' );
+		$this->assertSame( [], $this->breaches );
+
+		$GLOBALS['bfag_test_serving_rest'] = true;
+		$this->wpdb->queue( 'get_var', '999' );
+		$response = $this->check( $this->middleware() );
+		$this->assertSame( 429, $response->get_status(), 'control: the top-level REST request is limited' );
+		$this->assertCount( 1, $this->wpdb->calls_to( 'insert' ) );
+		$this->assertCount( 1, $this->breaches );
+	}
+
+	#[RunInSeparateProcess]
+	#[PreserveGlobalState( false )]
+	public function test_the_rest_request_constant_alone_marks_a_top_level_request(): void {
+		define( 'REST_REQUEST', true );
+		$GLOBALS['bfag_test_serving_rest'] = false;
+		$this->wpdb->queue( 'get_var', '999' );
+		$this->assertSame( 429, $this->check( $this->middleware() )->get_status(), 'only when both signals say "internal" is the request skipped' );
+	}
+
+	public function test_an_empty_client_ip_is_neither_counted_nor_offered_to_the_block_filter(): void {
+		$asked = 0;
+		add_filter(
+			'bfag_rate_limit_is_blocked',
+			static function ( bool $blocked ) use ( &$asked ): bool {
+				++$asked;
+				return $blocked;
+			}
+		);
+		$_SERVER['REMOTE_ADDR'] = '';
+		$this->wpdb->queue( 'get_var', '999' );
+		$this->assertNull( $this->check( $this->middleware() ) );
+		$this->assertSame( [], $this->wpdb->calls );
+		$this->assertSame( 0, $asked );
+
+		$_SERVER['REMOTE_ADDR'] = '203.0.113.10';
+		$this->wpdb->queue( 'get_var', '999' );
+		$this->assertSame( 429, $this->check( $this->middleware() )->get_status(), 'control' );
+		$this->assertSame( 1, $asked );
+	}
+
+	// ------------------------------------------------------------------
+	// U-01a: logged-in users who can edit posts are exempt by default
+	// ------------------------------------------------------------------
+
+	public function test_a_logged_in_user_who_can_edit_posts_is_exempt_by_default_and_anonymous_traffic_is_not(): void {
+		$this->assertTrue( Settings::DEFAULTS['rate_limit_exempt_editors'] );
+		wp_set_current_user( 7 );
+		bfag_test_grant( 'edit_posts' );
+		$this->wpdb->queue( 'get_var', '999' );
+		$this->assertNull( $this->check( $this->middleware() ) );
+		$this->assertCount( 0, $this->wpdb->calls_to( 'insert' ), 'the editor is not even counted' );
+
+		wp_set_current_user( 0 );
+		$GLOBALS['bfag_test_caps'] = [];
+		$this->wpdb->queue( 'get_var', '999' );
+		$this->assertSame( 429, $this->check( $this->middleware() )->get_status(), 'control: anonymous traffic is limited' );
+	}
+
+	public function test_a_logged_in_user_without_edit_posts_is_limited_and_the_exemption_can_be_switched_off(): void {
+		wp_set_current_user( 8 );
+		$this->wpdb->queue( 'get_var', '999' );
+		$this->assertSame( 429, $this->check( $this->middleware() )->get_status(), 'a subscriber is limited' );
+
+		bfag_test_grant( 'edit_posts' );
+		$this->wpdb->queue( 'get_var', '999' );
+		$this->assertSame( 429, $this->check( $this->middleware( [], [ 'rate_limit_exempt_editors' => false ] ) )->get_status(), 'exemption off: the editor is limited' );
+		$this->wpdb->queue( 'get_var', '999' );
+		$this->assertNull( $this->check( $this->middleware( [], [ 'rate_limit_exempt_editors' => true ] ) ), 'control: exemption on' );
+	}
+
+	public function test_a_banned_editor_is_still_blocked(): void {
+		add_filter( 'bfag_rate_limit_is_blocked', '__return_true' );
+		wp_set_current_user( 7 );
+		bfag_test_grant( 'edit_posts' );
+		$this->assertSame( 403, $this->check( $this->middleware() )->get_status(), 'the ban list is consulted before the exemption' );
 	}
 }

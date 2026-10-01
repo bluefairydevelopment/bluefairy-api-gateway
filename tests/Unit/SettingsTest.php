@@ -103,4 +103,13 @@ final class SettingsTest extends TestCase {
 			'null'   => [ null, false ],
 		];
 	}
+
+	public function test_the_editor_exemption_defaults_on_and_behaves_as_a_checkbox(): void {
+		$this->assertTrue( Settings::DEFAULTS['rate_limit_exempt_editors'] );
+		$s = new Settings();
+		$this->assertTrue( $s->sanitize( [ 'rate_limit_exempt_editors' => '1' ] )['rate_limit_exempt_editors'] );
+		$this->assertFalse( $s->sanitize( [] )['rate_limit_exempt_editors'], 'an absent checkbox is unticked' );
+		update_option( 'bfag_settings', [ 'cache_enabled' => true ] );
+		$this->assertTrue( ( new Settings() )->get( 'rate_limit_exempt_editors' ), 'an option saved before the key existed reads the default' );
+	}
 }

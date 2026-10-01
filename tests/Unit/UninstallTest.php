@@ -82,4 +82,43 @@ final class UninstallTest extends TestCase {
 		$this->run_uninstall();
 		$this->assertSame( [], $this->wpdb->queries_matching( 'DROP TABLE' ) );
 	}
+
+	public function test_on_multisite_every_site_is_cleaned_in_turn_and_only_an_opted_in_site_loses_its_tables(): void {
+		$GLOBALS['bfag_test_multisite'] = true;
+		$GLOBALS['bfag_test_sites']     = [ 1, 2, 3 ];
+		foreach ( [ 1, 2, 3 ] as $id ) {
+			switch_to_blog( $id );
+			$this->seed();
+			update_option( 'bfag_settings', [ 'delete_data_on_uninstall' => 2 === $id ] );
+			restore_current_blog();
+		}
+		$GLOBALS['bfag_test_switched'] = [];
+
+		$this->run_uninstall();
+
+		$this->assertSame( [ 1, 2, 3 ], $GLOBALS['bfag_test_switched'], 'every site visited, in order' );
+		$this->assertSame( 1, get_current_blog_id(), 'restored to the main site' );
+		foreach ( [ 1, 2, 3 ] as $id ) {
+			switch_to_blog( $id );
+			foreach ( Installer::OPTIONS as $key ) {
+				$this->assertFalse( get_option( $key ), "site {$id}: {$key}" );
+			}
+			foreach ( array_keys( Installer::CRON ) as $hook ) {
+				$this->assertFalse( wp_next_scheduled( $hook ), "site {$id}: {$hook}" );
+			}
+			$this->assertFalse( get_role( 'administrator' )->has_cap( Capabilities::MANAGE ), "site {$id}: capability" );
+			restore_current_blog();
+		}
+
+		$drops = $this->wpdb->queries_matching( 'DROP TABLE IF EXISTS' );
+		$this->assertCount( 6, $drops, 'only site 2 opted in' );
+		foreach ( $drops as $sql ) {
+			$this->assertStringContainsString( '`bfw_2_bfag_', $sql );
+		}
+		$sweeps = $this->wpdb->queries_matching( 'WHERE option_name LIKE' );
+		$this->assertCount( 3, $sweeps, 'transients swept on every site' );
+		foreach ( [ 'bfw_options', 'bfw_2_options', 'bfw_3_options' ] as $i => $table ) {
+			$this->assertStringContainsString( "DELETE FROM {$table} ", $sweeps[ $i ] );
+		}
+	}
 }

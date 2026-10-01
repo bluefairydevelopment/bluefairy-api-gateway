@@ -368,7 +368,7 @@ final class ReviewSecurityFindingsTest extends TestCase {
 		update_option( 'bfag_settings', [ 'forwarded_header' => 'CF-Connecting-IP' ] );
 		$page   = new SettingsPage( new Settings() );
 		$fields = $page->groups()['ratelimit']['fields'];
-		$this->assertSame( [ 'rate_limit_enabled', 'trusted_proxies', 'forwarded_header' ], array_keys( $fields ) );
+		$this->assertSame( [ 'rate_limit_enabled', 'rate_limit_exempt_editors', 'trusted_proxies', 'forwarded_header' ], array_keys( $fields ) );
 		$this->assertSame( 'select', $fields['forwarded_header']['type'] );
 		$this->assertSame( 'The header your proxy writes the real client address into. Cloudflare: CF-Connecting-IP. Only this header is read, and only when the request comes from a trusted proxy — so a visitor cannot pick their own address.', $fields['forwarded_header']['description'] );
 

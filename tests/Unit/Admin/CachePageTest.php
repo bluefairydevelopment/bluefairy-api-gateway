@@ -171,7 +171,7 @@ final class CachePageTest extends TestCase {
 		$exit = bfag_test_catch_exit( [ $this->page(), 'handle_actions' ] );
 		$this->assertSame( 'die', $exit->kind );
 		$this->assertSame( 403, $exit->status );
-		$this->assertSame( 1, get_option( 'bfag_cache_generation', 1 ), 'nothing purged' );
+		$this->assertSame( 1, (int) get_option( 'bfag_cache_generation', 1 ), 'nothing purged' );
 	}
 
 	public function test_save_creates_a_rule_and_redirects_with_cache_saved(): void {

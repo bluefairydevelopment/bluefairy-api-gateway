@@ -12,6 +12,7 @@ use BlueFairy\ApiGateway\Cache\CacheRuleRepository;
 use BlueFairy\ApiGateway\Cache\CacheStatsRepository;
 use BlueFairy\ApiGateway\Cache\CacheStore;
 use BlueFairy\ApiGateway\Capabilities;
+use BlueFairy\ApiGateway\Installer;
 use BlueFairy\ApiGateway\RateLimit\HitCounter;
 use BlueFairy\ApiGateway\RateLimit\RateLimitRuleRepository;
 use BlueFairy\ApiGateway\Settings;
@@ -68,12 +69,14 @@ final class AdminMenuTest extends TestCase {
 	public function test_register_hooks_binds_menu_init_assets_notices_and_the_four_ajax_actions(): void {
 		$menu = $this->menu();
 		$menu->register_hooks();
-		foreach ( [ 'admin_menu', 'admin_init', 'admin_enqueue_scripts', 'admin_notices', 'wp_ajax_bfag_ajax_purge_cache', 'wp_ajax_bfag_ajax_refresh_kpis', 'wp_ajax_bfag_ajax_retry_webhook', 'wp_ajax_bfag_ajax_toggle_rule' ] as $hook ) {
+		foreach ( [ 'admin_menu', 'admin_init', 'admin_enqueue_scripts', 'admin_notices', 'wp_ajax_bfag_ajax_purge_cache', 'wp_ajax_bfag_ajax_refresh_kpis', 'wp_ajax_bfag_ajax_retry_webhook', 'wp_ajax_bfag_ajax_toggle_rule', 'wp_ajax_bfag_ajax_dismiss_notice' ] as $hook ) {
 			$this->assertTrue( (bool) has_action( $hook ), $hook );
 		}
 		$this->assertSame( 10, has_action( 'admin_menu', [ $menu, 'register_menu' ] ) );
 		$this->assertSame( 10, has_action( 'admin_init', [ $menu, 'handle_actions' ] ) );
-		$this->assertCount( 2, $GLOBALS['bfag_test_hooks']['admin_notices'][10], 'the notice renderer and the cron notice' );
+		$this->assertCount( 4, $GLOBALS['bfag_test_hooks']['admin_notices'][10], 'the notice renderer, the cron notice, the install-error notice and the proxy notice' );
+		$this->assertSame( 10, has_action( 'admin_notices', [ $menu, 'render_install_error_notice' ] ) );
+		$this->assertSame( 10, has_action( 'admin_notices', [ $menu, 'render_proxy_notice' ] ) );
 	}
 
 	public function test_register_menu_adds_an_options_page_gated_by_the_capability(): void {
@@ -193,7 +196,7 @@ final class AdminMenuTest extends TestCase {
 		$this->assertSame( [], $this->wpdb->calls );
 	}
 
-	public function test_handle_actions_dies_on_a_bad_nonce_or_a_missing_capability_before_dispatching(): void {
+	public function test_handle_actions_dies_on_a_bad_nonce_but_silently_ignores_a_user_without_the_capability(): void {
 		$fired = 0;
 		add_action(
 			'bfag_admin_action_purge_cache',
@@ -203,15 +206,34 @@ final class AdminMenuTest extends TestCase {
 		);
 		bfag_test_admin_request( 'purge_cache', [], [], false );
 		$exit = bfag_test_catch_exit( [ $this->menu(), 'handle_actions' ] );
-		$this->assertSame( [ 'die', 403 ], [ $exit->kind, $exit->status ] );
+		$this->assertSame( [ 'die', 403 ], [ $exit->kind, $exit->status ], 'a manager with a bad nonce is refused' );
 
+		// F20: handle_actions() runs on every admin request. A subscriber who
+		// lands on profile.php?bfag_action=x must get their profile page, not a
+		// wp_die — the capability is checked before the nonce, and only on the
+		// plugin's own screen.
 		$GLOBALS['bfag_test_caps'] = [];
 		bfag_test_admin_request( 'purge_cache' );
-		$exit = bfag_test_catch_exit( [ $this->menu(), 'handle_actions' ] );
-		$this->assertSame( [ 'die', 403 ], [ $exit->kind, $exit->status ] );
+		$this->assertNull( bfag_test_catch_exit( [ $this->menu(), 'handle_actions' ] ), 'no capability: ignored, no wp_die' );
+		bfag_test_admin_request( 'purge_cache', [], [ 'page' => 'profile' ], false );
+		$this->assertNull( bfag_test_catch_exit( [ $this->menu(), 'handle_actions' ] ), 'subscriber on profile.php with a bad nonce: still no wp_die' );
 
-		$this->assertSame( 1, get_option( 'bfag_cache_generation', 1 ), 'nothing purged' );
+		$this->assertSame( 1, (int) get_option( 'bfag_cache_generation', 1 ), 'nothing purged' );
 		$this->assertSame( 0, $fired );
+	}
+
+	public function test_handle_actions_acts_only_on_the_plugins_own_screen(): void {
+		// A manager with a valid nonce, but the action arrived on another screen.
+		$before = $this->store->generation();
+		bfag_test_admin_request( 'purge_cache', [], [ 'page' => 'profile' ] );
+		$this->assertNull( bfag_test_catch_exit( [ $this->menu(), 'handle_actions' ] ), 'not our screen: ignored' );
+		$this->assertSame( $before, $this->store->generation(), 'nothing purged' );
+
+		// Control: the same request on our screen is dispatched.
+		bfag_test_admin_request( 'purge_cache' );
+		$exit = bfag_test_catch_exit( [ $this->menu(), 'handle_actions' ] );
+		$this->assertSame( 'redirect', $exit->kind );
+		$this->assertSame( $before + 1, $this->store->generation() );
 	}
 
 	public function test_a_known_action_is_dispatched_to_its_tab_and_redirects_back_to_that_tab(): void {
@@ -324,19 +346,19 @@ final class AdminMenuTest extends TestCase {
 	}
 
 	public function test_ajax_handlers_reject_a_bad_nonce_and_a_missing_capability(): void {
-		foreach ( [ 'purge_cache', 'refresh_kpis', 'retry_webhook', 'toggle_rule' ] as $action ) {
+		foreach ( [ 'purge_cache', 'refresh_kpis', 'retry_webhook', 'toggle_rule', 'dismiss_notice' ] as $action ) {
 			bfag_test_ajax_request( $action, [], false );
 			$exit = bfag_test_catch_exit( [ $this->menu(), 'ajax_' . $action ] );
 			$this->assertSame( [ 'die', 403 ], [ $exit->kind, $exit->status ], $action );
 		}
 		$GLOBALS['bfag_test_caps'] = [];
-		foreach ( [ 'purge_cache', 'refresh_kpis', 'retry_webhook', 'toggle_rule' ] as $action ) {
+		foreach ( [ 'purge_cache', 'refresh_kpis', 'retry_webhook', 'toggle_rule', 'dismiss_notice' ] as $action ) {
 			bfag_test_ajax_request( $action );
 			$exit = bfag_test_catch_exit( [ $this->menu(), 'ajax_' . $action ] );
 			$this->assertSame( [ 'json_error', 403 ], [ $exit->kind, $exit->status ], $action );
 		}
 		$this->assertSame( [], $this->wpdb->calls );
-		$this->assertSame( 1, get_option( 'bfag_cache_generation', 1 ) );
+		$this->assertSame( 1, (int) get_option( 'bfag_cache_generation', 1 ) );
 	}
 
 	public function test_ajax_purge_flushes_all_or_bumps_the_given_tags(): void {
@@ -526,5 +548,117 @@ final class AdminMenuTest extends TestCase {
 		$exit = bfag_test_catch_exit( [ $this->menu(), 'ajax_toggle_rule' ] );
 		$this->assertSame( [ 'json_error', 400 ], [ $exit->kind, $exit->status ], 'unknown kind' );
 		$this->assertSame( [], $this->wpdb->calls_to( 'update' ) );
+	}
+
+	// ------------------------------------------------------------------
+	// F2: the install-error notice
+	// ------------------------------------------------------------------
+
+	public function test_the_install_error_notice_shows_on_every_screen_while_the_option_exists(): void {
+		$menu = $this->menu();
+		bfag_test_set_screen( 'edit-post' );
+		$this->assertSame( '', bfag_test_render( [ $menu, 'render_install_error_notice' ] ), 'no error: nothing' );
+
+		update_option(
+			Installer::INSTALL_ERROR_OPTION,
+			[
+				'tables'   => [ 'bfw_bfag_webhooks', 'bfw_bfag_webhook_deliveries' ],
+				'db_error' => "CREATE command denied to user 'wp'@'localhost'",
+				'at'       => 1,
+			]
+		);
+		$html = bfag_test_render( [ $menu, 'render_install_error_notice' ] );
+		$this->assertStringContainsString( '<div class="notice notice-error"><p>', $html );
+		$this->assertStringContainsString( 'API Gateway could not create its database tables: bfw_bfag_webhooks, bfw_bfag_webhook_deliveries (CREATE command denied to user &#039;wp&#039;@&#039;localhost&#039;). Check the database user&#039;s CREATE privilege and reactivate.', $html );
+		$this->assertStringNotContainsString( 'is-dismissible', $html, 'not dismissible: nothing works without the tables' );
+
+		bfag_test_set_screen( 'settings_page_bfag-gateway' );
+		$this->assertStringContainsString( 'could not create its database tables', bfag_test_render( [ $menu, 'render_install_error_notice' ] ), 'on our own screen too' );
+
+		$GLOBALS['bfag_test_caps'] = [];
+		$this->assertSame( '', bfag_test_render( [ $menu, 'render_install_error_notice' ] ), 'not for users who cannot manage the gateway' );
+
+		bfag_test_grant( Capabilities::MANAGE );
+		delete_option( Installer::INSTALL_ERROR_OPTION );
+		$this->assertSame( '', bfag_test_render( [ $menu, 'render_install_error_notice' ] ), 'gone once a later create_tables() cleared the option' );
+	}
+
+	// ------------------------------------------------------------------
+	// U-01c: the trusted-proxies notice
+	// ------------------------------------------------------------------
+
+	private const PROXY_NOTICE_TEXT = 'Requests reach this site through a proxy (a forwarded-address header is present) but no trusted proxies are configured, so every visitor shares one rate-limit bucket.';
+
+	public function test_the_proxy_notice_is_due_only_when_a_forwarded_header_arrives_with_rate_limiting_on_and_no_trusted_proxies(): void {
+		bfag_test_set_screen( 'plugins' );
+		$this->assertFalse( $this->menu()->proxy_notice_due(), 'no forwarded header: not due' );
+		$this->assertSame( '', bfag_test_render( [ $this->menu(), 'render_proxy_notice' ] ) );
+
+		foreach ( [ 'HTTP_X_FORWARDED_FOR', 'HTTP_CF_CONNECTING_IP', 'HTTP_TRUE_CLIENT_IP', 'HTTP_X_REAL_IP' ] as $key ) {
+			unset( $_SERVER['HTTP_X_FORWARDED_FOR'], $_SERVER['HTTP_CF_CONNECTING_IP'], $_SERVER['HTTP_TRUE_CLIENT_IP'], $_SERVER['HTTP_X_REAL_IP'] );
+			$_SERVER[ $key ] = '203.0.113.5';
+			$this->assertTrue( $this->menu()->proxy_notice_due(), $key );
+		}
+		$html = bfag_test_render( [ $this->menu(), 'render_proxy_notice' ] );
+		$this->assertStringContainsString( '<div class="notice notice-warning is-dismissible bfag-proxy-notice" data-bfag-dismiss="proxy"><p>', $html );
+		$this->assertStringContainsString( self::PROXY_NOTICE_TEXT, $html );
+		$this->assertStringContainsString( '<a href="https://example.com/wp-admin/options-general.php?page=bfag-gateway&amp;tab=settings">Add your proxy ranges under Settings → API Gateway → Settings</a>, or switch rate limiting off.', $html );
+		$this->assertSame( [ 'bfag-admin-js' ], $GLOBALS['bfag_test_enqueued']['script'], 'the dismiss handler is loaded on a screen that is not ours' );
+		$this->assertArrayHasKey( 'dismiss', $GLOBALS['bfag_test_enqueued']['localize']['bfag-admin-js']['bfagAdmin']['nonces'] );
+
+		update_option( 'bfag_settings', [ 'trusted_proxies' => [ '10.0.0.0/8' ] ] );
+		$this->assertFalse( $this->menu()->proxy_notice_due(), 'proxies configured: the bucket problem is solved' );
+		$this->assertSame( '', bfag_test_render( [ $this->menu(), 'render_proxy_notice' ] ) );
+
+		update_option( 'bfag_settings', [ 'rate_limit_enabled' => false ] );
+		$this->assertFalse( $this->menu()->proxy_notice_due(), 'rate limiting off: nothing to warn about' );
+
+		update_option( 'bfag_settings', [] );
+		$this->assertTrue( $this->menu()->proxy_notice_due(), 'control' );
+		$GLOBALS['bfag_test_caps'] = [];
+		$this->assertFalse( $this->menu()->proxy_notice_due(), 'not for users who cannot act on it' );
+	}
+
+	public function test_the_proxy_notice_appears_on_the_plugin_dashboard_and_plugins_screens_only(): void {
+		$_SERVER['HTTP_X_FORWARDED_FOR'] = '203.0.113.5';
+		foreach ( [ 'settings_page_bfag-gateway', 'plugins', 'dashboard', 'plugins-network', 'dashboard-network' ] as $id ) {
+			bfag_test_set_screen( $id );
+			$this->assertStringContainsString( self::PROXY_NOTICE_TEXT, bfag_test_render( [ $this->menu(), 'render_proxy_notice' ] ), $id );
+		}
+		foreach ( [ 'edit-post', 'options-general', 'profile' ] as $id ) {
+			bfag_test_set_screen( $id );
+			$this->assertSame( '', bfag_test_render( [ $this->menu(), 'render_proxy_notice' ] ), $id );
+		}
+		bfag_test_set_screen( null );
+		$this->assertSame( '', bfag_test_render( [ $this->menu(), 'render_proxy_notice' ] ), 'no screen object' );
+	}
+
+	public function test_dismissing_the_proxy_notice_is_remembered_per_user_through_a_nonced_capability_checked_ajax_call(): void {
+		$_SERVER['HTTP_X_FORWARDED_FOR'] = '203.0.113.5';
+		wp_set_current_user( 4 );
+		bfag_test_set_screen( 'dashboard' );
+		$this->assertTrue( $this->menu()->proxy_notice_due() );
+
+		bfag_test_ajax_request( 'dismiss_notice', [ 'notice' => 'proxy' ], false );
+		$exit = bfag_test_catch_exit( [ $this->menu(), 'ajax_dismiss_notice' ] );
+		$this->assertSame( [ 'die', 403 ], [ $exit->kind, $exit->status ], 'bad nonce' );
+		$this->assertTrue( $this->menu()->proxy_notice_due(), 'not dismissed' );
+
+		bfag_test_ajax_request( 'dismiss_notice', [ 'notice' => 'proxy' ] );
+		$exit = bfag_test_catch_exit( [ $this->menu(), 'ajax_dismiss_notice' ] );
+		$this->assertSame( 'json_success', $exit->kind );
+		$this->assertSame( [ 'dismissed' => 'proxy' ], $exit->payload );
+		$this->assertSame( 1, get_user_meta( 4, AdminMenu::PROXY_NOTICE_META, true ) );
+		$this->assertFalse( $this->menu()->proxy_notice_due(), 'dismissed for user 4' );
+		$this->assertSame( '', bfag_test_render( [ $this->menu(), 'render_proxy_notice' ] ) );
+
+		wp_set_current_user( 5 );
+		$this->assertTrue( $this->menu()->proxy_notice_due(), 'another user still sees it' );
+
+		$GLOBALS['bfag_test_caps'] = [];
+		bfag_test_ajax_request( 'dismiss_notice', [ 'notice' => 'proxy' ] );
+		$exit = bfag_test_catch_exit( [ $this->menu(), 'ajax_dismiss_notice' ] );
+		$this->assertSame( [ 'json_error', 403 ], [ $exit->kind, $exit->status ], 'no capability' );
+		$this->assertSame( '', get_user_meta( 5, AdminMenu::PROXY_NOTICE_META, true ), 'nothing stored' );
 	}
 }

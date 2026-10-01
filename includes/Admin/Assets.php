@@ -34,7 +34,19 @@ final class Assets {
 		if ( ! $this->is_our_screen() ) {
 			return;
 		}
+		$this->enqueue_assets();
+	}
 
+	/**
+	 * Enqueue the stylesheet and script regardless of screen. Used when the
+	 * plugin prints a dismissible notice on another admin screen: the
+	 * script is a footer script, so enqueuing it from `admin_notices` is in
+	 * time.
+	 */
+	public function enqueue_assets(): void {
+		if ( wp_script_is( self::JS_HANDLE ) ) {
+			return;
+		}
 		wp_enqueue_style( self::STYLE_HANDLE, BFAG_URL . 'assets/css/admin.css', [], BFAG_VERSION );
 		wp_enqueue_script( self::JS_HANDLE, BFAG_URL . 'assets/js/admin.js', [], BFAG_VERSION, true );
 		wp_localize_script( self::JS_HANDLE, 'bfagAdmin', $this->localized() );
@@ -61,6 +73,7 @@ final class Assets {
 				'refresh' => wp_create_nonce( 'bfag_ajax_refresh_kpis' ),
 				'retry'   => wp_create_nonce( 'bfag_ajax_retry_webhook' ),
 				'toggle'  => wp_create_nonce( 'bfag_ajax_toggle_rule' ),
+				'dismiss' => wp_create_nonce( 'bfag_ajax_dismiss_notice' ),
 			],
 			'i18n'    => [
 				'confirmDelete' => __( 'Delete this item? This cannot be undone.', 'bluefairy-api-gateway' ),

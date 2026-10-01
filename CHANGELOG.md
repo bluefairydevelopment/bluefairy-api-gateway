@@ -7,6 +7,19 @@ Versioning follows [Semantic Versioning](https://semver.org/): major = architect
 
 ---
 
+## [Unreleased]
+
+### Changed
+- The seeded rate-limit rule is now 300 requests per 60 s per IP (was 60), and logged-in users who can edit posts are exempt from rate limiting by default (new setting *Exempt editors*, `rate_limit_exempt_editors`).
+- The limiter ignores dispatches that are not the top-level HTTP REST request — WP-CLI, WP-Cron and internal `rest_do_request()` calls from admin-ajax or the front end — so a penalty rule can no longer ban the server's own loopback address. Requests with no resolvable client IP are not counted.
+- `AdminMenu::handle_actions()` acts only on the plugin's own screen for a user who can manage the gateway, checked before the nonce; a stray `bfag_action` on another admin page is ignored instead of ending in `wp_die`.
+
+### Added
+- Multisite: a network-wide activation provisions every site (tables, seeded rules, capability, settings, crons); a site created afterwards is provisioned on `wp_initialize_site`; a site with no DB version is provisioned on its first boot.
+- Table creation is verified with `SHOW TABLES` after `dbDelta`. A missing table is written to the PHP error log, recorded in `bfag_install_error`, shown as an admin notice on every screen, and the DB version is not recorded so the next boot retries.
+- A dismissible notice on the plugin's screen, the Plugins screen and the Dashboard when a forwarded-address header arrives and no trusted proxies are configured (every visitor would share one rate-limit bucket).
+- Help text for the trusted-proxies setting and the seeded rule.
+
 ## [1.0.0] — 2026-09-30
 
 Initial release. The free base plugin of a pair; BlueFairy API Gateway Pro is an add-on that attaches to the `bfag_*` seams listed in `FEATURES.md`.

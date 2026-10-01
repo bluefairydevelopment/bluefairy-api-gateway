@@ -30,6 +30,7 @@ defined( 'ABSPATH' ) || exit;
 	<span class="bfag-status" data-bfag-status aria-live="polite"></span>
 </div>
 <p class="description"><?php esc_html_e( 'Every enabled rule whose glob matches the route counts the request; the first one exceeded answers 429 with Retry-After.', 'bluefairy-api-gateway' ); ?></p>
+<p class="description"><?php esc_html_e( 'The seeded Global per-IP limit (300 requests per 60 s) is a sensible ceiling for anonymous API traffic from one address; lower it for a public site, raise it for a headless front end that calls from one server. Logged-in users who can edit posts are exempt unless you untick that under Settings.', 'bluefairy-api-gateway' ); ?></p>
 
 <table class="widefat striped bfag-table">
 	<thead>

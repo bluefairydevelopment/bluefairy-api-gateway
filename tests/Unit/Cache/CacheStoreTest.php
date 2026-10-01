@@ -157,7 +157,7 @@ final class CacheStoreTest extends TestCase {
 
 		$store->flush_all();
 
-		$this->assertSame( 4, get_option( 'bfag_cache_generation' ) );
+		$this->assertSame( 4, (int) get_option( 'bfag_cache_generation' ) );
 		$this->assertSame( 4, $store->generation(), 'the memo was invalidated' );
 		$this->assertArrayNotHasKey( CacheStore::GROUP, $GLOBALS['bfag_test_cache'], 'group flushed' );
 		$this->assertNull( $store->get( 'k8' ) );
@@ -166,7 +166,7 @@ final class CacheStoreTest extends TestCase {
 	public function test_flush_all_creates_the_option_when_missing(): void {
 		$store = new CacheStore();
 		$store->flush_all();
-		$this->assertSame( 2, get_option( 'bfag_cache_generation' ) );
+		$this->assertSame( 2, (int) get_option( 'bfag_cache_generation' ) );
 	}
 
 	public function test_tag_generation_defaults_to_one_and_bump_tags_increments_only_the_named_tags(): void {
@@ -242,5 +242,26 @@ final class CacheStoreTest extends TestCase {
 		$this->assertSame( 'ab_c-d', CacheStore::sanitize_tag( 'a.b_c-d!' ) );
 		$this->assertSame( '', CacheStore::sanitize_tag( '***' ) );
 		$this->assertSame( str_repeat( 'x', 50 ), CacheStore::sanitize_tag( str_repeat( 'x', 51 ) ) );
+	}
+
+	public function test_an_object_cache_entry_expires_after_its_ttl(): void {
+		bfag_test_set_time( 1_700_000_000 );
+		wp_using_ext_object_cache( true );
+		$store = new CacheStore();
+		$store->set( 'k9', self::ENTRY, 60 );
+		$this->assertNotNull( $store->get( 'k9' ) );
+
+		bfag_test_set_time( 1_700_000_060 );
+		$this->assertNotNull( $store->get( 'k9' ), 'alive at the TTL boundary, as a transient is' );
+
+		bfag_test_set_time( 1_700_000_061 );
+		$this->assertNull( $store->get( 'k9' ), 'gone past the TTL' );
+		$this->assertArrayNotHasKey( 'k9', $GLOBALS['bfag_test_cache'][ CacheStore::GROUP ] ?? [] );
+
+		// Control: an entry with a longer TTL set at the same moment is still there.
+		bfag_test_set_time( 1_700_000_000 );
+		$store->set( 'k10', self::ENTRY, 120 );
+		bfag_test_set_time( 1_700_000_061 );
+		$this->assertNotNull( $store->get( 'k10' ) );
 	}
 }

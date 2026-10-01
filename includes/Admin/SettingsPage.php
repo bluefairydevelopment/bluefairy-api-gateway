@@ -93,17 +93,22 @@ final class SettingsPage extends Page {
 			'ratelimit' => [
 				'label'  => __( 'Rate limit', 'bluefairy-api-gateway' ),
 				'fields' => [
-					'rate_limit_enabled' => [
+					'rate_limit_enabled'        => [
 						'label'       => __( 'Enable rate limiting', 'bluefairy-api-gateway' ),
 						'type'        => 'checkbox',
 						'description' => __( 'Return 429 when a subject exceeds a matching rule.', 'bluefairy-api-gateway' ),
 					],
-					'trusted_proxies'    => [
+					'rate_limit_exempt_editors' => [
+						'label'       => __( 'Exempt editors', 'bluefairy-api-gateway' ),
+						'type'        => 'checkbox',
+						'description' => __( 'Do not rate-limit logged-in users who can edit posts (the block editor\'s own REST calls).', 'bluefairy-api-gateway' ),
+					],
+					'trusted_proxies'           => [
 						'label'       => __( 'Trusted proxies', 'bluefairy-api-gateway' ),
 						'type'        => 'textarea',
-						'description' => __( 'One IP or CIDR per line. The client address header below is honoured only from these addresses.', 'bluefairy-api-gateway' ),
+						'description' => __( 'One IP or CIDR per line. Needed behind Cloudflare, a load balancer or a CDN. Without it the proxy\'s address is the client IP and all visitors share one bucket; with it, the chosen header is read only from these addresses so visitors cannot forge their IP.', 'bluefairy-api-gateway' ),
 					],
-					'forwarded_header'   => [
+					'forwarded_header'          => [
 						'label'       => __( 'Client address header', 'bluefairy-api-gateway' ),
 						'type'        => 'select',
 						'options'     => array_combine( Settings::FORWARDED_HEADERS, Settings::FORWARDED_HEADERS ),

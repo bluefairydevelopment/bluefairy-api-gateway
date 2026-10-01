@@ -17,6 +17,7 @@ use BlueFairy\ApiGateway\Cache\CacheRuleRepository;
 use BlueFairy\ApiGateway\Cache\CacheStatsRepository;
 use BlueFairy\ApiGateway\Cache\CacheStore;
 use BlueFairy\ApiGateway\Capabilities;
+use BlueFairy\ApiGateway\Installer;
 use BlueFairy\ApiGateway\RateLimit\HitCounter;
 use BlueFairy\ApiGateway\RateLimit\RateLimitRuleRepository;
 use BlueFairy\ApiGateway\Settings;
@@ -35,6 +36,26 @@ use BlueFairy\ApiGateway\Webhook\WebhookRepository;
 final class AdminMenu {
 
 	public const MENU_SLUG = Page::MENU_SLUG;
+
+	/**
+	 * User meta that records a dismissed trusted-proxies notice.
+	 */
+	public const PROXY_NOTICE_META = 'bfag_proxy_notice_dismissed';
+
+	/**
+	 * Screens the trusted-proxies notice may appear on: the plugin's own,
+	 * Plugins and the Dashboard (and their network-admin twins).
+	 *
+	 * @var list<string>
+	 */
+	private const PROXY_NOTICE_SCREENS = [ Assets::SCREEN_ID, 'plugins', 'plugins-network', 'dashboard', 'dashboard-network' ];
+
+	/**
+	 * `$_SERVER` keys of the forwarded-address headers a proxy writes.
+	 *
+	 * @var list<string>
+	 */
+	private const FORWARDED_SERVER_KEYS = [ 'HTTP_X_FORWARDED_FOR', 'HTTP_CF_CONNECTING_IP', 'HTTP_TRUE_CLIENT_IP', 'HTTP_X_REAL_IP' ];
 
 	/**
 	 * Base tabs, in display order.
@@ -119,10 +140,13 @@ final class AdminMenu {
 		add_action( 'admin_enqueue_scripts', [ $this->assets, 'enqueue' ] );
 		add_action( 'admin_notices', [ $this, 'render_notices' ] );
 		add_action( 'admin_notices', [ $this->settings_page, 'render_cron_notice' ] );
+		add_action( 'admin_notices', [ $this, 'render_install_error_notice' ] );
+		add_action( 'admin_notices', [ $this, 'render_proxy_notice' ] );
 		add_action( 'wp_ajax_bfag_ajax_purge_cache', [ $this, 'ajax_purge_cache' ] );
 		add_action( 'wp_ajax_bfag_ajax_refresh_kpis', [ $this, 'ajax_refresh_kpis' ] );
 		add_action( 'wp_ajax_bfag_ajax_retry_webhook', [ $this, 'ajax_retry_webhook' ] );
 		add_action( 'wp_ajax_bfag_ajax_toggle_rule', [ $this, 'ajax_toggle_rule' ] );
+		add_action( 'wp_ajax_bfag_ajax_dismiss_notice', [ $this, 'ajax_dismiss_notice' ] );
 	}
 
 	/**
@@ -247,17 +271,26 @@ final class AdminMenu {
 	 * of them owns is offered to the add-on through
 	 * `bfag_admin_action_<action>` — after the nonce and capability checks,
 	 * so the add-on's handler can trust the request.
+	 *
+	 * This runs on every admin request, so it acts only on the plugin's own
+	 * screen (`page=bfag-gateway`) and only for a user who may manage the
+	 * gateway; anything else is ignored rather than refused, because a
+	 * stray `bfag_action` on profile.php from a subscriber is not an attack
+	 * worth a wp_die, and the nonce check — which does die — must not be
+	 * reachable from every admin page.
 	 */
 	public function handle_actions(): void {
 		$action = isset( $_REQUEST['bfag_action'] ) ? sanitize_key( wp_unslash( $_REQUEST['bfag_action'] ) ) : '';
 		if ( '' === $action ) {
 			return;
 		}
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- which admin screen this is; the nonce is checked just below.
+		$page = isset( $_GET['page'] ) ? sanitize_key( wp_unslash( $_GET['page'] ) ) : '';
+		if ( self::MENU_SLUG !== $page || ! Capabilities::current_user_can_manage() ) {
+			return;
+		}
 
 		check_admin_referer( 'bfag_' . $action );
-		if ( ! Capabilities::current_user_can_manage() ) {
-			wp_die( esc_html__( 'You are not allowed to manage the API Gateway.', 'bluefairy-api-gateway' ), '', [ 'response' => 403 ] );
-		}
 
 		$known = false;
 		foreach ( $this->pages as $page ) {
@@ -355,6 +388,100 @@ final class AdminMenu {
 			$text = sprintf( __( 'Test delivery failed (%s). The receiver\'s response is in the delivery log.', 'bluefairy-api-gateway' ), $detail );
 		}
 		echo '<div class="notice notice-' . esc_attr( $type ) . ' is-dismissible"><p>' . esc_html( $text ) . '</p></div>';
+	}
+
+	/**
+	 * Hooked to admin_notices, every screen: the tables could not be created
+	 * (Installer::INSTALL_ERROR_OPTION is set until a later create_tables()
+	 * succeeds). Nothing in the plugin works without them, so this is not
+	 * dismissible.
+	 */
+	public function render_install_error_notice(): void {
+		$error = get_option( Installer::INSTALL_ERROR_OPTION );
+		if ( ! is_array( $error ) || ! Capabilities::current_user_can_manage() ) {
+			return;
+		}
+		$tables = implode( ', ', array_map( 'strval', is_array( $error['tables'] ?? null ) ? $error['tables'] : [] ) );
+		$detail = isset( $error['db_error'] ) && is_string( $error['db_error'] ) && '' !== $error['db_error'] ? ' (' . $error['db_error'] . ')' : '';
+		echo '<div class="notice notice-error"><p>'
+			/* translators: %s: comma-separated table names, optionally followed by the database error in parentheses */
+			. esc_html( sprintf( __( 'API Gateway could not create its database tables: %s. Check the database user\'s CREATE privilege and reactivate.', 'bluefairy-api-gateway' ), $tables . $detail ) )
+			. '</p></div>';
+	}
+
+	/**
+	 * Should the trusted-proxies notice show for this request and user?
+	 * Rate limiting on, no trusted proxies, a forwarded-address header on
+	 * the request, and the user has not dismissed it.
+	 */
+	public function proxy_notice_due(): bool {
+		if ( ! Capabilities::current_user_can_manage() ) {
+			return false;
+		}
+		if ( ! Settings::to_bool( $this->settings->get( 'rate_limit_enabled' ) ) ) {
+			return false;
+		}
+		$proxies = $this->settings->get( 'trusted_proxies' );
+		if ( is_array( $proxies ) && [] !== $proxies ) {
+			return false;
+		}
+		if ( ! $this->forwarded_header_present() ) {
+			return false;
+		}
+		return ! Settings::to_bool( get_user_meta( get_current_user_id(), self::PROXY_NOTICE_META, true ) );
+	}
+
+	/**
+	 * Hooked to admin_notices: on the plugin's screen, Plugins and the
+	 * Dashboard, warn that a proxy is in front of the site and every
+	 * visitor is sharing one rate-limit bucket. Dismissible per user.
+	 */
+	public function render_proxy_notice(): void {
+		$screen = get_current_screen();
+		if ( ! is_object( $screen ) || ! in_array( $screen->id, self::PROXY_NOTICE_SCREENS, true ) ) {
+			return;
+		}
+		if ( ! $this->proxy_notice_due() ) {
+			return;
+		}
+		$this->assets->enqueue_assets();
+		$link = '<a href="' . esc_url( admin_url( 'options-general.php?page=' . self::MENU_SLUG . '&tab=' . SettingsPage::TAB ) ) . '">';
+		echo '<div class="notice notice-warning is-dismissible bfag-proxy-notice" data-bfag-dismiss="proxy"><p>'
+			. wp_kses(
+				sprintf(
+					/* translators: 1: opening link tag to the Settings tab, 2: closing link tag */
+					__( 'Requests reach this site through a proxy (a forwarded-address header is present) but no trusted proxies are configured, so every visitor shares one rate-limit bucket. %1$sAdd your proxy ranges under Settings → API Gateway → Settings%2$s, or switch rate limiting off.', 'bluefairy-api-gateway' ),
+					$link,
+					'</a>'
+				),
+				[ 'a' => [ 'href' => [] ] ]
+			)
+			. '</p></div>';
+	}
+
+	/**
+	 * Hooked to wp_ajax_bfag_ajax_dismiss_notice: remember the dismissal for this user.
+	 */
+	public function ajax_dismiss_notice(): void {
+		check_ajax_referer( 'bfag_ajax_dismiss_notice', 'nonce' );
+		if ( ! Capabilities::current_user_can_manage() ) {
+			wp_send_json_error( [ 'message' => __( 'Not allowed.', 'bluefairy-api-gateway' ) ], 403 );
+		}
+		update_user_meta( get_current_user_id(), self::PROXY_NOTICE_META, 1 );
+		wp_send_json_success( [ 'dismissed' => 'proxy' ] );
+	}
+
+	/**
+	 * Does the current request carry any forwarded-address header? Only
+	 * presence matters; the value is never read here.
+	 */
+	private function forwarded_header_present(): bool {
+		foreach ( self::FORWARDED_SERVER_KEYS as $key ) {
+			if ( isset( $_SERVER[ $key ] ) && '' !== $_SERVER[ $key ] ) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/**

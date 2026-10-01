@@ -13,13 +13,16 @@ declare(strict_types=1);
  * Populate the superglobals as WordPress would for a form POST (or a nonce
  * link) carrying `bfag_action=$action` and the matching `bfag_<action>` nonce.
  *
+ * The request carries `page=bfag-gateway` (the plugin's own screen) unless
+ * $query overrides it.
+ *
  * @param string               $action The action, without the `bfag_` prefix.
  * @param array<string, mixed> $fields `$_POST['bfag']`.
  * @param array<string, mixed> $query  Top-level query arguments (`id`, `enabled`, …).
  * @param bool                 $nonce  False to send a wrong nonce.
  */
 function bfag_test_admin_request( string $action, array $fields = [], array $query = [], bool $nonce = true ): void {
-	$_GET     = $query;
+	$_GET     = array_merge( [ 'page' => 'bfag-gateway' ], $query );
 	$_POST    = array_merge( [ 'bfag_action' => $action ], [] === $fields ? [] : [ 'bfag' => $fields ] );
 	$_REQUEST = array_merge( $_GET, $_POST, [ '_wpnonce' => $nonce ? wp_create_nonce( 'bfag_' . $action ) : 'nonce-wrong' ] );
 }

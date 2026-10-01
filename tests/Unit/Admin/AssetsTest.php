@@ -38,6 +38,7 @@ final class AssetsTest extends TestCase {
 				'refresh' => 'nonce-bfag_ajax_refresh_kpis',
 				'retry'   => 'nonce-bfag_ajax_retry_webhook',
 				'toggle'  => 'nonce-bfag_ajax_toggle_rule',
+				'dismiss' => 'nonce-bfag_ajax_dismiss_notice',
 			],
 			$l10n['nonces']
 		);

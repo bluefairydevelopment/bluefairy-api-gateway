@@ -42,6 +42,24 @@ class FakeWpdb {
 	private array $fallback = [];
 
 	/**
+	 * Unprefixed table names `SHOW TABLES LIKE` reports as absent. Every other
+	 * table exists: the query answers with the table name, as MySQL does, and
+	 * never consumes the get_var queue.
+	 *
+	 * @var list<string>
+	 */
+	private array $missing_tables = [];
+
+	/**
+	 * Make `SHOW TABLES LIKE` report these (unprefixed) tables as absent.
+	 *
+	 * @param list<string> $tables Unprefixed table names.
+	 */
+	public function missing_tables( array $tables ): void {
+		$this->missing_tables = $tables;
+	}
+
+	/**
 	 * Queue the next return value for a method (get_results, get_row,
 	 * get_var, get_col, query, insert, update, delete, replace).
 	 */
@@ -116,6 +134,14 @@ class FakeWpdb {
 	}
 
 	public function get_var( string $query, int $x = 0, int $y = 0 ): mixed {
+		if ( 1 === preg_match( "/^SHOW TABLES LIKE '([^']+)'$/", $query, $m ) ) {
+			$this->last_query = $query;
+			$this->calls[]    = [ 'method' => 'get_var', 'sql' => $query ];
+			// prepare() addslashes the value and esc_like() escaped `_`; undo both.
+			$table            = str_replace( [ '\\_', '\\%' ], [ '_', '%' ], stripslashes( $m[1] ) );
+			$unprefixed       = str_starts_with( $table, $this->prefix ) ? substr( $table, strlen( $this->prefix ) ) : $table;
+			return in_array( $unprefixed, $this->missing_tables, true ) ? null : $table;
+		}
 		return $this->record( 'get_var', $query, null );
 	}
 

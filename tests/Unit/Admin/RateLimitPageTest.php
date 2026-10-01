@@ -88,6 +88,7 @@ final class RateLimitPageTest extends TestCase {
 		$this->assertStringContainsString( 'name="_wpnonce" value="nonce-bfag_save_rate_limit_rule"', $html );
 		$this->assertStringContainsString( 'data-bfag-toggle="ratelimit" data-bfag-id="1" data-bfag-enabled="1"', $html );
 		$this->assertStringContainsString( '1 of 3', $html );
+		$this->assertStringContainsString( 'The seeded Global per-IP limit (300 requests per 60 s) is a sensible ceiling for anonymous API traffic from one address; lower it for a public site, raise it for a headless front end that calls from one server.', $html, 'U-01b: the help text under the table' );
 
 		$table = strpos( $html, '</table>' );
 		$after = strpos( $html, $marker );

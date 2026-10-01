@@ -9,6 +9,7 @@ namespace BlueFairy\ApiGateway\Tests\Unit;
 
 use BlueFairy\ApiGateway\Capabilities;
 use BlueFairy\ApiGateway\Installer;
+use BlueFairy\ApiGateway\Plugin;
 use BlueFairy\ApiGateway\Settings;
 use BlueFairy\ApiGateway\Tests\TestCase;
 
@@ -41,7 +42,7 @@ final class InstallerTest extends TestCase {
 		Installer::activate();
 
 		$this->assertSame( Settings::DEFAULTS, get_option( 'bfag_settings' ) );
-		$this->assertSame( 1, get_option( 'bfag_cache_generation' ) );
+		$this->assertSame( 1, (int) get_option( 'bfag_cache_generation' ) );
 		$this->assertSame( BFAG_VERSION, get_option( 'bfag_version' ) );
 		$this->assertSame( BFAG_DB_VERSION, get_option( 'bfag_db_version' ) );
 		$this->assertTrue( get_role( 'administrator' )->has_cap( Capabilities::MANAGE ) );
@@ -84,7 +85,7 @@ final class InstallerTest extends TestCase {
 		$this->wpdb->queue( 'get_var', '3' );
 		Installer::activate();
 		$this->assertSame( [ 'default_cache_ttl' => 120 ], get_option( 'bfag_settings' ) );
-		$this->assertSame( 9, get_option( 'bfag_cache_generation' ) );
+		$this->assertSame( 9, (int) get_option( 'bfag_cache_generation' ) );
 		$this->assertCount( 0, $this->wpdb->calls_to( 'insert' ) );
 	}
 
@@ -131,5 +132,214 @@ final class InstallerTest extends TestCase {
 		$this->assertSame( Installer::TABLES, $extract( $t[1] ?? '' ) );
 		$this->assertSame( Installer::OPTIONS, $extract( $o[1] ?? '' ) );
 		$this->assertSame( array_keys( Installer::CRON ), $extract( $c[1] ?? '' ) );
+	}
+
+	// ------------------------------------------------------------------
+	// U-01b: the seeded rate-limit rule
+	// ------------------------------------------------------------------
+
+	public function test_the_seeded_rate_limit_rule_is_300_per_60_seconds_per_ip_on_every_route(): void {
+		$this->wpdb->queue( 'get_var', '0' );
+		$this->wpdb->queue( 'get_var', '0' );
+		Installer::seed_default_rules();
+		$rule = $this->wpdb->calls_to( 'insert' )[1];
+		$this->assertSame( 'bfw_bfag_rate_limit_rules', $rule['table'] );
+		$this->assertSame( 'Global per-IP limit', $rule['data']['label'] );
+		$this->assertSame( 300, $rule['data']['max_requests'] );
+		$this->assertSame( 60, $rule['data']['window_seconds'] );
+		$this->assertSame( '**', $rule['data']['route_glob'] );
+		$this->assertSame( 'ip', $rule['data']['subject_type'] );
+	}
+
+	// ------------------------------------------------------------------
+	// F2: dbDelta's result is verified
+	// ------------------------------------------------------------------
+
+	public function test_create_tables_verifies_every_table_with_show_tables_and_reports_success(): void {
+		$this->assertTrue( Installer::create_tables() );
+		$shows = $this->wpdb->queries_matching( 'SHOW TABLES LIKE' );
+		$this->assertCount( 6, $shows );
+		foreach ( Installer::TABLES as $i => $table ) {
+			$this->assertSame( "SHOW TABLES LIKE 'bfw_{$table}'", str_replace( '\\', '', $shows[ $i ] ), 'the name is esc_like()d and prepared' );
+		}
+		$this->assertFalse( get_option( Installer::INSTALL_ERROR_OPTION ) );
+	}
+
+	public function test_a_missing_table_leaves_the_version_unwritten_records_the_error_and_a_later_success_clears_it(): void {
+		ini_set( 'error_log', '/dev/null' );
+		$this->wpdb->missing_tables( [ 'bfag_webhooks' ] );
+		$this->wpdb->last_error = "CREATE command denied to user 'wp'@'localhost'";
+
+		Installer::activate();
+
+		$this->assertFalse( get_option( 'bfag_db_version' ), 'no version for an install that did not happen' );
+		$this->assertFalse( get_option( 'bfag_version' ) );
+		$this->assertCount( 0, $this->wpdb->calls_to( 'insert' ), 'nothing seeded into tables that do not exist' );
+		$this->assertSame( [], $GLOBALS['bfag_test_cron'], 'no crons for a broken install' );
+		$error = get_option( Installer::INSTALL_ERROR_OPTION );
+		$this->assertIsArray( $error );
+		$this->assertSame( [ 'bfw_bfag_webhooks' ], $error['tables'] );
+		$this->assertSame( "CREATE command denied to user 'wp'@'localhost'", $error['db_error'] );
+		$this->assertTrue( get_role( 'administrator' )->has_cap( Capabilities::MANAGE ), 'the capability comes first, so the admin sees the notice and the settings' );
+		$this->assertSame( Settings::DEFAULTS, get_option( 'bfag_settings' ) );
+
+		// Reactivated once the privilege is granted: the error clears and the install completes.
+		$this->wpdb->missing_tables( [] );
+		$this->wpdb->last_error = '';
+		$this->wpdb->queue( 'get_var', '0' );
+		$this->wpdb->queue( 'get_var', '0' );
+		Installer::activate();
+		$this->assertFalse( get_option( Installer::INSTALL_ERROR_OPTION ), 'cleared by the later success' );
+		$this->assertSame( BFAG_DB_VERSION, get_option( 'bfag_db_version' ) );
+		$this->assertCount( 2, $this->wpdb->calls_to( 'insert' ) );
+		$this->assertSame( array_keys( Installer::CRON ), array_keys( $GLOBALS['bfag_test_cron'] ) );
+	}
+
+	public function test_an_upgrade_whose_tables_are_missing_keeps_the_old_version_so_the_next_boot_retries(): void {
+		ini_set( 'error_log', '/dev/null' );
+		update_option( 'bfag_db_version', '0.9.0' );
+		$this->wpdb->missing_tables( [ 'bfag_cache_stats' ] );
+
+		Installer::maybe_upgrade();
+
+		$this->assertSame( '0.9.0', get_option( 'bfag_db_version' ) );
+		$this->assertSame( [ 'bfw_bfag_cache_stats' ], get_option( Installer::INSTALL_ERROR_OPTION )['tables'] );
+		$this->assertCount( 6, $GLOBALS['bfag_test_db_delta'] );
+
+		$this->wpdb->missing_tables( [] );
+		Installer::maybe_upgrade();
+		$this->assertSame( BFAG_DB_VERSION, get_option( 'bfag_db_version' ), 'control: the next boot completes the upgrade' );
+		$this->assertFalse( get_option( Installer::INSTALL_ERROR_OPTION ) );
+	}
+
+	public function test_install_error_is_an_owned_option(): void {
+		$this->assertSame( 'bfag_install_error', Installer::INSTALL_ERROR_OPTION );
+		$this->assertContains( Installer::INSTALL_ERROR_OPTION, Installer::OPTIONS );
+	}
+
+	// ------------------------------------------------------------------
+	// F1: multisite
+	// ------------------------------------------------------------------
+
+	/**
+	 * The options, cron and roles of one site as the harness holds them.
+	 *
+	 * @return array<string, mixed>
+	 */
+	private function site_state( int $id ): array {
+		if ( get_current_blog_id() === $id ) {
+			return [
+				'options' => $GLOBALS['bfag_test_options'],
+				'cron'    => $GLOBALS['bfag_test_cron'],
+				'roles'   => $GLOBALS['bfag_test_roles'],
+			];
+		}
+		return $GLOBALS['bfag_test_site_state'][ $id ];
+	}
+
+	public function test_network_activation_provisions_every_site(): void {
+		$GLOBALS['bfag_test_multisite'] = true;
+		$GLOBALS['bfag_test_sites']     = [ 1, 2, 3 ];
+		$this->wpdb->always( 'get_var', '0' );
+
+		Installer::activate( true );
+
+		$this->assertSame( [ 1, 2, 3 ], $GLOBALS['bfag_test_switched'] );
+		$this->assertSame( 1, get_current_blog_id(), 'restored to the main site' );
+		$this->assertSame( 'bfw_', $this->wpdb->prefix );
+		$this->assertCount( 18, $GLOBALS['bfag_test_db_delta'], 'six tables per site' );
+		$this->assertSame(
+			[ 'bfw_bfag_cache_rules', 'bfw_bfag_rate_limit_rules', 'bfw_2_bfag_cache_rules', 'bfw_2_bfag_rate_limit_rules', 'bfw_3_bfag_cache_rules', 'bfw_3_bfag_rate_limit_rules' ],
+			array_column( $this->wpdb->calls_to( 'insert' ), 'table' ),
+			'the two rules are seeded into every site\'s own tables'
+		);
+		foreach ( [ 1, 2, 3 ] as $id ) {
+			$state = $this->site_state( $id );
+			$this->assertSame( Settings::DEFAULTS, $state['options']['bfag_settings'], "site {$id}: settings" );
+			$this->assertSame( BFAG_DB_VERSION, $state['options']['bfag_db_version'], "site {$id}: version" );
+			$this->assertTrue( $state['roles']['administrator']->has_cap( Capabilities::MANAGE ), "site {$id}: capability" );
+			$this->assertSame( array_keys( Installer::CRON ), array_keys( $state['cron'] ), "site {$id}: cron" );
+		}
+	}
+
+	public function test_a_single_site_activation_on_multisite_provisions_only_the_current_site(): void {
+		$GLOBALS['bfag_test_multisite'] = true;
+		$GLOBALS['bfag_test_sites']     = [ 1, 2, 3 ];
+		$this->wpdb->always( 'get_var', '0' );
+
+		Installer::activate( false );
+
+		$this->assertSame( [], $GLOBALS['bfag_test_switched'], 'no site switch' );
+		$this->assertSame( [ 'bfw_bfag_cache_rules', 'bfw_bfag_rate_limit_rules' ], array_column( $this->wpdb->calls_to( 'insert' ), 'table' ) );
+		$this->assertArrayNotHasKey( 2, $GLOBALS['bfag_test_site_state'] );
+	}
+
+	public function test_network_wide_on_a_single_site_install_is_an_ordinary_activation(): void {
+		$GLOBALS['bfag_test_sites'] = [ 1, 2, 3 ];
+		$this->wpdb->always( 'get_var', '0' );
+
+		Installer::activate( true );
+
+		$this->assertFalse( is_multisite() );
+		$this->assertSame( [], $GLOBALS['bfag_test_switched'] );
+		$this->assertCount( 2, $this->wpdb->calls_to( 'insert' ) );
+		$this->assertSame( BFAG_DB_VERSION, get_option( 'bfag_db_version' ) );
+	}
+
+	public function test_maybe_upgrade_on_a_site_with_no_version_provisions_it_in_full(): void {
+		$this->wpdb->always( 'get_var', '0' );
+		$this->assertFalse( get_option( 'bfag_db_version' ) );
+
+		Installer::maybe_upgrade();
+
+		$this->assertCount( 6, $GLOBALS['bfag_test_db_delta'] );
+		$this->assertCount( 2, $this->wpdb->calls_to( 'insert' ), 'rules seeded' );
+		$this->assertSame( Settings::DEFAULTS, get_option( 'bfag_settings' ) );
+		$this->assertTrue( get_role( 'administrator' )->has_cap( Capabilities::MANAGE ) );
+		$this->assertSame( array_keys( Installer::CRON ), array_keys( $GLOBALS['bfag_test_cron'] ) );
+		$this->assertSame( BFAG_DB_VERSION, get_option( 'bfag_db_version' ) );
+		$this->assertSame( BFAG_VERSION, get_option( 'bfag_version' ) );
+	}
+
+	public function test_maybe_upgrade_on_a_site_behind_reasserts_the_capability_and_crons_without_reseeding(): void {
+		update_option( 'bfag_db_version', '0.9.0' );
+		$this->wpdb->always( 'get_var', '0' );
+
+		Installer::maybe_upgrade();
+
+		$this->assertCount( 6, $GLOBALS['bfag_test_db_delta'] );
+		$this->assertCount( 0, $this->wpdb->calls_to( 'insert' ), 'an upgrade never reseeds' );
+		$this->assertTrue( get_role( 'administrator' )->has_cap( Capabilities::MANAGE ) );
+		$this->assertSame( array_keys( Installer::CRON ), array_keys( $GLOBALS['bfag_test_cron'] ) );
+		$this->assertSame( BFAG_DB_VERSION, get_option( 'bfag_db_version' ) );
+	}
+
+	public function test_a_site_created_after_network_activation_is_provisioned_on_wp_initialize_site(): void {
+		$GLOBALS['bfag_test_multisite'] = true;
+		$this->wpdb->always( 'get_var', '0' );
+
+		Plugin::boot();
+		$this->assertSame( 20, has_action( 'wp_initialize_site', [ Installer::class, 'initialize_site' ] ) );
+		$this->wpdb->calls             = []; // boot() provisioned the main site; not what this test is about.
+		$GLOBALS['bfag_test_db_delta'] = [];
+
+		do_action( 'wp_initialize_site', new \WP_Site( 5 ), [] );
+
+		$this->assertSame( [ 5 ], $GLOBALS['bfag_test_switched'] );
+		$this->assertSame( 1, get_current_blog_id(), 'restored' );
+		$this->assertCount( 6, $GLOBALS['bfag_test_db_delta'] );
+		$this->assertSame( [ 'bfw_5_bfag_cache_rules', 'bfw_5_bfag_rate_limit_rules' ], array_column( $this->wpdb->calls_to( 'insert' ), 'table' ) );
+		$state = $GLOBALS['bfag_test_site_state'][5];
+		$this->assertSame( BFAG_DB_VERSION, $state['options']['bfag_db_version'] );
+		$this->assertTrue( $state['roles']['administrator']->has_cap( Capabilities::MANAGE ) );
+		$this->assertSame( array_keys( Installer::CRON ), array_keys( $state['cron'] ) );
+
+		// Active on some sites only, not the network: a new site is left alone.
+		$GLOBALS['bfag_test_network_active'] = false;
+		$this->wpdb->calls                   = [];
+		do_action( 'wp_initialize_site', new \WP_Site( 6 ), [] );
+		$this->assertSame( [ 5 ], $GLOBALS['bfag_test_switched'] );
+		$this->assertSame( [], $this->wpdb->calls );
+		$this->assertArrayNotHasKey( 6, $GLOBALS['bfag_test_site_state'] );
 	}
 }

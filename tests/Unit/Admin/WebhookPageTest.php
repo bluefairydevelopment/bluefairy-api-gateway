@@ -39,7 +39,7 @@ final class WebhookPageTest extends TestCase {
 		return [
 			'id'          => $id,
 			'label'       => 'CRM <sync>',
-			'url'         => 'https://user:p4ss@hooks.example.net/path/secret-token',
+			'url'         => 'https://hooks.example.net/path/secret-token',
 			'event'       => 'post.published',
 			'secret'      => self::SECRET,
 			'headers'     => '{"X-Api-Key":"k-123"}',
@@ -154,7 +154,7 @@ final class WebhookPageTest extends TestCase {
 
 		$this->assertStringContainsString( 'Edit webhook', $html );
 		$this->assertStringContainsString( 'name="id" value="1"', $html );
-		$this->assertStringContainsString( 'value="https://user:p4ss@hooks.example.net/path/secret-token"', $html, 'the admin edits the URL they entered' );
+		$this->assertStringContainsString( 'value="https://hooks.example.net/path/secret-token"', $html, 'the admin edits the URL they entered' );
 		$this->assertStringNotContainsString( self::SECRET, $html );
 		$this->assertStringContainsString( 'name="bfag[secret]" class="regular-text code" maxlength="255" value=""', $html );
 		$this->assertStringContainsString( 'name="bfag[regenerate_secret]"', $html );
@@ -444,7 +444,7 @@ final class WebhookPageTest extends TestCase {
 		$this->assertStringEndsWith( '&bfag_notice=webhook_test_ok', $location );
 		$this->assertCount( 1, $GLOBALS['bfag_test_http_calls'] );
 		$call = $GLOBALS['bfag_test_http_calls'][0];
-		$this->assertSame( 'https://user:p4ss@hooks.example.net/path/secret-token', $call['url'] );
+		$this->assertSame( 'https://hooks.example.net/path/secret-token', $call['url'] );
 		$body = json_decode( (string) $call['args']['body'], true );
 		$this->assertSame( 'test', $body['event'] );
 		$this->assertSame( 'https://example.com', $body['site'] );

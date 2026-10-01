@@ -187,4 +187,20 @@ final class SettingsPageTest extends TestCase {
 		$this->assertFalse( $acknowledged->cron_notice_due() );
 		$this->assertSame( '', bfag_test_render( [ $acknowledged, 'render_cron_notice' ] ), 'acknowledged: silent' );
 	}
+
+	public function test_the_editor_exemption_checkbox_and_the_trusted_proxies_help_text(): void {
+		$fields = $this->page()->groups()['ratelimit']['fields'];
+		$this->assertSame( 'checkbox', $fields['rate_limit_exempt_editors']['type'] );
+		$this->assertSame( 'Do not rate-limit logged-in users who can edit posts (the block editor\'s own REST calls).', $fields['rate_limit_exempt_editors']['description'] );
+		$this->assertSame( 'One IP or CIDR per line. Needed behind Cloudflare, a load balancer or a CDN. Without it the proxy\'s address is the client IP and all visitors share one bucket; with it, the chosen header is read only from these addresses so visitors cannot forge their IP.', $fields['trusted_proxies']['description'] );
+
+		$html = bfag_test_render( [ $this->page(), 'render' ] );
+		$this->assertMatchesRegularExpression( '/name="bfag\[rate_limit_exempt_editors\]" value="1"\s+checked="checked"/', $html, 'default on' );
+		$this->assertStringContainsString( 'Needed behind Cloudflare, a load balancer or a CDN.', $html );
+		$this->assertStringContainsString( 'the block editor&#039;s own REST calls', $html );
+
+		update_option( 'bfag_settings', [ 'rate_limit_exempt_editors' => false ] );
+		$html = bfag_test_render( [ $this->page(), 'render' ] );
+		$this->assertMatchesRegularExpression( '/name="bfag\[rate_limit_exempt_editors\]" value="1"\s*\/>/', $html, 'unchecked when off' );
+	}
 }

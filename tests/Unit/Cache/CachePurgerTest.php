@@ -159,7 +159,7 @@ final class CachePurgerTest extends TestCase {
 
 		$this->purger->purge_all();
 
-		$this->assertSame( 6, get_option( 'bfag_cache_generation' ) );
+		$this->assertSame( 6, (int) get_option( 'bfag_cache_generation' ) );
 		$this->assertSame( [ [ 'all', [] ] ], $this->purged );
 	}
 
