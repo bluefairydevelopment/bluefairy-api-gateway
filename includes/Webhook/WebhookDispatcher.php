@@ -69,23 +69,28 @@ final class WebhookDispatcher {
 	public const TIMEOUT = 5;
 
 	/**
-	 * Lazily built reader of a row's custom headers (and of the webhook a
-	 * queued delivery belongs to).
+	 * Reader of a row's custom headers and of the webhook a queued delivery
+	 * belongs to: the shared instance from Plugin::boot(), or one built here
+	 * when none was given (F16).
 	 *
-	 * @var WebhookRepository|null
+	 * @var WebhookRepository
 	 */
-	private ?WebhookRepository $webhooks = null;
+	private WebhookRepository $webhooks;
 
 	/**
 	 * Constructor.
 	 *
-	 * @param DeliveryRepository $deliveries Delivery log.
-	 * @param Settings           $settings   Plugin settings.
+	 * @param DeliveryRepository     $deliveries Delivery log.
+	 * @param Settings               $settings   Plugin settings.
+	 * @param WebhookRepository|null $webhooks   The shared repository; null builds one.
 	 */
 	public function __construct(
 		private readonly DeliveryRepository $deliveries,
-		private readonly Settings $settings
-	) {}
+		private readonly Settings $settings,
+		?WebhookRepository $webhooks = null
+	) {
+		$this->webhooks = $webhooks ?? new WebhookRepository();
+	}
 
 	/**
 	 * Deliver $payload to $webhook. A delivery row is written as `pending`
@@ -218,7 +223,7 @@ final class WebhookDispatcher {
 			'success'     => false,
 			'http_status' => null,
 		];
-		$webhook     = $this->repository()->find( (int) ( $row['webhook_id'] ?? 0 ) );
+		$webhook     = $this->webhooks->find( (int) ( $row['webhook_id'] ?? 0 ) );
 		if ( null === $webhook || 1 !== (int) ( $webhook['enabled'] ?? 0 ) ) {
 			Logger::log( 'pending delivery dropped: webhook missing or disabled', [ 'delivery_id' => $delivery_id ] );
 			$this->deliveries->update(
@@ -296,7 +301,7 @@ final class WebhookDispatcher {
 				'X-BF-Signature' => 'sha256=' . self::sign( $secret, $timestamp, $body ),
 			];
 
-			$custom = $this->sanitize_headers( $this->repository()->headers_of( $webhook ) );
+			$custom = $this->sanitize_headers( $this->webhooks->headers_of( $webhook ) );
 			foreach ( array_keys( $custom ) as $name ) {
 				if ( in_array( strtolower( $name ), self::RESERVED, true ) ) {
 					Logger::log(
@@ -310,30 +315,24 @@ final class WebhookDispatcher {
 				}
 			}
 
-			/**
-			 * Credential headers an add-on preset supplies. `Authorization` is
-			 * accepted here and nowhere else.
-			 *
-			 * @since 1.0.0
-			 *
-			 * @param array<string, string> $headers Default [].
-			 * @param array<string, mixed>  $webhook The webhook row.
-			 */
-			$auth = apply_filters( 'bfag_webhook_auth_headers', [], $webhook );
-			$auth = $this->filter_headers( is_array( $auth ) ? $auth : [], true );
-
 			$args = [
 				'timeout'            => self::TIMEOUT,
 				'redirection'        => 0,
 				'reject_unsafe_urls' => true,
 				'blocking'           => true,
-				'headers'            => array_merge( $custom, $auth, $core ),
+				'headers'            => array_merge( $custom, $core ),
 				'body'               => $body,
 			];
 
 			/**
 			 * Filter the request before it is sent. A preset may rewrite the
-			 * body, headers or set `url`.
+			 * body, headers or set `url`, and may set `Authorization` (this
+			 * is the one place a credential header is accepted); every other
+			 * transport header it plants — `Host`, `X-Forwarded-*`, a CR/LF
+			 * value — is stripped again afterwards (F4). Setting
+			 * `bfag_skip` to a non-empty string cancels the delivery: it is
+			 * recorded as failed with that string as the response body and
+			 * nothing is sent (N5).
 			 *
 			 * @since 1.0.0
 			 *
@@ -344,6 +343,22 @@ final class WebhookDispatcher {
 			 */
 			$filtered = apply_filters( 'bfag_webhook_request_args', $args, $webhook, $event, $payload );
 			$args     = is_array( $filtered ) ? $filtered : $args;
+
+			$skip = $args['bfag_skip'] ?? null;
+			unset( $args['bfag_skip'] );
+			if ( is_string( $skip ) && '' !== $skip ) {
+				Logger::log(
+					'webhook delivery skipped by filter',
+					[
+						'delivery_id' => $delivery_id,
+						'reason'      => $skip,
+					]
+				);
+				return $this->finish( $delivery_id, $webhook, $attempt, false, null, $skip );
+			}
+
+			// The filter is trusted for credentials, not for transport headers.
+			$args['headers'] = $this->filter_headers( is_array( $args['headers'] ?? null ) ? $args['headers'] : [], true );
 
 			$url = is_string( $webhook['url'] ?? null ) ? $webhook['url'] : '';
 			if ( isset( $args['url'] ) && is_string( $args['url'] ) ) {
@@ -433,7 +448,7 @@ final class WebhookDispatcher {
 
 	/**
 	 * The shared header filter. $allow_authorization is true only for the
-	 * `bfag_webhook_auth_headers` result.
+	 * headers that come back from `bfag_webhook_request_args`.
 	 *
 	 * @param array<mixed> $raw                 Header name => value.
 	 * @param bool         $allow_authorization Whether Authorization may pass.
@@ -484,15 +499,5 @@ final class WebhookDispatcher {
 				'reason' => $reason,
 			]
 		);
-	}
-
-	/**
-	 * The repository used only to decode a row's headers column.
-	 */
-	private function repository(): WebhookRepository {
-		if ( null === $this->webhooks ) {
-			$this->webhooks = new WebhookRepository();
-		}
-		return $this->webhooks;
 	}
 }

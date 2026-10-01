@@ -109,6 +109,58 @@ final class InstallerTest extends TestCase {
 		$this->assertSame( Settings::DEFAULTS, get_option( 'bfag_settings' ), 'data survives deactivation' );
 	}
 
+	/**
+	 * F13: a code-only release (same schema) still brings bfag_version up
+	 * to date on the next boot; nothing else runs.
+	 */
+	public function test_maybe_upgrade_writes_the_plugin_version_when_it_differs_without_touching_the_schema(): void {
+		update_option( 'bfag_db_version', BFAG_DB_VERSION );
+		update_option( 'bfag_version', '0.9.0' );
+		Installer::maybe_upgrade();
+		$this->assertSame( BFAG_VERSION, get_option( 'bfag_version' ) );
+		$this->assertCount( 0, $GLOBALS['bfag_test_db_delta'], 'schema untouched' );
+		$this->assertCount( 0, $this->wpdb->calls_to( 'insert' ), 'nothing reseeded' );
+	}
+
+	/**
+	 * F13: the unreachable PHP-version gate is gone — `Requires PHP` in the
+	 * header is what WordPress enforces.
+	 */
+	public function test_check_requirements_is_gone(): void {
+		$this->assertFalse( method_exists( Installer::class, 'check_requirements' ) );
+		$this->assertStringNotContainsString( 'check_requirements', (string) file_get_contents( BFAG_DIR . 'includes/Installer.php' ) );
+	}
+
+	/**
+	 * F14: a network deactivation clears the crons and the capability on
+	 * every site, like activate(); a single-site one touches only the
+	 * current site.
+	 */
+	public function test_network_deactivation_unprovisions_every_site(): void {
+		$GLOBALS['bfag_test_multisite'] = true;
+		$GLOBALS['bfag_test_sites']     = [ 1, 2, 3 ];
+		$this->wpdb->always( 'get_var', '0' );
+		Installer::activate( true );
+		$GLOBALS['bfag_test_switched'] = [];
+
+		Installer::deactivate( false );
+		$this->assertSame( [], $GLOBALS['bfag_test_switched'], 'single-site: no switch' );
+		$this->assertSame( [], $GLOBALS['bfag_test_cron'], 'site 1 cleared' );
+		$this->assertFalse( get_role( 'administrator' )->has_cap( Capabilities::MANAGE ) );
+		$this->assertSame( array_keys( Installer::CRON ), array_keys( $this->site_state( 2 )['cron'] ), 'site 2 untouched' );
+		$this->assertTrue( $this->site_state( 2 )['roles']['administrator']->has_cap( Capabilities::MANAGE ) );
+
+		Installer::deactivate( true );
+		$this->assertSame( [ 1, 2, 3 ], $GLOBALS['bfag_test_switched'] );
+		$this->assertSame( 1, get_current_blog_id(), 'restored to the main site' );
+		foreach ( [ 1, 2, 3 ] as $id ) {
+			$state = $this->site_state( $id );
+			$this->assertSame( [], $state['cron'], "site {$id}: cron cleared" );
+			$this->assertFalse( $state['roles']['administrator']->has_cap( Capabilities::MANAGE ), "site {$id}: capability removed" );
+			$this->assertSame( Settings::DEFAULTS, $state['options']['bfag_settings'], "site {$id}: data stays" );
+		}
+	}
+
 	public function test_maybe_upgrade_runs_only_when_db_version_is_behind(): void {
 		update_option( 'bfag_db_version', BFAG_DB_VERSION );
 		Installer::maybe_upgrade();

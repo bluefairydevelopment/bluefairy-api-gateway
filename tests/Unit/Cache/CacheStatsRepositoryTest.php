@@ -163,47 +163,12 @@ final class CacheStatsRepositoryTest extends TestCase {
 		);
 	}
 
-	public function test_hit_rate_is_hits_over_total_or_null_when_empty(): void {
-		$this->wpdb->queue(
-			'get_row',
-			[
-				'hits'   => '5',
-				'misses' => '3',
-			]
-		);
-		$this->assertSame( 0.625, $this->stats->hit_rate() );
-
-		$this->wpdb->queue(
-			'get_row',
-			[
-				'hits'   => '0',
-				'misses' => '0',
-			]
-		);
-		$this->assertNull( $this->stats->hit_rate() );
-
-		$this->wpdb->queue(
-			'get_row',
-			[
-				'hits'   => '0',
-				'misses' => '4',
-			]
-		);
-		$this->assertSame( 0.0, $this->stats->hit_rate(), 'all misses is a rate of zero, not null' );
-	}
-
-	public function test_hit_rate_window_covers_the_requested_buckets_including_the_current_one(): void {
-		$before = time();
-		$this->stats->hit_rate( 12 );
-		$this->stats->hit_rate( 1 );
-		$after = time();
-
-		$rows = $this->wpdb->calls_to( 'get_row' );
-		preg_match( "/>= '([^']+)'/", $rows[0]['sql'], $twelve );
-		preg_match( "/>= '([^']+)'/", $rows[1]['sql'], $one );
-		$this->assertContains( $twelve[1], $this->buckets_between( $before, $after, 11 * 300 ), '12 buckets = current + 11 earlier' );
-		$this->assertContains( $one[1], $this->buckets_between( $before, $after ), '1 bucket = the current one' );
-		$this->assertNotSame( $twelve[1], $one[1] );
+	/**
+	 * F16: hit_rate() was dead (KpiCron computes its own rate) and is gone.
+	 */
+	public function test_hit_rate_is_no_longer_part_of_the_api(): void {
+		$this->assertFalse( method_exists( $this->stats, 'hit_rate' ) );
+		$this->assertTrue( method_exists( $this->stats, 'totals_since' ), 'control: the method KpiCron uses is still there' );
 	}
 
 	public function test_prune_deletes_buckets_older_than_the_retention_and_returns_the_count(): void {

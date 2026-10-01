@@ -90,21 +90,31 @@ final class Installer {
 	 * @param bool $network_wide True when activated for the whole network.
 	 */
 	public static function activate( bool $network_wide = false ): void {
-		self::check_requirements();
-		if ( $network_wide && is_multisite() ) {
-			foreach ( get_sites(
-				[
-					'fields' => 'ids',
-					'number' => 0,
-				]
-			) as $site_id ) {
-				switch_to_blog( (int) $site_id );
-				self::provision_site();
-				restore_current_blog();
-			}
+		self::each_site( $network_wide, [ self::class, 'provision_site' ] );
+	}
+
+	/**
+	 * Run $callback on every site of the network when $network_wide and
+	 * this is a multisite install, else on the current site only.
+	 *
+	 * @param bool     $network_wide Whether the hook fired for the whole network.
+	 * @param callable $callback     What to run per site.
+	 */
+	private static function each_site( bool $network_wide, callable $callback ): void {
+		if ( ! $network_wide || ! is_multisite() ) {
+			$callback();
 			return;
 		}
-		self::provision_site();
+		foreach ( get_sites(
+			[
+				'fields' => 'ids',
+				'number' => 0,
+			]
+		) as $site_id ) {
+			switch_to_blog( (int) $site_id );
+			$callback();
+			restore_current_blog();
+		}
 	}
 
 	/**
@@ -149,9 +159,19 @@ final class Installer {
 	}
 
 	/**
-	 * Deactivation hook. Data stays; crons and the capability go.
+	 * Deactivation hook. Data stays; crons and the capability go — on every
+	 * site when the plugin is network-deactivated, mirroring activate().
+	 *
+	 * @param bool $network_wide True when deactivated for the whole network.
 	 */
-	public static function deactivate(): void {
+	public static function deactivate( bool $network_wide = false ): void {
+		self::each_site( $network_wide, [ self::class, 'unprovision_site' ] );
+	}
+
+	/**
+	 * Clear one site's crons and capability.
+	 */
+	public static function unprovision_site(): void {
 		foreach ( array_keys( self::CRON ) as $hook ) {
 			wp_clear_scheduled_hook( $hook );
 		}
@@ -167,13 +187,19 @@ final class Installer {
 	 * version is behind gets dbDelta, and the capability and crons are
 	 * re-asserted. The version is recorded only when the tables verifiably
 	 * exist, so a failed upgrade is retried on the next boot instead of
-	 * being remembered as done.
+	 * being remembered as done. `bfag_version` (the plugin version, as
+	 * distinct from the schema version) is brought up to date whenever it
+	 * differs (F13), so a code-only release still leaves the right number
+	 * behind.
 	 */
 	public static function maybe_upgrade(): void {
 		$current = get_option( 'bfag_db_version', '' );
 		if ( '' === $current || false === $current ) {
 			self::provision_site();
 			return;
+		}
+		if ( BFAG_VERSION !== (string) get_option( 'bfag_version', '' ) ) {
+			update_option( 'bfag_version', BFAG_VERSION, false );
 		}
 		if ( version_compare( (string) $current, BFAG_DB_VERSION, '>=' ) ) {
 			return;
@@ -410,15 +436,5 @@ final class Installer {
 			);
 		}
 		// phpcs:enable
-	}
-
-	/**
-	 * Refuse to activate on PHP < 8.1 or a MySQL without InnoDB defaults.
-	 */
-	private static function check_requirements(): void {
-		if ( version_compare( PHP_VERSION, '8.1', '<' ) ) {
-			deactivate_plugins( plugin_basename( BFAG_FILE ) );
-			wp_die( esc_html__( 'BlueFairy API Gateway requires PHP 8.1 or higher.', 'bluefairy-api-gateway' ) );
-		}
 	}
 }

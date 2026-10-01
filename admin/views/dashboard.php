@@ -3,6 +3,7 @@
  * Dashboard: KPI cards, failed deliveries, counts.
  *
  * @var array<string, mixed>|null  $kpis    KpiCron::current(), null when cold.
+ * @var bool                       $is_pro  Whether the Pro add-on is active (the third card is its ban count).
  * @var list<array<string, mixed>> $failed  The most recent failed deliveries.
  * @var array<int, string>         $labels  Webhook id => label.
  * @var array<string, int|null>    $counts  cache_rules, rate_limit_rules, webhooks, hits_table_rows (null until the KPI cron has run).
@@ -39,13 +40,22 @@ $bfag_int  = static function ( mixed $value ): string {
 			<span data-bfag-kpi="webhook_total"><?php echo esc_html( $bfag_int( $kpis['webhook_total'] ?? null ) ); ?></span>
 		</span>
 	</div>
-	<div class="bfag-kpi">
-		<span class="bfag-kpi__label"><?php esc_html_e( 'Blocked today', 'bluefairy-api-gateway' ); ?></span>
-		<span class="bfag-kpi__value" data-bfag-kpi="blocked_today"><?php echo esc_html( $bfag_int( $kpis['blocked_today'] ?? null ) ); ?></span>
-		<span class="bfag-kpi__sub">
-			<span data-bfag-kpi="hits_table_rows"><?php echo esc_html( $bfag_int( $kpis['hits_table_rows'] ?? null ) ); ?></span> <?php esc_html_e( 'hits in the rate-limit log', 'bluefairy-api-gateway' ); ?>
-		</span>
-	</div>
+	<?php if ( $is_pro ) : ?>
+		<?php // The Pro mitigator's figure is the count of active bans; a `blocked_label` key in the KPI array may rename the card (U-19). ?>
+		<div class="bfag-kpi">
+			<span class="bfag-kpi__label"><?php echo esc_html( is_string( $kpis['blocked_label'] ?? null ) && '' !== $kpis['blocked_label'] ? $kpis['blocked_label'] : __( 'Active bans', 'bluefairy-api-gateway' ) ); ?></span>
+			<span class="bfag-kpi__value" data-bfag-kpi="blocked_today"><?php echo esc_html( $bfag_int( $kpis['blocked_today'] ?? null ) ); ?></span>
+			<span class="bfag-kpi__sub">
+				<span data-bfag-kpi="hits_table_rows"><?php echo esc_html( $bfag_int( $kpis['hits_table_rows'] ?? null ) ); ?></span> <?php esc_html_e( 'hits in the rate-limit log', 'bluefairy-api-gateway' ); ?>
+			</span>
+		</div>
+	<?php else : ?>
+		<div class="bfag-kpi bfag-kpi--pro">
+			<span class="bfag-kpi__label"><?php esc_html_e( 'Blocked (Pro)', 'bluefairy-api-gateway' ); ?></span>
+			<span class="bfag-kpi__value">—</span>
+			<span class="bfag-kpi__sub"><?php esc_html_e( 'Bans need the Pro add-on', 'bluefairy-api-gateway' ); ?></span>
+		</div>
+	<?php endif; ?>
 </div>
 <p class="bfag-kpi-actions">
 	<button type="button" class="button" data-bfag-refresh><?php esc_html_e( 'Refresh', 'bluefairy-api-gateway' ); ?></button>
@@ -70,14 +80,15 @@ $bfag_int  = static function ( mixed $value ): string {
 	<p><?php esc_html_e( 'No failed deliveries.', 'bluefairy-api-gateway' ); ?></p>
 <?php else : ?>
 	<table class="widefat striped bfag-table">
+		<caption class="screen-reader-text"><?php esc_html_e( 'Recent failed deliveries', 'bluefairy-api-gateway' ); ?></caption>
 		<thead>
 			<tr>
-				<th><?php esc_html_e( 'Webhook', 'bluefairy-api-gateway' ); ?></th>
-				<th><?php esc_html_e( 'Event', 'bluefairy-api-gateway' ); ?></th>
-				<th><?php esc_html_e( 'HTTP', 'bluefairy-api-gateway' ); ?></th>
-				<th><?php esc_html_e( 'Attempt', 'bluefairy-api-gateway' ); ?></th>
-				<th><?php esc_html_e( 'When', 'bluefairy-api-gateway' ); ?></th>
-				<th></th>
+				<th scope="col"><?php esc_html_e( 'Webhook', 'bluefairy-api-gateway' ); ?></th>
+				<th scope="col"><?php esc_html_e( 'Event', 'bluefairy-api-gateway' ); ?></th>
+				<th scope="col"><?php esc_html_e( 'HTTP', 'bluefairy-api-gateway' ); ?></th>
+				<th scope="col"><?php esc_html_e( 'Attempt', 'bluefairy-api-gateway' ); ?></th>
+				<th scope="col"><?php esc_html_e( 'When (site time)', 'bluefairy-api-gateway' ); ?></th>
+				<th scope="col"><span class="screen-reader-text"><?php esc_html_e( 'Retry', 'bluefairy-api-gateway' ); ?></span></th>
 			</tr>
 		</thead>
 		<tbody>
@@ -87,7 +98,7 @@ $bfag_int  = static function ( mixed $value ): string {
 					<td><code><?php echo esc_html( (string) $bfag_row['event'] ); ?></code></td>
 					<td><?php echo esc_html( null === $bfag_row['http_status'] ? '—' : (string) $bfag_row['http_status'] ); ?></td>
 					<td><?php echo esc_html( (string) $bfag_row['attempt'] ); ?></td>
-					<td><?php echo esc_html( (string) $bfag_row['created_at'] ); ?></td>
+					<td><?php echo esc_html( \BlueFairy\ApiGateway\Admin\Page::format_datetime( (string) $bfag_row['created_at'] ) ); ?></td>
 					<td>
 						<?php if ( 1 === (int) $bfag_row['truncated'] ) : ?>
 							<span class="bfag-badge bfag-badge--muted"><?php esc_html_e( 'Truncated — cannot retry', 'bluefairy-api-gateway' ); ?></span>
@@ -104,6 +115,7 @@ $bfag_int  = static function ( mixed $value ): string {
 
 <h2><?php esc_html_e( 'At a glance', 'bluefairy-api-gateway' ); ?></h2>
 <table class="widefat bfag-table bfag-counts">
+	<caption class="screen-reader-text"><?php esc_html_e( 'At a glance', 'bluefairy-api-gateway' ); ?></caption>
 	<tbody>
 		<tr><th><?php esc_html_e( 'Cache rules', 'bluefairy-api-gateway' ); ?></th><td><?php echo esc_html( number_format_i18n( $counts['cache_rules'] ) ); ?></td></tr>
 		<tr><th><?php esc_html_e( 'Rate-limit rules', 'bluefairy-api-gateway' ); ?></th><td><?php echo esc_html( number_format_i18n( $counts['rate_limit_rules'] ) ); ?></td></tr>
@@ -113,7 +125,7 @@ $bfag_int  = static function ( mixed $value ): string {
 </table>
 
 <h2><?php esc_html_e( 'Status endpoint', 'bluefairy-api-gateway' ); ?></h2>
-<p class="description"><?php esc_html_e( 'A monitor logged in with the gateway capability can read the same figures here:', 'bluefairy-api-gateway' ); ?></p>
+<p class="description"><?php esc_html_e( 'A monitoring tool authenticated with an Application Password (or, with Pro, an API key) can read the same figures here:', 'bluefairy-api-gateway' ); ?></p>
 <p class="bfag-keybox">
 	<code data-bfag-copy-target><?php echo esc_html( rest_url( 'bfag/v1/status' ) ); ?></code>
 	<button type="button" class="button button-small" data-bfag-copy="<?php echo esc_attr( rest_url( 'bfag/v1/status' ) ); ?>"><?php esc_html_e( 'Copy', 'bluefairy-api-gateway' ); ?></button>

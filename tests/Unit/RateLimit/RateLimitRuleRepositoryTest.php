@@ -92,7 +92,11 @@ final class RateLimitRuleRepositoryTest extends TestCase {
 		$this->assertSame( 0, $rules[1]['enabled'] );
 		$this->assertSame( 'SELECT * FROM bfw_bfag_rate_limit_rules ORDER BY id ASC LIMIT 50', $this->wpdb->calls_to( 'get_results' )[0]['sql'] );
 
-		$this->assertSame( [], ( new RateLimitRuleRepository() )->all() );
+		// T10: a queued, non-empty answer — `assertSame( [], all() )` against an empty queue could never fail.
+		$this->wpdb->queue( 'get_results', [ $this->row( [ 'id' => 3 ] ) ] );
+		$default = ( new RateLimitRuleRepository() )->all();
+		$this->assertCount( 1, $default );
+		$this->assertSame( 3, $default[0]['id'] );
 		$this->assertStringEndsWith( 'LIMIT 200', (string) $this->wpdb->calls_to( 'get_results' )[1]['sql'] );
 	}
 

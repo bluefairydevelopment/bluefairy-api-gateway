@@ -406,10 +406,11 @@ final class EventBusTest extends TestCase {
 		return [ 'id' => 1, 'label' => 'W1', 'url' => 'https://hooks.example.com/1', 'event' => 'post.published', 'secret' => 's', 'headers' => '{}', 'preset' => '', 'enabled' => '1', 'max_retries' => '3' ];
 	}
 
-	public function test_invalidate_clears_the_enabled_webhooks_cache(): void {
-		$this->seed( [ [ 'event' => 'post.published' ] ] );
-		$this->assertNotFalse( wp_cache_get( 'webhooks_enabled', 'bfag' ) );
-		$this->bus()->invalidate();
-		$this->assertFalse( wp_cache_get( 'webhooks_enabled', 'bfag' ) );
+	/**
+	 * F16: invalidate() was dead (the repository invalidates on every write) and is gone.
+	 */
+	public function test_invalidate_is_no_longer_part_of_the_api(): void {
+		$this->assertFalse( method_exists( $this->bus(), 'invalidate' ) );
+		$this->assertTrue( method_exists( $this->bus(), 'flush' ), 'control' );
 	}
 }

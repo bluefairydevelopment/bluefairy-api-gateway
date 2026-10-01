@@ -7,6 +7,8 @@ declare(strict_types=1);
 
 namespace BlueFairy\ApiGateway\Tests\Unit\Rest;
 
+use BlueFairy\ApiGateway\Cache\CachePurger;
+use BlueFairy\ApiGateway\Cache\CacheRuleRepository;
 use BlueFairy\ApiGateway\Cache\CacheStore;
 use BlueFairy\ApiGateway\Capabilities;
 use BlueFairy\ApiGateway\Rest\CacheController;
@@ -22,6 +24,31 @@ final class CacheControllerTest extends TestCase {
 		$this->store                      = new CacheStore();
 	}
 
+	private function controller(): CacheController {
+		return new CacheController( new CachePurger( $this->store, new CacheRuleRepository() ) );
+	}
+
+	/**
+	 * Seed the enabled-rules cache with one rule carrying $tags, so the
+	 * purger treats them as known (F11: the endpoint purges through it).
+	 *
+	 * @param string $tags Comma-separated tags.
+	 */
+	private function rule_carrying( string $tags ): void {
+		wp_cache_set(
+			CacheRuleRepository::CACHE_KEY,
+			[
+				[
+					'id'         => 1,
+					'route_glob' => '**',
+					'tags'       => $tags,
+					'enabled'    => 1,
+				],
+			],
+			'bfag'
+		);
+	}
+
 	/**
 	 * @param array<string, mixed> $params Body params.
 	 */
@@ -32,7 +59,7 @@ final class CacheControllerTest extends TestCase {
 	}
 
 	public function test_the_route_is_registered_as_a_post_with_a_capability_permission_callback_and_a_sanitised_tags_arg(): void {
-		$controller = new CacheController( $this->store );
+		$controller = $this->controller();
 		$controller->register_routes();
 
 		$routes = rest_get_server()->get_routes();
@@ -44,9 +71,40 @@ final class CacheControllerTest extends TestCase {
 		$this->assertSame( 'array', $route['args']['tags']['type'] );
 		$this->assertSame( [ $controller, 'sanitize_tags' ], $route['args']['tags']['sanitize_callback'] );
 
-		$this->assertFalse( call_user_func( $route['permission_callback'] ) );
+		$this->assertFalse( call_user_func( $route['permission_callback'], $this->purge_request() ) );
 		bfag_test_grant( Capabilities::MANAGE );
-		$this->assertTrue( call_user_func( $route['permission_callback'] ) );
+		$this->assertTrue( call_user_func( $route['permission_callback'], $this->purge_request() ) );
+	}
+
+	/**
+	 * N3: an API key (Pro sets `bfag_api_key_scope` on the request) whose
+	 * scope satisfies `cache:purge` passes the permission callback even
+	 * with no user behind it; a `read` key does not; no key and no
+	 * capability does not; the capability alone does.
+	 */
+	public function test_permission_accepts_a_key_scope_that_satisfies_the_route_without_a_user(): void {
+		$permission = [ $this->controller(), 'permission' ];
+		$this->assertFalse( is_user_logged_in(), 'precondition: anonymous' );
+
+		$request = $this->purge_request();
+		$request->set_param( 'bfag_api_key_scope', 'cache:purge' );
+		$this->assertTrue( $permission( $request ), 'scope cache:purge, no user: allowed' );
+
+		$request = $this->purge_request();
+		$request->set_param( 'bfag_api_key_scope', 'read write webhook:write' );
+		$this->assertFalse( $permission( $request ), 'every other scope: refused' );
+
+		$request = $this->purge_request();
+		$request->set_param( 'bfag_api_key_scope', 42 );
+		$this->assertFalse( $permission( $request ), 'a non-string scope param is ignored' );
+
+		$this->assertFalse( $permission( $this->purge_request() ), 'no param, no capability: refused' );
+
+		bfag_test_grant( Capabilities::MANAGE );
+		$this->assertTrue( $permission( $this->purge_request() ), 'the capability alone: allowed' );
+		$request = $this->purge_request();
+		$request->set_param( 'bfag_api_key_scope', 'read' );
+		$this->assertTrue( $permission( $request ), 'the capability wins whatever the key scope' );
 	}
 
 	public function test_without_tags_everything_is_flushed(): void {
@@ -60,7 +118,7 @@ final class CacheControllerTest extends TestCase {
 			2
 		);
 		$before   = $this->store->generation();
-		$response = ( new CacheController( $this->store ) )->purge( $this->purge_request() );
+		$response = $this->controller()->purge( $this->purge_request() );
 
 		$this->assertSame( 200, $response->get_status() );
 		$this->assertSame(
@@ -75,6 +133,7 @@ final class CacheControllerTest extends TestCase {
 	}
 
 	public function test_with_tags_only_those_generations_are_bumped(): void {
+		$this->rule_carrying( 'posts,products,x' );
 		$purged = [];
 		add_action(
 			'bfag_cache_purged',
@@ -88,19 +147,21 @@ final class CacheControllerTest extends TestCase {
 		$posts      = $this->store->tag_generation( 'posts' );
 		$other      = $this->store->tag_generation( 'other' );
 
-		$response = ( new CacheController( $this->store ) )->purge( $this->purge_request( [ 'tags' => [ 'Posts', 'products', '', 'posts', '<x>' ] ] ) );
+		$response = $this->controller()->purge( $this->purge_request( [ 'tags' => [ 'Posts', 'products', '', 'posts', '<x>', 'ghost' ] ] ) );
 
 		$this->assertSame(
 			[
 				'purged' => 'tags',
 				'tags'   => [ 'posts', 'products', 'x' ],
 			],
-			$response->get_data()
+			$response->get_data(),
+			'F11: `ghost` — a tag no enabled rule carries — is dropped by the purger, as it is for every other caller'
 		);
 		$this->assertSame( $generation, $this->store->generation(), 'the global generation is untouched' );
 		$this->assertSame( $posts + 1, $this->store->tag_generation( 'posts' ) );
 		$this->assertSame( $other, $this->store->tag_generation( 'other' ) );
-		$this->assertSame( [ [ 'tags', [ 'posts', 'products', 'x' ] ] ], $purged );
+		$this->assertSame( 1, $this->store->tag_generation( 'ghost' ), 'unknown tag: not bumped' );
+		$this->assertSame( [ [ 'tags', [ 'posts', 'products', 'x' ] ] ], $purged, 'bfag_cache_purged fires once, from the purger' );
 	}
 
 	/**
@@ -108,7 +169,8 @@ final class CacheControllerTest extends TestCase {
 	 * purger never bumps; the endpoint must keep the colon.
 	 */
 	public function test_purging_a_colon_tag_bumps_that_tag_not_its_colonless_twin(): void {
-		$response = ( new CacheController( $this->store ) )->purge( $this->purge_request( [ 'tags' => [ 'post:42', 'Type:Product' ] ] ) );
+		$this->rule_carrying( 'post:42,type:product' );
+		$response = $this->controller()->purge( $this->purge_request( [ 'tags' => [ 'post:42', 'Type:Product' ] ] ) );
 
 		$this->assertSame( [ 'post:42', 'type:product' ], $response->get_data()['tags'] );
 		$this->assertSame( 2, $this->store->tag_generation( 'post:42' ) );
@@ -119,7 +181,7 @@ final class CacheControllerTest extends TestCase {
 	}
 
 	public function test_sanitize_tags_accepts_a_csv_string_and_rejects_junk(): void {
-		$controller = new CacheController( $this->store );
+		$controller = $this->controller();
 		$this->assertSame( [ 'a', 'b-c' ], $controller->sanitize_tags( 'A, b-c ,,' ) );
 		$this->assertSame( [], $controller->sanitize_tags( 42 ) );
 		$this->assertSame( [], $controller->sanitize_tags( null ) );

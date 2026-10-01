@@ -172,6 +172,58 @@ abstract class Page {
 	}
 
 	/**
+	 * Seconds a failed form submission is kept for one re-render (U-11).
+	 */
+	public const FORM_TTL = 60;
+
+	/**
+	 * Park the submitted fields so the tab can re-fill its form once after a
+	 * failed save, instead of discarding what the admin typed. Keyed per
+	 * user; read back (and deleted) by take_form().
+	 *
+	 * @param array<string, mixed> $fields The sanitised form fields.
+	 */
+	protected static function remember_form( array $fields ): void {
+		set_transient( self::form_transient(), $fields, self::FORM_TTL );
+	}
+
+	/**
+	 * The fields parked by the current user's last failed save, deleted on
+	 * read so a later visit shows a blank form again.
+	 *
+	 * @return array<string, mixed>|null
+	 */
+	protected static function take_form(): ?array {
+		$transient = self::form_transient();
+		$fields    = get_transient( $transient );
+		if ( ! is_array( $fields ) ) {
+			return null;
+		}
+		delete_transient( $transient );
+		return $fields;
+	}
+
+	/**
+	 * Transient carrying the last failed submission for the current user.
+	 */
+	private static function form_transient(): string {
+		return 'bfag_form_' . get_current_user_id();
+	}
+
+	/**
+	 * A stored GMT datetime rendered in the site's timezone and the site's
+	 * date and time formats (U-12). Every timestamp a view prints goes
+	 * through here so the admin never reads a bare GMT value as local time.
+	 *
+	 * @param string $gmt A `Y-m-d H:i:s` GMT datetime from a table.
+	 */
+	public static function format_datetime( string $gmt ): string {
+		$format = (string) get_option( 'date_format', 'Y-m-d' ) . ' ' . (string) get_option( 'time_format', 'H:i' );
+		$local  = strtotime( get_date_from_gmt( $gmt ) );
+		return date_i18n( $format, false === $local ? 0 : $local );
+	}
+
+	/**
 	 * Checkbox-tolerant boolean for a form field.
 	 *
 	 * @param array<string, mixed> $fields Sanitised fields.

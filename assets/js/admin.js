@@ -137,6 +137,11 @@
 					el.textContent = format( json.data[ key ], el.getAttribute( 'data-bfag-format' ) );
 				}
 			} );
+			// The "Not computed yet — press Refresh" line must not survive a refresh (N4).
+			var updated = document.querySelector( '.bfag-kpi-updated' );
+			if ( updated && json.data.computed_at ) {
+				updated.textContent = i18n.updatedNow || 'Updated just now';
+			}
 			status( button, i18n.refreshed || 'Updated.', false );
 		} ).catch( function () {
 			button.disabled = false;
@@ -242,6 +247,26 @@
 		syncPreset( select );
 		select.addEventListener( 'change', function () {
 			syncPreset( select );
+		} );
+	} );
+
+	// The rate-limit Penalty row applies to IP-address rules only (U-08): show
+	// and enable it when "Count by" is `ip`, hide and disable it otherwise so
+	// a disabled field is not even posted.
+	function syncPenalty( select ) {
+		var isIp = select.value === 'ip';
+		document.querySelectorAll( '[data-bfag-penalty-row]' ).forEach( function ( row ) {
+			row.hidden = ! isIp;
+			var input = row.querySelector ? row.querySelector( 'input' ) : null;
+			if ( input ) {
+				input.disabled = ! isIp;
+			}
+		} );
+	}
+	document.querySelectorAll( 'select[name="bfag[subject_type]"]' ).forEach( function ( select ) {
+		syncPenalty( select );
+		select.addEventListener( 'change', function () {
+			syncPenalty( select );
 		} );
 	} );
 

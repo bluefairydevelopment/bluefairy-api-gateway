@@ -136,9 +136,15 @@ final class CachePurger {
 	 * ever saved. The known set is also what the store keeps, so entries
 	 * for tags no rule carries any more are dropped on the same write.
 	 *
+	 * This is the one purge entry point (F11): the Cache tab, the AJAX
+	 * button, the REST endpoint and the content hooks all come through
+	 * here, so `bfag_cache_purged` fires from one place and an unknown tag
+	 * is treated the same whoever names it.
+	 *
 	 * @param string[] $tags Tags to bump.
+	 * @return string[] The tags actually bumped (the known ones, in the order given).
 	 */
-	public function purge_tags( array $tags ): void {
+	public function purge_tags( array $tags ): array {
 		$tags  = array_values( array_filter( $tags, static fn( mixed $tag ): bool => is_string( $tag ) && '' !== $tag ) );
 		$known = $this->known_tags();
 
@@ -151,6 +157,7 @@ final class CachePurger {
 		$this->store->bump_tags( $tags, $known );
 		/** This action is documented in includes/Cache/CachePurger.php */
 		do_action( 'bfag_cache_purged', 'tags', $tags );
+		return $tags;
 	}
 
 	/**

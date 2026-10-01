@@ -87,7 +87,16 @@ final class DashboardPageTest extends TestCase {
 	public function test_cold_kpis_render_as_dashes_with_the_cold_explanation(): void {
 		$this->prime( [] );
 		$html = bfag_test_render( [ $this->page(), 'render' ] );
-		$this->assertSame( 3, substr_count( $html, 'data-bfag-format="rate">—<' ) + substr_count( $html, 'data-bfag-kpi="blocked_today">—<' ) );
+		$this->assertSame( 2, substr_count( $html, 'data-bfag-format="rate">—<' ) );
+		// U-19: free: the third card says what it would show, instead of a permanent 0.
+		$this->assertStringContainsString( '<span class="bfag-kpi__label">Blocked (Pro)</span>', $html );
+		$this->assertStringContainsString( '<span class="bfag-kpi__value">—</span>', $html );
+		$this->assertStringContainsString( 'Bans need the Pro add-on', $html );
+		$this->assertStringNotContainsString( 'data-bfag-kpi="blocked_today"', $html );
+		$this->assertStringNotContainsString( 'Blocked today', $html );
+		$this->assertStringContainsString( 'A monitoring tool authenticated with an Application Password (or, with Pro, an API key) can read the same figures here:', $html, 'U-23: status-endpoint copy' );
+		$this->assertStringNotContainsString( 'A monitor logged in with the gateway capability', $html );
+		$this->assertStringContainsString( '<caption class="screen-reader-text">At a glance</caption>', $html );
 		$this->assertStringContainsString( 'Not computed yet', $html );
 		$this->assertStringContainsString( 'data-bfag-refresh', $html );
 		$this->assertStringContainsString( 'No failed deliveries.', $html );
@@ -121,13 +130,19 @@ final class DashboardPageTest extends TestCase {
 		$this->assertStringContainsString( 'data-bfag-kpi="cache_hit_rate" data-bfag-format="rate">75.6%<', $html );
 		$this->assertStringContainsString( 'data-bfag-kpi="cache_hits">1,234<', $html );
 		$this->assertStringContainsString( 'data-bfag-kpi="webhook_success_rate" data-bfag-format="rate">50.0%<', $html );
-		$this->assertStringContainsString( 'data-bfag-kpi="blocked_today">9<', $html );
+		$this->assertStringNotContainsString( 'data-bfag-kpi="blocked_today">9<', $html, 'free: the ban count is not a free figure' );
+		$this->assertStringContainsString( 'Blocked (Pro)', $html );
 		$this->assertStringContainsString( 'Updated 120 secs ago', $html );
 		$this->assertStringNotContainsString( 'Not computed yet', $html );
 
 		$this->assertStringContainsString( 'CRM &lt;sync&gt;', $html );
 		$this->assertStringContainsString( 'data-bfag-retry="10"', $html );
 		$this->assertStringNotContainsString( 'data-bfag-retry="11"', $html );
+		// U-12: the failed-delivery time goes through Page::format_datetime() and is labelled site time.
+		$this->assertStringContainsString( '<th scope="col">When (site time)</th>', $html );
+		$this->assertStringContainsString( '<td>' . \BlueFairy\ApiGateway\Admin\Page::format_datetime( '2026-01-01 00:00:00' ) . '</td>', $html );
+		$this->assertStringNotContainsString( '2026-01-01 00:00:00', $html, 'the raw GMT string never reaches the page' );
+		$this->assertStringContainsString( '<caption class="screen-reader-text">Recent failed deliveries</caption>', $html );
 		$this->assertStringContainsString( 'Truncated — cannot retry', $html );
 		$this->assertStringContainsString( 'view=deliveries', $html );
 		$this->assertStringContainsString( "( 'failed' = '' OR status = 'failed' ) AND ( '' = '' OR direction = '' ) ORDER BY created_at DESC, id DESC LIMIT 10", $this->wpdb->queries_matching( 'bfag_webhook_deliveries' )[0] );
@@ -138,5 +153,42 @@ final class DashboardPageTest extends TestCase {
 		$this->assertStringContainsString( '<th>Rows in the rate-limit hits table</th><td>345</td>', $html, 'from the KPI transient' );
 		$this->assertSame( [], $this->wpdb->queries_matching( 'bfag_rate_limit_hits' ), 'P10: no live COUNT(*) of the hits table on a render' );
 		$this->assertCount( 3, $this->wpdb->calls_to( 'get_var' ), 'exactly the three rule/webhook counts' );
+	}
+
+	/**
+	 * U-19: with Pro the third card is the count of active bans, named
+	 * "Active bans" unless the KPI array carries a `blocked_label`.
+	 */
+	public function test_with_pro_the_third_card_is_the_active_ban_count(): void {
+		add_filter( 'bfag_is_pro', '__return_true' );
+		set_transient(
+			'bfag_kpis',
+			[
+				'blocked_today'   => 9,
+				'hits_table_rows' => 345,
+				'computed_at'     => time(),
+			],
+			360
+		);
+		$this->prime( [] );
+		$html = bfag_test_render( [ $this->page(), 'render' ] );
+		$this->assertStringContainsString( '<span class="bfag-kpi__label">Active bans</span>', $html );
+		$this->assertStringContainsString( 'data-bfag-kpi="blocked_today">9<', $html );
+		$this->assertStringNotContainsString( 'Blocked (Pro)', $html );
+		$this->assertStringNotContainsString( 'Bans need the Pro add-on', $html );
+
+		set_transient(
+			'bfag_kpis',
+			[
+				'blocked_today' => 2,
+				'blocked_label' => 'Banned <now>',
+				'computed_at'   => time(),
+			],
+			360
+		);
+		$this->prime( [] );
+		$html = bfag_test_render( [ $this->page(), 'render' ] );
+		$this->assertStringContainsString( '<span class="bfag-kpi__label">Banned &lt;now&gt;</span>', $html, 'the KPI array may rename the card' );
+		$this->assertStringNotContainsString( 'Active bans', $html );
 	}
 }

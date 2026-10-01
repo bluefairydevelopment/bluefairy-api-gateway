@@ -13,12 +13,11 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
+use BlueFairy\ApiGateway\Cache\CachePurger;
 use BlueFairy\ApiGateway\Cache\CacheRuleRepository;
-use BlueFairy\ApiGateway\Cache\CacheStatsRepository;
 use BlueFairy\ApiGateway\Cache\CacheStore;
 use BlueFairy\ApiGateway\Capabilities;
 use BlueFairy\ApiGateway\Installer;
-use BlueFairy\ApiGateway\RateLimit\HitCounter;
 use BlueFairy\ApiGateway\RateLimit\RateLimitRuleRepository;
 use BlueFairy\ApiGateway\Settings;
 use BlueFairy\ApiGateway\Webhook\DeliveryRepository;
@@ -41,6 +40,14 @@ final class AdminMenu {
 	 * User meta that records a dismissed trusted-proxies notice.
 	 */
 	public const PROXY_NOTICE_META = 'bfag_proxy_notice_dismissed';
+
+	/**
+	 * Delivery statuses the Retry button is offered for and the AJAX
+	 * handler accepts (U-10).
+	 *
+	 * @var list<string>
+	 */
+	public const RETRYABLE_STATUSES = [ 'failed', 'retrying' ];
 
 	/**
 	 * Screens the trusted-proxies notice may appear on: the plugin's own,
@@ -79,13 +86,6 @@ final class AdminMenu {
 	private Assets $assets;
 
 	/**
-	 * KPI transient writer (Refresh button).
-	 *
-	 * @var KpiCron
-	 */
-	private KpiCron $kpi_cron;
-
-	/**
 	 * The Settings tab, kept typed for its cron notice.
 	 *
 	 * @var SettingsPage
@@ -96,35 +96,32 @@ final class AdminMenu {
 	 * Constructor.
 	 *
 	 * @param Settings                $settings    Plugin settings.
-	 * @param CacheStore              $store       Response store.
+	 * @param CachePurger             $purger      The one purge entry point (Purge all, AJAX purge).
 	 * @param CacheRuleRepository     $cache_rules Cache rules.
-	 * @param CacheStatsRepository    $stats       Cache statistics.
 	 * @param RateLimitRuleRepository $rl_rules    Rate-limit rules.
-	 * @param HitCounter              $hits        Rate-limit hits.
 	 * @param WebhookRepository       $webhooks    Webhooks.
 	 * @param DeliveryRepository      $deliveries  Delivery log.
 	 * @param WebhookDispatcher       $dispatcher  Webhook sender.
 	 * @param EventRegistry           $registry    Known events.
+	 * @param KpiCron                 $kpi_cron    The KPI writer Plugin::boot() registered (Refresh button, dashboard cards).
 	 */
 	public function __construct(
 		private readonly Settings $settings,
-		private readonly CacheStore $store,
+		private readonly CachePurger $purger,
 		private readonly CacheRuleRepository $cache_rules,
-		private readonly CacheStatsRepository $stats,
 		private readonly RateLimitRuleRepository $rl_rules,
-		private readonly HitCounter $hits,
 		private readonly WebhookRepository $webhooks,
 		private readonly DeliveryRepository $deliveries,
 		private readonly WebhookDispatcher $dispatcher,
-		private readonly EventRegistry $registry
+		private readonly EventRegistry $registry,
+		private readonly KpiCron $kpi_cron
 	) {
 		$this->upsell        = new ProUpsell();
 		$this->assets        = new Assets();
-		$this->kpi_cron      = new KpiCron( $this->stats, $this->deliveries, $this->hits );
-		$this->settings_page = new SettingsPage( $this->settings );
+		$this->settings_page = new SettingsPage( $this->settings, $this->upsell );
 		$this->pages         = [
-			DashboardPage::TAB => new DashboardPage( $this->cache_rules, $this->rl_rules, $this->webhooks, $this->deliveries, $this->kpi_cron ),
-			CachePage::TAB     => new CachePage( $this->cache_rules, $this->store, $this->upsell ),
+			DashboardPage::TAB => new DashboardPage( $this->cache_rules, $this->rl_rules, $this->webhooks, $this->deliveries, $this->kpi_cron, $this->upsell ),
+			CachePage::TAB     => new CachePage( $this->cache_rules, $this->purger, $this->upsell, $this->settings ),
 			RateLimitPage::TAB => new RateLimitPage( $this->rl_rules, $this->upsell ),
 			WebhookPage::TAB   => new WebhookPage( $this->webhooks, $this->deliveries, $this->dispatcher, $this->registry, $this->upsell ),
 			SettingsPage::TAB  => $this->settings_page,
@@ -160,15 +157,6 @@ final class AdminMenu {
 			self::MENU_SLUG,
 			[ $this, 'render' ]
 		);
-	}
-
-	/**
-	 * A base page by tab id.
-	 *
-	 * @param string $tab Tab id.
-	 */
-	public function page( string $tab ): Page {
-		return $this->pages[ $tab ];
 	}
 
 	/**
@@ -321,31 +309,35 @@ final class AdminMenu {
 	 */
 	public function notices(): array {
 		$messages = [
-			'error'                 => [ 'error', __( 'That did not work. Please try again.', 'bluefairy-api-gateway' ) ],
-			'cache_saved'           => [ 'success', __( 'Cache rule saved.', 'bluefairy-api-gateway' ) ],
-			'cache_invalid'         => [ 'error', __( 'Cache rule not saved: check the route glob (letters, digits, / * ? . - _).', 'bluefairy-api-gateway' ) ],
-			'cache_limit'           => [ 'error', __( 'Cache rule not added: the free plugin allows one rule.', 'bluefairy-api-gateway' ) ],
-			'cache_deleted'         => [ 'success', __( 'Cache rule deleted.', 'bluefairy-api-gateway' ) ],
-			'cache_not_found'       => [ 'error', __( 'That cache rule no longer exists.', 'bluefairy-api-gateway' ) ],
-			'cache_toggled'         => [ 'success', __( 'Cache rule updated.', 'bluefairy-api-gateway' ) ],
-			'cache_purged'          => [ 'success', __( 'Response cache purged.', 'bluefairy-api-gateway' ) ],
-			'ratelimit_saved'       => [ 'success', __( 'Rate-limit rule saved.', 'bluefairy-api-gateway' ) ],
-			'ratelimit_invalid'     => [ 'error', __( 'Rate-limit rule not saved: check the subject type, route glob, requests (1–65535) and window (1–86400 seconds).', 'bluefairy-api-gateway' ) ],
-			'ratelimit_limit'       => [ 'error', __( 'Rate-limit rule not added: the free plugin allows one rule.', 'bluefairy-api-gateway' ) ],
-			'ratelimit_deleted'     => [ 'success', __( 'Rate-limit rule deleted.', 'bluefairy-api-gateway' ) ],
-			'ratelimit_not_found'   => [ 'error', __( 'That rate-limit rule no longer exists.', 'bluefairy-api-gateway' ) ],
-			'ratelimit_toggled'     => [ 'success', __( 'Rate-limit rule updated.', 'bluefairy-api-gateway' ) ],
-			'webhook_saved'         => [ 'success', __( 'Webhook saved.', 'bluefairy-api-gateway' ) ],
-			'webhook_invalid'       => [ 'error', __( 'Webhook not saved: it needs a label, an https URL and a known event.', 'bluefairy-api-gateway' ) ],
-			'webhook_event_unknown' => [ 'error', __( 'Webhook not saved: that event is not available.', 'bluefairy-api-gateway' ) ],
-			'webhook_limit'         => [ 'error', __( 'Webhook not added: the free plugin allows three webhooks.', 'bluefairy-api-gateway' ) ],
-			'webhook_deleted'       => [ 'success', __( 'Webhook and its delivery log deleted.', 'bluefairy-api-gateway' ) ],
-			'webhook_not_found'     => [ 'error', __( 'That webhook no longer exists.', 'bluefairy-api-gateway' ) ],
-			'webhook_toggled'       => [ 'success', __( 'Webhook updated.', 'bluefairy-api-gateway' ) ],
-			'webhook_secret_shown'  => [ 'success', __( 'Webhook saved. Its signing secret is shown below — copy it into your receiver now; it is not shown again.', 'bluefairy-api-gateway' ) ],
-			'webhook_test_ok'       => [ 'success', __( 'Test delivery succeeded. The receiver\'s response is in the delivery log.', 'bluefairy-api-gateway' ) ],
-			'webhook_test_failed'   => [ 'error', __( 'Test delivery failed. The receiver\'s response is in the delivery log.', 'bluefairy-api-gateway' ) ],
-			'settings_saved'        => [ 'success', __( 'Settings saved.', 'bluefairy-api-gateway' ) ],
+			'error'                   => [ 'error', __( 'That did not work. Please try again.', 'bluefairy-api-gateway' ) ],
+			'cache_saved'             => [ 'success', __( 'Cache rule saved.', 'bluefairy-api-gateway' ) ],
+			'cache_invalid'           => [ 'error', __( 'Cache rule not saved: the route glob may contain only letters, digits and / * ? . - _ % : @ = & + ~ (up to 500 characters). Your entries are kept in the form below.', 'bluefairy-api-gateway' ) ],
+			'cache_limit'             => [ 'error', __( 'Cache rule not added: the free plugin allows one rule.', 'bluefairy-api-gateway' ) ],
+			'cache_deleted'           => [ 'success', __( 'Cache rule deleted.', 'bluefairy-api-gateway' ) ],
+			'cache_not_found'         => [ 'error', __( 'That cache rule no longer exists.', 'bluefairy-api-gateway' ) ],
+			'cache_toggled'           => [ 'success', __( 'Cache rule updated.', 'bluefairy-api-gateway' ) ],
+			'cache_purged'            => [ 'success', __( 'Response cache purged.', 'bluefairy-api-gateway' ) ],
+			'ratelimit_saved'         => [ 'success', __( 'Rate-limit rule saved.', 'bluefairy-api-gateway' ) ],
+			'ratelimit_invalid'       => [ 'error', __( 'Rate-limit rule not saved: that "Count by" subject type is not available (per-user and per-API-key limits need the Pro add-on). Your entries are kept in the form below.', 'bluefairy-api-gateway' ) ],
+			'ratelimit_glob_invalid'  => [ 'error', __( 'Rate-limit rule not saved: the route glob may contain only letters, digits and / * ? . - _ % : @ = & + ~ (up to 500 characters). Your entries are kept in the form below.', 'bluefairy-api-gateway' ) ],
+			'ratelimit_range_invalid' => [ 'error', __( 'Rate-limit rule not saved: requests must be 1–65535, the window 1–86400 seconds and the penalty 0–2592000 seconds. Your entries are kept in the form below.', 'bluefairy-api-gateway' ) ],
+			'ratelimit_limit'         => [ 'error', __( 'Rate-limit rule not added: the free plugin allows one rule.', 'bluefairy-api-gateway' ) ],
+			'ratelimit_deleted'       => [ 'success', __( 'Rate-limit rule deleted.', 'bluefairy-api-gateway' ) ],
+			'ratelimit_not_found'     => [ 'error', __( 'That rate-limit rule no longer exists.', 'bluefairy-api-gateway' ) ],
+			'ratelimit_toggled'       => [ 'success', __( 'Rate-limit rule updated.', 'bluefairy-api-gateway' ) ],
+			'webhook_saved'           => [ 'success', __( 'Webhook saved.', 'bluefairy-api-gateway' ) ],
+			'webhook_invalid'         => [ 'error', __( 'Webhook not saved: check the extra headers (one Name: value per line) and the secret (255 characters at most). Your entries are kept in the form below.', 'bluefairy-api-gateway' ) ],
+			'webhook_url_invalid'     => [ 'error', __( 'URL refused: it must start with https:// and resolve to a public address (localhost, 127.0.0.1, private ranges and non-standard ports are refused). Your entries are kept in the form below.', 'bluefairy-api-gateway' ) ],
+			'webhook_label_invalid'   => [ 'error', __( 'Webhook not saved: the label must be 1–200 characters. Your entries are kept in the form below.', 'bluefairy-api-gateway' ) ],
+			'webhook_event_invalid'   => [ 'error', __( 'Webhook not saved: choose an event from the list (a WooCommerce event disappears when WooCommerce is deactivated). Your entries are kept in the form below.', 'bluefairy-api-gateway' ) ],
+			'webhook_limit'           => [ 'error', __( 'Webhook not added: the free plugin allows three webhooks.', 'bluefairy-api-gateway' ) ],
+			'webhook_deleted'         => [ 'success', __( 'Webhook and its delivery log deleted.', 'bluefairy-api-gateway' ) ],
+			'webhook_not_found'       => [ 'error', __( 'That webhook no longer exists.', 'bluefairy-api-gateway' ) ],
+			'webhook_toggled'         => [ 'success', __( 'Webhook updated.', 'bluefairy-api-gateway' ) ],
+			'webhook_secret_shown'    => [ 'success', __( 'Webhook saved. Its signing secret is shown below — copy it into your receiver now; it is not shown again.', 'bluefairy-api-gateway' ) ],
+			'webhook_test_ok'         => [ 'success', __( 'Test delivery succeeded. The receiver\'s response is in the delivery log.', 'bluefairy-api-gateway' ) ],
+			'webhook_test_failed'     => [ 'error', __( 'Test delivery failed. The receiver\'s response is in the delivery log.', 'bluefairy-api-gateway' ) ],
+			'settings_saved'          => [ 'success', __( 'Settings saved.', 'bluefairy-api-gateway' ) ],
 		];
 
 		/**
@@ -507,11 +499,9 @@ final class AdminMenu {
 			);
 		}
 		if ( [] === $tags ) {
-			$this->store->flush_all();
-			do_action( 'bfag_cache_purged', 'all', [] );
+			$this->purger->purge_all();
 		} else {
-			$this->store->bump_tags( $tags );
-			do_action( 'bfag_cache_purged', 'tags', $tags );
+			$tags = $this->purger->purge_tags( $tags );
 		}
 		wp_send_json_success(
 			[
@@ -534,6 +524,8 @@ final class AdminMenu {
 
 	/**
 	 * Hooked to wp_ajax_bfag_ajax_retry_webhook: redeliver one delivery.
+	 * Only a `failed` or `retrying` outbound row can be retried (U-10); a
+	 * successful or in-flight one is refused with 400.
 	 */
 	public function ajax_retry_webhook(): void {
 		check_ajax_referer( 'bfag_ajax_retry_webhook', 'nonce' );
@@ -544,6 +536,9 @@ final class AdminMenu {
 		$delivery    = $delivery_id > 0 ? $this->deliveries->find( $delivery_id ) : null;
 		if ( null === $delivery ) {
 			wp_send_json_error( [ 'message' => __( 'Delivery not found.', 'bluefairy-api-gateway' ) ], 404 );
+		}
+		if ( ! in_array( (string) ( $delivery['status'] ?? '' ), self::RETRYABLE_STATUSES, true ) || 'out' !== (string) ( $delivery['direction'] ?? '' ) ) {
+			wp_send_json_error( [ 'message' => __( 'Only a failed outgoing delivery can be retried.', 'bluefairy-api-gateway' ) ], 400 );
 		}
 		$webhook = $this->webhooks->find( (int) $delivery['webhook_id'] );
 		if ( null === $webhook ) {

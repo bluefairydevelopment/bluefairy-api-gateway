@@ -13,13 +13,17 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
+use BlueFairy\ApiGateway\Cache\CachePurger;
 use BlueFairy\ApiGateway\Cache\CacheStore;
 use BlueFairy\ApiGateway\Capabilities;
 
 /**
  * Purge the response cache: `tags` (array) bumps those tags, no tags
- * flushes everything. Gated by the manage capability (and, with Pro, by
- * the `cache:purge` API-key scope).
+ * flushes everything. Gated by Capabilities::request_allowed(): the manage
+ * capability, or an API key (Pro) whose scope satisfies `cache:purge`,
+ * bound to a user or not (N3). The purge itself goes through CachePurger,
+ * the one entry point (F11), so a tag no enabled rule carries is dropped
+ * and logged here exactly as it is on the Cache tab.
  */
 final class CacheController {
 
@@ -28,9 +32,9 @@ final class CacheController {
 	/**
 	 * Constructor.
 	 *
-	 * @param CacheStore $store Response store.
+	 * @param CachePurger $purger The one purge entry point.
 	 */
-	public function __construct( private readonly CacheStore $store ) {}
+	public function __construct( private readonly CachePurger $purger ) {}
 
 	/**
 	 * Hooked to rest_api_init.
@@ -57,10 +61,12 @@ final class CacheController {
 	}
 
 	/**
-	 * Only a gateway manager may purge.
+	 * A gateway manager, or an API key holding `cache:purge`, may purge.
+	 *
+	 * @param \WP_REST_Request $request The request.
 	 */
-	public function permission(): bool {
-		return Capabilities::current_user_can_manage();
+	public function permission( \WP_REST_Request $request ): bool {
+		return Capabilities::request_allowed( $request );
 	}
 
 	/**
@@ -98,19 +104,9 @@ final class CacheController {
 	public function purge( \WP_REST_Request $request ): \WP_REST_Response {
 		$tags = $this->sanitize_tags( $request->get_param( 'tags' ) );
 		if ( [] === $tags ) {
-			$this->store->flush_all();
-			/**
-			 * The response cache was purged.
-			 *
-			 * @since 1.0.0
-			 *
-			 * @param string   $scope 'all' or 'tags'.
-			 * @param string[] $tags  The tags bumped, empty for 'all'.
-			 */
-			do_action( 'bfag_cache_purged', 'all', [] );
+			$this->purger->purge_all();
 		} else {
-			$this->store->bump_tags( $tags );
-			do_action( 'bfag_cache_purged', 'tags', $tags );
+			$tags = $this->purger->purge_tags( $tags );
 		}
 		return new \WP_REST_Response(
 			[

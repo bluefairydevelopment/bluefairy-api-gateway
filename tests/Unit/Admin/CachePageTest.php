@@ -9,9 +9,11 @@ namespace BlueFairy\ApiGateway\Tests\Unit\Admin;
 
 use BlueFairy\ApiGateway\Admin\CachePage;
 use BlueFairy\ApiGateway\Admin\ProUpsell;
+use BlueFairy\ApiGateway\Cache\CachePurger;
 use BlueFairy\ApiGateway\Cache\CacheRuleRepository;
 use BlueFairy\ApiGateway\Cache\CacheStore;
 use BlueFairy\ApiGateway\Capabilities;
+use BlueFairy\ApiGateway\Settings;
 use BlueFairy\ApiGateway\Tests\TestCase;
 
 final class CachePageTest extends TestCase {
@@ -25,7 +27,7 @@ final class CachePageTest extends TestCase {
 	}
 
 	private function page(): CachePage {
-		return new CachePage( new CacheRuleRepository(), $this->store, new ProUpsell() );
+		return new CachePage( new CacheRuleRepository(), new CachePurger( $this->store, new CacheRuleRepository() ), new ProUpsell(), new Settings() );
 	}
 
 	/**
@@ -72,7 +74,7 @@ final class CachePageTest extends TestCase {
 		$this->assertSame( 'https://example.com/wp-admin/options-general.php?page=bfag-gateway&tab=cache&bfag_action=delete_cache_rule&id=4&_wpnonce=nonce-bfag_delete_cache_rule', $page->action_url( 'delete_cache_rule', 4 ) );
 	}
 
-	public function test_render_lists_rules_escaped_with_the_form_and_fires_the_after_hook_after_the_table(): void {
+	public function test_render_lists_rules_escaped_with_the_form_and_fires_the_after_hook_after_the_form(): void {
 		$this->prime_render( [ $this->rule() ] );
 		add_filter( 'bfag_cache_rule_limit', static fn(): int => 5 );
 		$marker = '<!-- after -->';
@@ -106,7 +108,58 @@ final class CachePageTest extends TestCase {
 		$this->assertNotFalse( $table );
 		$this->assertNotFalse( $after );
 		$this->assertNotFalse( $form );
-		$this->assertTrue( $table < $after && $after < $form, 'the hook fires after the table and before the form' );
+		$this->assertTrue( $table < $form && $form < $after, 'U-20: the hook fires after the table AND after the form' );
+	}
+
+	/**
+	 * U-09: the "New-rule TTL" setting pre-fills the add form; a rule being
+	 * edited keeps its own TTL.
+	 */
+	public function test_the_add_form_ttl_is_prefilled_from_the_setting_and_an_edited_rule_keeps_its_own(): void {
+		update_option( 'bfag_settings', [ 'default_cache_ttl' => 450 ] );
+		$this->prime_render( [] );
+		$html = bfag_test_render( [ $this->page(), 'render' ] );
+		$this->assertStringContainsString( 'name="bfag[ttl_seconds]" class="small-text" min="1" max="86400" required value="450"', $html );
+
+		$_GET = [
+			'action' => 'edit',
+			'id'     => '1',
+		];
+		$this->prime_render( [ $this->rule( 1, ttl: 120 ) ], $this->rule( 1, ttl: 120 ) );
+		$html = bfag_test_render( [ $this->page(), 'render' ] );
+		$this->assertStringContainsString( 'required value="120"', $html );
+		$this->assertStringNotContainsString( 'required value="450"', $html );
+	}
+
+	/**
+	 * U-11: a refused save keeps what was typed for exactly one re-render.
+	 */
+	public function test_a_failed_save_refills_the_form_once_with_what_was_typed(): void {
+		bfag_test_admin_request(
+			'save_cache_rule',
+			[
+				'label'       => 'Typed label',
+				'route_glob'  => 'wp/v2/(posts|pages)',
+				'ttl_seconds' => '77',
+				'tags'        => 'kept',
+			]
+		);
+		$location = $this->redirect_of( [ $this->page(), 'handle_actions' ] );
+		$this->assertStringEndsWith( '&bfag_notice=cache_invalid', $location );
+		$this->assertIsArray( get_transient( 'bfag_form_' . get_current_user_id() ) );
+
+		$this->prime_render( [] );
+		$html = bfag_test_render( [ $this->page(), 'render' ] );
+		$this->assertStringContainsString( 'value="Typed label"', $html );
+		$this->assertStringContainsString( 'value="wp/v2/(posts|pages)"', $html );
+		$this->assertStringContainsString( 'required value="77"', $html );
+		$this->assertStringContainsString( 'value="kept"', $html );
+		$this->assertFalse( get_transient( 'bfag_form_' . get_current_user_id() ), 'deleted on read' );
+
+		$this->prime_render( [] );
+		$html = bfag_test_render( [ $this->page(), 'render' ] );
+		$this->assertStringNotContainsString( 'Typed label', $html, 'shown once' );
+		$this->assertStringContainsString( 'required value="60"', $html, 'back to the setting' );
 	}
 
 	public function test_at_the_limit_the_add_form_gives_way_to_the_upsell_line(): void {

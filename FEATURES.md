@@ -24,16 +24,16 @@ recomputes, so opening the dashboard never runs aggregate queries itself.
 |---|---|---|
 | **Cache hit rate (24 h)** | hits ÷ (hits + misses) over the last 24 hours, as a percentage | `N hits · M misses` |
 | **Webhook success (24 h)** | successful ÷ (successful + failed) deliveries over the last 24 hours | `F failed of T` — T counts pending and retrying deliveries too |
-| **Blocked today** | always `0` in the free plugin — the Pro add-on's ban list fills it in | `R hits in the rate-limit log` — the row count of the hits table, as of the last KPI run |
+| **Blocked (Pro)** / **Active bans** | without Pro the card shows `—` and says *Bans need the Pro add-on*; with Pro it is the number of addresses currently banned (the KPI array may rename it through `blocked_label`) | with Pro: `R hits in the rate-limit log` — the row count of the hits table, as of the last KPI run |
 
 A card shows `—` when there is nothing to divide: no requests, or no finished
 deliveries. Below the cards, **Refresh** recomputes the figures immediately
 (the sub-line says *Updated N ago*, or *Not computed yet* before the first
-cron run).
+cron run, and *Updated just now* once Refresh has answered).
 
 **Recent failed deliveries** lists the ten newest deliveries with status
 `failed`: webhook, event, HTTP status (`—` for a transport error), attempt
-number, time, and a **Retry** button that resends the stored payload. A
+number, time (in the site's timezone and formats — the header says *site time*), and a **Retry** button that resends the stored payload. A
 delivery whose stored payload was truncated shows *Truncated — cannot retry*
 instead. *Open the delivery log* goes to the full log on the Webhooks tab.
 
@@ -301,7 +301,7 @@ Deleting a webhook deletes its delivery log with it, inside one transaction.
 | **Signing secret** | Leave blank on creation and a random 64-character hexadecimal secret is generated and **shown to you once**, on the Webhooks tab right after saving, in a box with a **Copy** button — copy it into your receiver then, because the stored secret is never displayed again. Or set your own (up to 255 characters). On edit, blank keeps the current secret; **Generate a new secret** replaces it — deliveries fail at the receiver until it is updated there — and the new secret is shown once after saving in the same way. |
 | **Extra headers** | One per line as `Name: value`. Only entries whose name is `[A-Za-z0-9-]` are shown here or read from here; anything else stored on the webhook (a Pro preset's configuration, which holds its credentials) is neither displayed nor touched by an edit. Sent with every delivery after sanitising: names must be `[A-Za-z0-9-]`; `Host`, `Content-Length`, `Transfer-Encoding`, `Connection`, `Cookie`, `Authorization`, `Proxy-Authorization` and anything beginning `X-Forwarded-` are dropped, as is any value containing a line break, and any name the plugin sets itself (`Content-Type`, `User-Agent`, `X-BF-*`). Each rejection is logged when debug logging is on. |
 | **Preset** | Appears only with the Pro add-on. |
-| **Max retries** | Appears only with the Pro add-on (stored as 3 otherwise). |
+| **Max retries** | Appears only with the Pro add-on (stored as 3 otherwise). Its help text: *Automatic retries after a failed delivery (Pro). 0 = none.* |
 | **Enabled** | *Deliver this webhook.* |
 
 *Webhook not saved: it needs a label, an https URL and a known event* is what
@@ -475,8 +475,11 @@ no answer within ten seconds, marks it `failed`.
 ### The delivery log
 
 Columns: id, webhook, event, status badge (`pending`, `success`, `failed`;
-`retrying` with Pro), HTTP status, attempt, created, delivered, and a
-**Retry** button on outgoing deliveries that were not truncated. Under every
+`retrying` with Pro), HTTP status, attempt, created, delivered (both in the
+site's timezone and formats — the headers say *site time*), and a
+**Retry** button on outgoing `failed` (or Pro `retrying`) deliveries that were
+not truncated — never on a successful or in-flight one, and the server refuses
+such a retry with a 400 even if asked directly. Under every
 finished row a **Response** disclosure opens the HTTP status and the response
 body. Fifty rows, newest first; filtered to one webhook when you arrive from
 its row.
@@ -492,6 +495,9 @@ its row.
 
 ### General
 
+This group appears only with the Pro add-on: nothing in the free plugin reads
+its two fields, so they are kept as hidden values rather than shown.
+
 | Field | Behaviour |
 |---|---|
 | **Notification email** | Where the Pro add-on's failure alerts are sent. The free plugin stores the address and sends nothing. (The field's note says a blank falls back to the site admin email; the Pro notifier in fact sends nothing when the field is blank or invalid.) |
@@ -502,7 +508,7 @@ its row.
 | Field | Behaviour |
 |---|---|
 | **Enable response cache** | Serve anonymous GET responses from the cache when a rule matches. Off: every response is `BYPASS`. |
-| **Default TTL (seconds)** | 1–86400. Used when the matching rule's TTL is below 1. |
+| **New-rule TTL (seconds)** | 1–86400. Pre-fills the TTL of a new cache rule in the add form. It is not a fallback: every rule carries its own TTL once saved, and the rule's TTL is the TTL. |
 
 ### Rate limit
 
@@ -635,8 +641,7 @@ shared instances (`settings`, `request`, `cache.store`, `cache.rules`,
 | `bfag_webhook_limit` | filter | `( int $limit = 3 )` | Maximum number of webhooks. |
 | `bfag_webhook_events` | filter | `( array $events )` | Add events: `key => [ 'hook' => string, 'label' => string, 'accepted_args' => int, 'group' => string ]`. An add-on event's payload object is `[ 'id' => <first integer hook argument> ]` until `bfag_webhook_payload` fills it in. |
 | `bfag_webhook_payload` | filter | `( array\|null $payload, string $event, array $hook_args )` | The payload before it is signed and sent. Return `null` to suppress the delivery. |
-| `bfag_webhook_request_args` | filter | `( array $args, array $webhook, string $event, array $payload )` | The `wp_remote_post()` arguments. May rewrite `body` and `headers` and set `url` to redirect the delivery. |
-| `bfag_webhook_auth_headers` | filter | `( array $headers = [], array $webhook )` | Credential headers to add. The only place an `Authorization` or `Proxy-Authorization` header is accepted. |
+| `bfag_webhook_request_args` | filter | `( array $args, array $webhook, string $event, array $payload )` | The `wp_remote_post()` arguments. May rewrite `body` and `headers`, set `url` to redirect the delivery, and set `headers['Authorization']` — the only place a credential header is accepted. The filter is trusted for credentials, not for transport: after it runs the headers are sanitised again, so a `Host`, `X-Forwarded-*` or line-break value it plants is dropped. Set `$args['bfag_skip']` to a non-empty string to cancel the delivery: it is logged as `failed` with that string as the response body, nothing is sent, and `bfag_webhook_delivery_failed` fires. |
 | `bfag_webhook_allow_http` | filter | `( bool $allow = false )` | Permit `http://` targets (local development only). |
 | `bfag_webhook_delivery_failed` | action | `( int $delivery_id, array $webhook, int $attempt, int\|null $http_status )` | A delivery got a non-2xx answer or a transport error (`$http_status` null). Pro schedules retries and alerts from here. |
 | `bfag_webhook_delivered` | action | `( int $delivery_id, array $webhook )` | A delivery succeeded. |
@@ -647,11 +652,11 @@ shared instances (`settings`, `request`, `cache.store`, `cache.rules`,
 |---|---|---|---|
 | `bfag_admin_tabs` | filter | `( array $tabs )` | Add tabs: `id => [ 'label' => string, 'page' => object with render(): void and handle_actions(): void ]`. |
 | `bfag_dashboard_kpis` | filter | `( array $kpis )` | Add or change dashboard figures before they are stored. |
-| `bfag_kpi_blocked_today` | filter | `( int $blocked = 0 )` | The *Blocked today* card. |
+| `bfag_kpi_blocked_today` | filter | `( int $blocked = 0 )` | The *Active bans* card (Pro). Without Pro the dashboard shows *Blocked (Pro)* instead. `bfag_dashboard_kpis` may add `blocked_label` to rename the card. |
 | `bfag_settings_fields` | action | `( Settings $settings )` | Render extra `<tr>` rows inside the Settings form table. |
 | `bfag_settings_saved` | action | `( array $clean, array $raw )` | After the base settings are stored; `$raw` is the whole unslashed `$_POST`. |
-| `bfag_cache_page_after` | action | `()` | Render below the cache rules table. |
-| `bfag_ratelimit_page_after` | action | `()` | Render below the rate-limit rules table. |
+| `bfag_cache_page_after` | action | `()` | Render below the cache rules table and its add/edit form. |
+| `bfag_ratelimit_page_after` | action | `()` | Render below the rate-limit rules table and its add/edit form. |
 | `bfag_webhook_form_fields` | action | `( array $webhook )` | Extra rows in the add/edit webhook form; `$webhook` never contains the secret. |
 | `bfag_webhook_presets` | filter | `( array $presets = [] )` | `slug => label`. Non-empty makes the form show a **Preset** select and store the choice. |
 | `bfag_webhook_sanitize` | filter | `( array $data, array $raw )` | Sanitise your own form fields into the columns about to be stored. |
@@ -684,7 +689,15 @@ does not imply `read`, and neither implies `cache:purge`. A key acts as the
 user it is bound to, so `write` on an administrator's key is as powerful as that
 administrator's REST access: grant it only to integrations that must change
 content. `Capabilities::SCOPES` lists the tokens and `Capabilities::SCOPE_LABELS`
-their one-line descriptions, which the Pro add-on's API-key form shows.
+their one-line descriptions, which the Pro add-on's API-key form shows
+(`Capabilities::scope_label()` is the translatable twin).
+
+The gateway's own two routes use `Capabilities::request_allowed( $request )`
+as their permission callback: the `bfag_manage_gateway` capability passes, and
+so does a request the Pro add-on authenticated with an API key whose scope
+covers the route (`cache:purge` for the purge endpoint, `read` for status) —
+even a key bound to *Nobody*. The add-on sets the key's scope on the request as
+the `bfag_api_key_scope` parameter.
 
 ---
 
@@ -712,7 +725,7 @@ plugin keeps doing exactly what it does now.
 | Penalty: ban an IP for N seconds when it breaches a rule | Yes | — |
 | DDoS auto-ban across all routes, with an allow-list | Yes | — |
 | Blocked IPs panel — see, lift and add bans by hand | Yes | — |
-| *Blocked today* dashboard card | Live count | Always 0 |
+| *Active bans* dashboard card | Live count of banned addresses | *Blocked (Pro)* placeholder |
 | Forwarded-IP resolution behind trusted proxies | Yes | Yes |
 | Signed outbound webhooks (`X-BF-Signature`, HMAC-SHA256) | Yes | Yes |
 | Webhooks | Up to 500 | 3 |

@@ -14,6 +14,12 @@
 declare(strict_types=1);
 
 defined( 'ABSPATH' ) || exit;
+
+$bfag_subject_labels = [
+	'ip'     => __( 'IP address', 'bluefairy-api-gateway' ),
+	'user'   => __( 'Logged-in user', 'bluefairy-api-gateway' ),
+	'apikey' => __( 'API key', 'bluefairy-api-gateway' ),
+];
 ?>
 <div class="bfag-toolbar">
 	<h2><?php esc_html_e( 'Rate-limit rules', 'bluefairy-api-gateway' ); ?></h2>
@@ -33,17 +39,18 @@ defined( 'ABSPATH' ) || exit;
 <p class="description"><?php esc_html_e( 'The seeded Global per-IP limit (300 requests per 60 s) is a sensible ceiling for anonymous API traffic from one address; lower it for a public site, raise it for a headless front end that calls from one server. Logged-in users who can edit posts are exempt unless you untick that under Settings.', 'bluefairy-api-gateway' ); ?></p>
 
 <table class="widefat striped bfag-table">
+	<caption class="screen-reader-text"><?php esc_html_e( 'Rate-limit rules', 'bluefairy-api-gateway' ); ?></caption>
 	<thead>
 		<tr>
-			<th><?php esc_html_e( 'Label', 'bluefairy-api-gateway' ); ?></th>
-			<th><?php esc_html_e( 'Subject', 'bluefairy-api-gateway' ); ?></th>
-			<th><?php esc_html_e( 'Route glob', 'bluefairy-api-gateway' ); ?></th>
-			<th><?php esc_html_e( 'Limit', 'bluefairy-api-gateway' ); ?></th>
+			<th scope="col"><?php esc_html_e( 'Label', 'bluefairy-api-gateway' ); ?></th>
+			<th scope="col"><?php esc_html_e( 'Count by', 'bluefairy-api-gateway' ); ?></th>
+			<th scope="col"><?php esc_html_e( 'Route glob', 'bluefairy-api-gateway' ); ?></th>
+			<th scope="col"><?php esc_html_e( 'Limit', 'bluefairy-api-gateway' ); ?></th>
 			<?php if ( $is_pro ) : ?>
-				<th><?php esc_html_e( 'Penalty', 'bluefairy-api-gateway' ); ?></th>
+				<th scope="col"><?php esc_html_e( 'Penalty', 'bluefairy-api-gateway' ); ?></th>
 			<?php endif; ?>
-			<th><?php esc_html_e( 'Enabled', 'bluefairy-api-gateway' ); ?></th>
-			<th><?php esc_html_e( 'Actions', 'bluefairy-api-gateway' ); ?></th>
+			<th scope="col"><?php esc_html_e( 'Enabled', 'bluefairy-api-gateway' ); ?></th>
+			<th scope="col"><?php esc_html_e( 'Actions', 'bluefairy-api-gateway' ); ?></th>
 		</tr>
 	</thead>
 	<tbody>
@@ -63,7 +70,7 @@ defined( 'ABSPATH' ) || exit;
 			?>
 			<tr>
 				<td><strong><?php echo esc_html( (string) $bfag_rule['label'] ); ?></strong></td>
-				<td><?php echo esc_html( (string) $bfag_rule['subject_type'] ); ?></td>
+				<td><?php echo esc_html( $bfag_subject_labels[ (string) $bfag_rule['subject_type'] ] ?? (string) $bfag_rule['subject_type'] ); ?></td>
 				<td><code><?php echo esc_html( (string) $bfag_rule['route_glob'] ); ?></code></td>
 				<td>
 					<?php
@@ -89,6 +96,7 @@ defined( 'ABSPATH' ) || exit;
 				<td>
 					<a href="<?php echo esc_url( $page->action_url( 'toggle_rate_limit_rule', $bfag_id, [ 'enabled' => $bfag_enabled ? 0 : 1 ] ) ); ?>"
 						class="bfag-badge <?php echo $bfag_enabled ? 'bfag-badge--success' : 'bfag-badge--muted'; ?>"
+						role="button" aria-pressed="<?php echo $bfag_enabled ? 'true' : 'false'; ?>" title="<?php $bfag_enabled ? esc_attr_e( 'Click to disable this rule', 'bluefairy-api-gateway' ) : esc_attr_e( 'Click to enable this rule', 'bluefairy-api-gateway' ); ?>"
 						data-bfag-toggle="ratelimit" data-bfag-id="<?php echo esc_attr( (string) $bfag_id ); ?>" data-bfag-enabled="<?php echo $bfag_enabled ? '1' : '0'; ?>">
 						<?php $bfag_enabled ? esc_html_e( 'Enabled', 'bluefairy-api-gateway' ) : esc_html_e( 'Disabled', 'bluefairy-api-gateway' ); ?>
 					</a>

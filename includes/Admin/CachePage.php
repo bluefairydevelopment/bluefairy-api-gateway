@@ -13,8 +13,9 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
+use BlueFairy\ApiGateway\Cache\CachePurger;
 use BlueFairy\ApiGateway\Cache\CacheRuleRepository;
-use BlueFairy\ApiGateway\Cache\CacheStore;
+use BlueFairy\ApiGateway\Settings;
 
 /**
  * Rules table, add/edit form, delete, toggle and Purge all.
@@ -30,14 +31,16 @@ final class CachePage extends Page {
 	/**
 	 * Constructor.
 	 *
-	 * @param CacheRuleRepository $rules  Cache rules.
-	 * @param CacheStore          $store  Response store (Purge all).
-	 * @param ProUpsell           $upsell Pro state and copy.
+	 * @param CacheRuleRepository $rules    Cache rules.
+	 * @param CachePurger         $purger   The one purge entry point (Purge all).
+	 * @param ProUpsell           $upsell   Pro state and copy.
+	 * @param Settings            $settings `default_cache_ttl` pre-fills the add form (U-09).
 	 */
 	public function __construct(
 		private readonly CacheRuleRepository $rules,
-		private readonly CacheStore $store,
-		private readonly ProUpsell $upsell
+		private readonly CachePurger $purger,
+		private readonly ProUpsell $upsell,
+		private readonly Settings $settings
 	) {}
 
 	/**
@@ -81,33 +84,34 @@ final class CachePage extends Page {
 			]
 		);
 
+		if ( null === $editing && $at_limit ) {
+			echo '<p class="bfag-limit-line">' . esc_html( $this->upsell->limit_line( sprintf( /* translators: %d: number of rules */ _n( '%d cache rule', '%d cache rules', $limit, 'bluefairy-api-gateway' ), $limit ) ) ) . '</p>';
+		} else {
+			// A failed save re-fills the form once with what was typed (U-11); otherwise the row, or the defaults.
+			$rule = $editing ?? [
+				'id'          => 0,
+				'label'       => '',
+				'route_glob'  => '',
+				'ttl_seconds' => (int) $this->settings->get( 'default_cache_ttl' ),
+				'tags'        => '',
+				'enabled'     => 1,
+			];
+			$this->view(
+				'cache-form',
+				[
+					'rule'       => array_merge( $rule, self::take_form() ?? [] ),
+					'form_url'   => $this->url(),
+					'cancel_url' => $this->url(),
+				]
+			);
+		}
+
 		/**
-		 * Rendered below the cache rules table.
+		 * Rendered below the cache rules table and the add/edit form (U-20).
 		 *
 		 * @since 1.0.0
 		 */
 		do_action( 'bfag_cache_page_after' );
-
-		if ( null === $editing && $at_limit ) {
-			echo '<p class="bfag-limit-line">' . esc_html( $this->upsell->limit_line( sprintf( /* translators: %d: number of rules */ _n( '%d cache rule', '%d cache rules', $limit, 'bluefairy-api-gateway' ), $limit ) ) ) . '</p>';
-			return;
-		}
-
-		$this->view(
-			'cache-form',
-			[
-				'rule'       => $editing ?? [
-					'id'          => 0,
-					'label'       => '',
-					'route_glob'  => '',
-					'ttl_seconds' => 60,
-					'tags'        => '',
-					'enabled'     => 1,
-				],
-				'form_url'   => $this->url(),
-				'cancel_url' => $this->url(),
-			]
-		);
 	}
 
 	/**
@@ -138,16 +142,7 @@ final class CachePage extends Page {
 				$this->redirect( $this->rules->set_enabled( $id, self::flag( $fields, 'enabled' ) ) ? 'cache_toggled' : 'error' );
 				// Unreachable.
 			case 'purge_cache':
-				$this->store->flush_all();
-				/**
-				 * The response cache was purged.
-				 *
-				 * @since 1.0.0
-				 *
-				 * @param string   $scope 'all' or 'tags'.
-				 * @param string[] $tags  The tags bumped, empty for 'all'.
-				 */
-				do_action( 'bfag_cache_purged', 'all', [] );
+				$this->purger->purge_all();
 				$this->redirect( 'cache_purged' );
 				// Unreachable.
 			default:
@@ -174,13 +169,38 @@ final class CachePage extends Page {
 			if ( null === $this->rules->find( $id ) ) {
 				$this->redirect( 'cache_not_found' );
 			}
-			$this->redirect( $this->rules->update( $id, $data ) ? 'cache_saved' : 'cache_invalid' );
+			if ( ! $this->rules->update( $id, $data ) ) {
+				$this->fail( 'cache_invalid', $id, $fields );
+			}
+			$this->redirect( 'cache_saved' );
 		}
 
 		if ( $this->rules->count() >= $this->rules->limit() ) {
 			$this->redirect( 'cache_limit' );
 		}
-		$created = $this->rules->create( $data );
-		$this->redirect( false === $created ? 'cache_invalid' : 'cache_saved' );
+		if ( false === $this->rules->create( $data ) ) {
+			$this->fail( 'cache_invalid', 0, $fields );
+		}
+		$this->redirect( 'cache_saved' );
+	}
+
+	/**
+	 * A refused save: keep what was typed for one re-render and go back to
+	 * the form (the edit form when a row was being edited).
+	 *
+	 * @param string               $notice Notice code.
+	 * @param int                  $id     Rule id being edited, 0 when adding.
+	 * @param array<string, mixed> $fields The submitted fields.
+	 */
+	private function fail( string $notice, int $id, array $fields ): never {
+		unset( $fields['id'] );
+		self::remember_form( $fields );
+		$this->redirect(
+			$notice,
+			$id > 0 ? [
+				'action' => 'edit',
+				'id'     => $id,
+			] : []
+		);
 	}
 }

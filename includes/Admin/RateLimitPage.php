@@ -14,6 +14,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 use BlueFairy\ApiGateway\RateLimit\RateLimitRuleRepository;
+use BlueFairy\ApiGateway\Support\GlobMatcher;
 
 /**
  * Rules table and add/edit form. The subject-type select offers only what
@@ -76,37 +77,39 @@ final class RateLimitPage extends Page {
 			]
 		);
 
+		if ( null === $editing && $at_limit ) {
+			echo '<p class="bfag-limit-line">' . esc_html( $this->upsell->limit_line( sprintf( /* translators: %d: number of rules */ _n( '%d rate-limit rule', '%d rate-limit rules', $limit, 'bluefairy-api-gateway' ), $limit ) ) ) . '</p>';
+		} else {
+			// A failed save re-fills the form once with what was typed (U-11); otherwise the row, or the defaults.
+			$rule = $editing ?? [
+				'id'              => 0,
+				'label'           => '',
+				'subject_type'    => 'ip',
+				'route_glob'      => '',
+				'max_requests'    => 60,
+				'window_seconds'  => 60,
+				'penalty_seconds' => 0,
+				'enabled'         => 1,
+			];
+			$this->view(
+				'ratelimit-form',
+				[
+					'rule'          => array_merge( $rule, self::take_form() ?? [] ),
+					'subject_types' => $this->rules->subject_types(),
+					'is_pro'        => $this->upsell->is_pro(),
+					'form_url'      => $this->url(),
+					'cancel_url'    => $this->url(),
+				]
+			);
+		}
+
 		/**
-		 * Rendered below the rate-limit rules table (Pro's Blocked IPs panel).
+		 * Rendered below the rate-limit rules table and the add/edit form
+		 * (Pro's Blocked IPs panel) (U-20).
 		 *
 		 * @since 1.0.0
 		 */
 		do_action( 'bfag_ratelimit_page_after' );
-
-		if ( null === $editing && $at_limit ) {
-			echo '<p class="bfag-limit-line">' . esc_html( $this->upsell->limit_line( sprintf( /* translators: %d: number of rules */ _n( '%d rate-limit rule', '%d rate-limit rules', $limit, 'bluefairy-api-gateway' ), $limit ) ) ) . '</p>';
-			return;
-		}
-
-		$this->view(
-			'ratelimit-form',
-			[
-				'rule'          => $editing ?? [
-					'id'              => 0,
-					'label'           => '',
-					'subject_type'    => 'ip',
-					'route_glob'      => '',
-					'max_requests'    => 60,
-					'window_seconds'  => 60,
-					'penalty_seconds' => 0,
-					'enabled'         => 1,
-				],
-				'subject_types' => $this->rules->subject_types(),
-				'is_pro'        => $this->upsell->is_pro(),
-				'form_url'      => $this->url(),
-				'cancel_url'    => $this->url(),
-			]
-		);
 	}
 
 	/**
@@ -148,9 +151,22 @@ final class RateLimitPage extends Page {
 	 * @param array<string, mixed> $fields Sanitised fields.
 	 */
 	private function save( int $id, array $fields ): never {
+		if ( $id > 0 && null === $this->rules->find( $id ) ) {
+			$this->redirect( 'ratelimit_not_found' );
+		}
 		$subject_type = sanitize_key( (string) ( $fields['subject_type'] ?? 'ip' ) );
 		if ( ! in_array( $subject_type, $this->rules->subject_types(), true ) ) {
-			$this->redirect( 'ratelimit_invalid' );
+			$this->fail( 'ratelimit_invalid', $id, $fields );
+		}
+		// The notice names the failing field (U-11): the glob and the ranges are checked here, the repository re-checks on write.
+		if ( ! GlobMatcher::is_valid( (string) ( $fields['route_glob'] ?? '' ) ) ) {
+			$this->fail( 'ratelimit_glob_invalid', $id, $fields );
+		}
+		foreach ( RateLimitRuleRepository::BOUNDS as $column => [ $min, $max ] ) {
+			$value = $fields[ $column ] ?? ( 'penalty_seconds' === $column ? '0' : '' );
+			if ( ! is_numeric( $value ) || (int) $value < $min || (int) $value > $max ) {
+				$this->fail( 'ratelimit_range_invalid', $id, $fields );
+			}
 		}
 
 		$data = [
@@ -162,20 +178,43 @@ final class RateLimitPage extends Page {
 			'enabled'        => self::flag( $fields, 'enabled' ) ? 1 : 0,
 		];
 		if ( $this->upsell->is_pro() && array_key_exists( 'penalty_seconds', $fields ) ) {
-			$data['penalty_seconds'] = (string) $fields['penalty_seconds'];
+			// The Pro mitigator bans IP addresses only: a penalty on a per-user or per-key rule would never apply (U-08).
+			$data['penalty_seconds'] = 'ip' === $subject_type ? (string) $fields['penalty_seconds'] : '0';
 		}
 
 		if ( $id > 0 ) {
-			if ( null === $this->rules->find( $id ) ) {
-				$this->redirect( 'ratelimit_not_found' );
+			if ( ! $this->rules->update( $id, $data ) ) {
+				$this->fail( 'ratelimit_invalid', $id, $fields );
 			}
-			$this->redirect( $this->rules->update( $id, $data ) ? 'ratelimit_saved' : 'ratelimit_invalid' );
+			$this->redirect( 'ratelimit_saved' );
 		}
 
 		if ( $this->rules->count() >= $this->rules->limit() ) {
 			$this->redirect( 'ratelimit_limit' );
 		}
-		$created = $this->rules->create( $data );
-		$this->redirect( false === $created ? 'ratelimit_invalid' : 'ratelimit_saved' );
+		if ( false === $this->rules->create( $data ) ) {
+			$this->fail( 'ratelimit_invalid', 0, $fields );
+		}
+		$this->redirect( 'ratelimit_saved' );
+	}
+
+	/**
+	 * A refused save: keep what was typed for one re-render and go back to
+	 * the form (the edit form when a row was being edited).
+	 *
+	 * @param string               $notice Notice code.
+	 * @param int                  $id     Rule id being edited, 0 when adding.
+	 * @param array<string, mixed> $fields The submitted fields.
+	 */
+	private function fail( string $notice, int $id, array $fields ): never {
+		unset( $fields['id'] );
+		self::remember_form( $fields );
+		$this->redirect(
+			$notice,
+			$id > 0 ? [
+				'action' => 'edit',
+				'id'     => $id,
+			] : []
+		);
 	}
 }

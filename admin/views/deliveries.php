@@ -26,17 +26,18 @@ defined( 'ABSPATH' ) || exit;
 </div>
 
 <table class="widefat striped bfag-table">
+	<caption class="screen-reader-text"><?php esc_html_e( 'Delivery log, newest first', 'bluefairy-api-gateway' ); ?></caption>
 	<thead>
 		<tr>
-			<th><?php esc_html_e( 'ID', 'bluefairy-api-gateway' ); ?></th>
-			<th><?php esc_html_e( 'Webhook', 'bluefairy-api-gateway' ); ?></th>
-			<th><?php esc_html_e( 'Event', 'bluefairy-api-gateway' ); ?></th>
-			<th><?php esc_html_e( 'Status', 'bluefairy-api-gateway' ); ?></th>
-			<th><?php esc_html_e( 'HTTP', 'bluefairy-api-gateway' ); ?></th>
-			<th><?php esc_html_e( 'Attempt', 'bluefairy-api-gateway' ); ?></th>
-			<th><?php esc_html_e( 'Created', 'bluefairy-api-gateway' ); ?></th>
-			<th><?php esc_html_e( 'Delivered', 'bluefairy-api-gateway' ); ?></th>
-			<th></th>
+			<th scope="col"><?php esc_html_e( 'ID', 'bluefairy-api-gateway' ); ?></th>
+			<th scope="col"><?php esc_html_e( 'Webhook', 'bluefairy-api-gateway' ); ?></th>
+			<th scope="col"><?php esc_html_e( 'Event', 'bluefairy-api-gateway' ); ?></th>
+			<th scope="col"><?php esc_html_e( 'Status', 'bluefairy-api-gateway' ); ?></th>
+			<th scope="col"><?php esc_html_e( 'HTTP', 'bluefairy-api-gateway' ); ?></th>
+			<th scope="col"><?php esc_html_e( 'Attempt', 'bluefairy-api-gateway' ); ?></th>
+			<th scope="col"><?php esc_html_e( 'Created (site time)', 'bluefairy-api-gateway' ); ?></th>
+			<th scope="col"><?php esc_html_e( 'Delivered (site time)', 'bluefairy-api-gateway' ); ?></th>
+			<th scope="col"><span class="screen-reader-text"><?php esc_html_e( 'Retry', 'bluefairy-api-gateway' ); ?></span></th>
 		</tr>
 	</thead>
 	<tbody>
@@ -49,6 +50,8 @@ defined( 'ABSPATH' ) || exit;
 			$bfag_status    = (string) $bfag_row['status'];
 			$bfag_truncated = 1 === (int) $bfag_row['truncated'];
 			$bfag_finished  = in_array( $bfag_status, [ 'success', 'failed' ], true );
+			// Retry is offered only where it means something: a failed (or Pro-retrying) outgoing delivery (U-10).
+			$bfag_retryable = ! $bfag_truncated && 'out' === (string) $bfag_row['direction'] && in_array( $bfag_status, \BlueFairy\ApiGateway\Admin\AdminMenu::RETRYABLE_STATUSES, true );
 			$bfag_body      = substr( is_scalar( $bfag_row['response_body'] ?? null ) ? (string) $bfag_row['response_body'] : '', 0, 2000 );
 			$bfag_response  = null === $bfag_row['http_status']
 				/* translators: %s: the transport error message */
@@ -68,10 +71,10 @@ defined( 'ABSPATH' ) || exit;
 				</td>
 				<td><?php echo esc_html( null === $bfag_row['http_status'] ? '—' : (string) $bfag_row['http_status'] ); ?></td>
 				<td><?php echo esc_html( (string) $bfag_row['attempt'] ); ?></td>
-				<td><?php echo esc_html( (string) $bfag_row['created_at'] ); ?></td>
-				<td><?php echo esc_html( null === $bfag_row['delivered_at'] ? '—' : (string) $bfag_row['delivered_at'] ); ?></td>
+				<td><?php echo esc_html( \BlueFairy\ApiGateway\Admin\Page::format_datetime( (string) $bfag_row['created_at'] ) ); ?></td>
+				<td><?php echo esc_html( null === $bfag_row['delivered_at'] ? '—' : \BlueFairy\ApiGateway\Admin\Page::format_datetime( (string) $bfag_row['delivered_at'] ) ); ?></td>
 				<td>
-					<?php if ( ! $bfag_truncated && 'out' === (string) $bfag_row['direction'] ) : ?>
+					<?php if ( $bfag_retryable ) : ?>
 						<button type="button" class="button button-small" data-bfag-retry="<?php echo esc_attr( (string) $bfag_id ); ?>"><?php esc_html_e( 'Retry', 'bluefairy-api-gateway' ); ?></button>
 					<?php endif; ?>
 				</td>

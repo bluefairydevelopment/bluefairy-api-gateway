@@ -4,6 +4,7 @@
  *
  * @var array<string, mixed>                                                       $webhook    The row being edited (without `secret`), or defaults with id 0.
  * @var array<string, array{hook:string, label:string, accepted_args:int, group:string}> $events Known events.
+ * @var \BlueFairy\ApiGateway\Webhook\EventRegistry                              $registry   Translated event and group labels.
  * @var array<string, string>                                                      $presets    Preset slug => label; empty hides the select.
  * @var string                                                                     $headers    Custom headers as `Name: value` lines.
  * @var bool                                                                       $is_pro     Whether to show max_retries.
@@ -20,7 +21,7 @@ defined( 'ABSPATH' ) || exit;
 $bfag_editing = (int) $webhook['id'] > 0;
 $bfag_groups  = [];
 foreach ( $events as $bfag_key => $bfag_spec ) {
-	$bfag_groups[ $bfag_spec['group'] ][ $bfag_key ] = $bfag_spec['label'];
+	$bfag_groups[ $registry->group_label( $bfag_spec['group'] ) ][ $bfag_key ] = $registry->label( $bfag_key );
 }
 ?>
 <h2><?php $bfag_editing ? esc_html_e( 'Edit webhook', 'bluefairy-api-gateway' ) : esc_html_e( 'Add webhook', 'bluefairy-api-gateway' ); ?></h2>
@@ -95,7 +96,10 @@ foreach ( $events as $bfag_key => $bfag_spec ) {
 		<?php if ( $is_pro ) : ?>
 			<tr>
 				<th scope="row"><label for="bfag-wh-retries"><?php esc_html_e( 'Max retries', 'bluefairy-api-gateway' ); ?></label></th>
-				<td><input type="number" id="bfag-wh-retries" name="bfag[max_retries]" class="small-text" min="0" max="10" value="<?php echo esc_attr( (string) (int) $webhook['max_retries'] ); ?>" /></td>
+				<td>
+					<input type="number" id="bfag-wh-retries" name="bfag[max_retries]" class="small-text" min="0" max="10" value="<?php echo esc_attr( (string) (int) $webhook['max_retries'] ); ?>" />
+					<p class="description"><?php esc_html_e( 'Automatic retries after a failed delivery (Pro). 0 = none.', 'bluefairy-api-gateway' ); ?></p>
+				</td>
 			</tr>
 		<?php endif; ?>
 		<tr>

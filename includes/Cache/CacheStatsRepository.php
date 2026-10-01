@@ -151,23 +151,6 @@ final class CacheStatsRepository {
 	}
 
 	/**
-	 * Hits as a fraction (0.0–1.0) of all requests over the most recent
-	 * buckets, including the current one; null when there were none.
-	 *
-	 * @param int $buckets How many five-minute buckets to include.
-	 */
-	public function hit_rate( int $buckets = 12 ): ?float {
-		$buckets = max( 1, $buckets );
-		$since   = $this->bucket_start( $this->now() ) - ( ( $buckets - 1 ) * self::BUCKET_SECONDS );
-		$totals  = $this->totals_since( gmdate( 'Y-m-d H:i:s', $since ) );
-		$total   = $totals['hits'] + $totals['misses'];
-		if ( 0 === $total ) {
-			return null;
-		}
-		return $totals['hits'] / $total;
-	}
-
-	/**
 	 * Delete buckets older than the retention window. Returns rows deleted.
 	 *
 	 * @param int $keep_days Days of buckets to keep.

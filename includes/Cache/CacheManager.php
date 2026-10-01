@@ -240,11 +240,9 @@ final class CacheManager {
 	 * @param array<string, mixed>|null $rule The matching rule, if any.
 	 */
 	public function ttl_for( ?array $rule ): int {
-		$ttl = (int) ( $rule['ttl_seconds'] ?? 0 );
-		if ( $ttl < 1 ) {
-			$ttl = (int) $this->settings->get( 'default_cache_ttl' );
-		}
-		return max( 1, min( 86400, $ttl ) );
+		// A rule always carries a TTL (the repository clamps it to 1–86400 on
+		// every write); `default_cache_ttl` only pre-fills the add form (U-09).
+		return max( 1, min( 86400, (int) ( $rule['ttl_seconds'] ?? 0 ) ) );
 	}
 
 	/**

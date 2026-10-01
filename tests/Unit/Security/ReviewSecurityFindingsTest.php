@@ -20,6 +20,8 @@ use BlueFairy\ApiGateway\Admin\SettingsPage;
 use BlueFairy\ApiGateway\Admin\WebhookPage;
 use BlueFairy\ApiGateway\Cache\CacheKeyGenerator;
 use BlueFairy\ApiGateway\Cache\CacheManager;
+use BlueFairy\ApiGateway\Admin\KpiCron;
+use BlueFairy\ApiGateway\Cache\CachePurger;
 use BlueFairy\ApiGateway\Cache\CacheRuleRepository;
 use BlueFairy\ApiGateway\Cache\CacheStatsRepository;
 use BlueFairy\ApiGateway\Cache\CacheStore;
@@ -120,7 +122,9 @@ final class ReviewSecurityFindingsTest extends TestCase {
 	private function admin_menu(): AdminMenu {
 		$settings   = new Settings();
 		$deliveries = new DeliveryRepository( $settings );
-		return new AdminMenu( $settings, new CacheStore(), new CacheRuleRepository(), new CacheStatsRepository(), new RateLimitRuleRepository(), new HitCounter(), new WebhookRepository(), $deliveries, new WebhookDispatcher( $deliveries, $settings ), new EventRegistry() );
+		$stats      = new CacheStatsRepository();
+		$hits       = new HitCounter();
+		return new AdminMenu( $settings, new CachePurger( new CacheStore(), new CacheRuleRepository() ), new CacheRuleRepository(), new RateLimitRuleRepository(), new WebhookRepository(), $deliveries, new WebhookDispatcher( $deliveries, $settings ), new EventRegistry(), new KpiCron( $stats, $deliveries, $hits ) );
 	}
 
 	/**

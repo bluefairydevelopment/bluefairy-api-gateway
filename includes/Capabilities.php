@@ -117,6 +117,45 @@ final class Capabilities {
 	}
 
 	/**
+	 * The permission callback of the gateway's own routes. A user with the
+	 * manage capability passes; so does a request the Pro add-on
+	 * authenticated with an API key whose scope satisfies the route's
+	 * required scope, even when that key is bound to no user — a
+	 * `cache:purge` key bound to "Nobody" must be able to purge, and a
+	 * `read` key must not (N3).
+	 *
+	 * @param \WP_REST_Request $request The request; the add-on sets
+	 *                                  `bfag_api_key_scope` on it.
+	 */
+	public static function request_allowed( \WP_REST_Request $request ): bool {
+		if ( self::current_user_can_manage() ) {
+			return true;
+		}
+		$scope = $request->get_param( 'bfag_api_key_scope' );
+		if ( ! is_string( $scope ) || '' === trim( $scope ) ) {
+			return false;
+		}
+		return self::scope_satisfied( $scope, self::required_scope( $request->get_route(), $request->get_method() ) );
+	}
+
+	/**
+	 * The translatable one-line description of a scope. SCOPE_LABELS stays
+	 * the untranslated map the Pro add-on reads through `defined()`.
+	 *
+	 * @param string $scope A scope token.
+	 */
+	public static function scope_label( string $scope ): string {
+		return match ( $scope ) {
+			'read'          => __( 'Read any route', 'bluefairy-api-gateway' ),
+			'write'         => __( 'Create, update and delete through any REST route (acts as the key\'s user)', 'bluefairy-api-gateway' ),
+			'cache:purge'   => __( 'Purge the response cache (POST /bfag/v1/cache/purge)', 'bluefairy-api-gateway' ),
+			'webhook:read'  => __( 'List webhooks and their deliveries (GET /bfag/v1/webhooks…)', 'bluefairy-api-gateway' ),
+			'webhook:write' => __( 'Create, update, delete and retry webhooks (/bfag/v1/webhooks…); implies webhook:read', 'bluefairy-api-gateway' ),
+			default         => self::SCOPE_LABELS[ $scope ] ?? $scope,
+		};
+	}
+
+	/**
 	 * GET/HEAD/OPTIONS are reads.
 	 *
 	 * @param string|null $method Explicit method, or null for REQUEST_METHOD.

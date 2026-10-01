@@ -41,6 +41,24 @@ final class EventRegistryTest extends TestCase {
 		$this->assertSame( 'post.exploded', $registry->label( 'post.exploded' ) );
 	}
 
+	/**
+	 * F17: every built-in event and group has a translatable label that is
+	 * not the key itself.
+	 */
+	public function test_every_built_in_event_and_group_has_a_translatable_label(): void {
+		$registry = new EventRegistry();
+		foreach ( array_merge( self::CORE, self::WOO ) as $event ) {
+			$label = $registry->label( $event );
+			$this->assertNotSame( '', $label, $event );
+			$this->assertNotSame( $event, $label, $event . ': a label, not the key' );
+		}
+		$this->assertSame( 'Order status changed', $registry->label( 'woocommerce.order.status_changed' ), 'WooCommerce labels are known even when WooCommerce is not loaded' );
+		foreach ( [ 'Content', 'Users', 'WooCommerce', 'Other' ] as $group ) {
+			$this->assertSame( $group, $registry->group_label( $group ) );
+		}
+		$this->assertSame( 'Forms', $registry->group_label( 'Forms' ), 'an add-on group shows the name it registered' );
+	}
+
 	public function test_filter_can_add_an_event_and_malformed_entries_are_dropped(): void {
 		add_filter(
 			'bfag_webhook_events',

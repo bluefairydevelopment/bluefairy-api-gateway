@@ -34,4 +34,22 @@ final class LoggerTest extends TestCase {
 		Logger::clear();
 		$this->assertSame( [], Logger::lines() );
 	}
+
+	/**
+	 * F12: the buffer is a ring of BUFFER_LIMIT lines; the oldest go first.
+	 */
+	public function test_the_buffer_keeps_only_the_newest_two_hundred_lines(): void {
+		update_option( 'bfag_settings', [ 'debug_logging' => true ] );
+		Logger::use_settings( new Settings() );
+		ini_set( 'error_log', '/dev/null' );
+		for ( $i = 1; $i <= Logger::BUFFER_LIMIT + 5; $i++ ) {
+			Logger::log( 'line ' . $i );
+		}
+		$lines = Logger::lines();
+		$this->assertCount( 200, $lines );
+		$this->assertSame( 200, Logger::BUFFER_LIMIT );
+		$this->assertSame( '[bfag] line 6', $lines[0], 'the five oldest were dropped' );
+		$this->assertSame( '[bfag] line 205', $lines[199] );
+		$this->assertNotContains( '[bfag] line 1', $lines );
+	}
 }

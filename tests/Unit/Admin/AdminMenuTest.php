@@ -8,6 +8,8 @@ declare(strict_types=1);
 namespace BlueFairy\ApiGateway\Tests\Unit\Admin;
 
 use BlueFairy\ApiGateway\Admin\AdminMenu;
+use BlueFairy\ApiGateway\Admin\KpiCron;
+use BlueFairy\ApiGateway\Cache\CachePurger;
 use BlueFairy\ApiGateway\Cache\CacheRuleRepository;
 use BlueFairy\ApiGateway\Cache\CacheStatsRepository;
 use BlueFairy\ApiGateway\Cache\CacheStore;
@@ -35,17 +37,39 @@ final class AdminMenuTest extends TestCase {
 	private function menu(): AdminMenu {
 		$settings   = new Settings();
 		$deliveries = new DeliveryRepository( $settings );
+		$stats      = new CacheStatsRepository();
+		$hits       = new HitCounter();
 		return new AdminMenu(
 			$settings,
-			$this->store,
+			new CachePurger( $this->store, new CacheRuleRepository() ),
 			new CacheRuleRepository(),
-			new CacheStatsRepository(),
 			new RateLimitRuleRepository(),
-			new HitCounter(),
 			new WebhookRepository(),
 			$deliveries,
 			new WebhookDispatcher( $deliveries, $settings ),
-			new EventRegistry()
+			new EventRegistry(),
+			new KpiCron( $stats, $deliveries, $hits )
+		);
+	}
+
+	/**
+	 * Seed the enabled-rules cache with one rule carrying $tags, so the
+	 * purger (the one purge entry point, F11) treats them as known.
+	 *
+	 * @param string $tags Comma-separated tags.
+	 */
+	private function rule_carrying( string $tags ): void {
+		wp_cache_set(
+			CacheRuleRepository::CACHE_KEY,
+			[
+				[
+					'id'         => 1,
+					'route_glob' => '**',
+					'tags'       => $tags,
+					'enabled'    => 1,
+				],
+			],
+			'bfag'
 		);
 	}
 
@@ -281,7 +305,7 @@ final class AdminMenuTest extends TestCase {
 	public function test_notices_cover_every_code_the_pages_redirect_with_and_are_filterable(): void {
 		$menu  = $this->menu();
 		$codes = $menu->notices();
-		foreach ( [ 'error', 'cache_saved', 'cache_invalid', 'cache_limit', 'cache_deleted', 'cache_not_found', 'cache_toggled', 'cache_purged', 'ratelimit_saved', 'ratelimit_invalid', 'ratelimit_limit', 'ratelimit_deleted', 'ratelimit_not_found', 'ratelimit_toggled', 'webhook_saved', 'webhook_invalid', 'webhook_event_unknown', 'webhook_limit', 'webhook_deleted', 'webhook_not_found', 'webhook_toggled', 'webhook_test_ok', 'webhook_test_failed', 'settings_saved' ] as $code ) {
+		foreach ( [ 'error', 'cache_saved', 'cache_invalid', 'cache_limit', 'cache_deleted', 'cache_not_found', 'cache_toggled', 'cache_purged', 'ratelimit_saved', 'ratelimit_invalid', 'ratelimit_glob_invalid', 'ratelimit_range_invalid', 'ratelimit_limit', 'ratelimit_deleted', 'ratelimit_not_found', 'ratelimit_toggled', 'webhook_saved', 'webhook_invalid', 'webhook_url_invalid', 'webhook_label_invalid', 'webhook_event_invalid', 'webhook_limit', 'webhook_deleted', 'webhook_not_found', 'webhook_toggled', 'webhook_test_ok', 'webhook_test_failed', 'settings_saved' ] as $code ) {
 			$this->assertArrayHasKey( $code, $codes, $code );
 			$this->assertContains( $codes[ $code ][0], [ 'success', 'error' ] );
 			$this->assertNotSame( '', $codes[ $code ][1] );
@@ -305,12 +329,30 @@ final class AdminMenuTest extends TestCase {
 	}
 
 	/**
+	 * U-11 / N6: every validation notice names its cause.
+	 */
+	public function test_validation_notices_name_the_failing_field(): void {
+		$codes = $this->menu()->notices();
+		$this->assertSame( 'URL refused: it must start with https:// and resolve to a public address (localhost, 127.0.0.1, private ranges and non-standard ports are refused). Your entries are kept in the form below.', $codes['webhook_url_invalid'][1] );
+		$this->assertStringContainsString( 'label must be 1–200 characters', $codes['webhook_label_invalid'][1] );
+		$this->assertStringContainsString( 'choose an event from the list', $codes['webhook_event_invalid'][1] );
+		$this->assertStringContainsString( 'extra headers', $codes['webhook_invalid'][1] );
+		$this->assertStringContainsString( '"Count by" subject type', $codes['ratelimit_invalid'][1] );
+		$this->assertStringContainsString( 'route glob may contain only', $codes['ratelimit_glob_invalid'][1] );
+		$this->assertStringContainsString( 'requests must be 1–65535, the window 1–86400 seconds and the penalty 0–2592000 seconds', $codes['ratelimit_range_invalid'][1] );
+		$this->assertArrayNotHasKey( 'webhook_event_unknown', $codes, 'renamed to webhook_event_invalid' );
+		$this->assertStringNotContainsString( 'it needs a label, an https URL and a known event', $codes['webhook_invalid'][1], 'the catch-all no longer lists causes that have their own notice' );
+	}
+
+	/**
 	 * CacheRuleRepository clamps the TTL rather than refusing it, so the only
-	 * cause `cache_invalid` can name is the glob; the limit has its own code.
+	 * cause `cache_invalid` can name is the glob — with GlobMatcher's real
+	 * character class (U-23); the limit has its own code.
 	 */
 	public function test_cache_invalid_names_the_glob_only_and_cache_limit_names_the_allowance(): void {
 		$codes = $this->menu()->notices();
-		$this->assertSame( [ 'error', 'Cache rule not saved: check the route glob (letters, digits, / * ? . - _).' ], $codes['cache_invalid'] );
+		$this->assertSame( [ 'error', 'Cache rule not saved: the route glob may contain only letters, digits and / * ? . - _ % : @ = & + ~ (up to 500 characters). Your entries are kept in the form below.' ], $codes['cache_invalid'] );
+		$this->assertStringNotContainsString( '(letters, digits, / * ? . - _).', $codes['cache_invalid'][1], 'the old, incomplete charset is gone' );
 		$this->assertStringNotContainsString( 'TTL', $codes['cache_invalid'][1], 'the TTL is clamped, never refused' );
 		$this->assertSame( [ 'error', 'Cache rule not added: the free plugin allows one rule.' ], $codes['cache_limit'] );
 		$this->assertNotSame( $codes['cache_invalid'], $codes['cache_limit'] );
@@ -362,6 +404,7 @@ final class AdminMenuTest extends TestCase {
 	}
 
 	public function test_ajax_purge_flushes_all_or_bumps_the_given_tags(): void {
+		$this->rule_carrying( 'posts' );
 		$seen = [];
 		add_action(
 			'bfag_cache_purged',
@@ -391,16 +434,19 @@ final class AdminMenuTest extends TestCase {
 		$this->assertSame(
 			[
 				'purged' => 'tags',
-				'tags'   => [ 'posts', 'xy' ],
+				'tags'   => [ 'posts' ],
 			],
-			$exit->payload
+			$exit->payload,
+			'F11: through the purger, so `xy` — a tag no enabled rule carries — is dropped exactly as the content hooks drop it'
 		);
 		$this->assertSame( $generation + 1, $this->store->generation(), 'tags do not touch the global generation' );
 		$this->assertSame( $posts + 1, $this->store->tag_generation( 'posts' ) );
-		$this->assertSame( [ [ 'all', [] ], [ 'tags', [ 'posts', 'xy' ] ] ], $seen );
+		$this->assertSame( 1, $this->store->tag_generation( 'xy' ), 'unknown tag: not bumped' );
+		$this->assertSame( [ [ 'all', [] ], [ 'tags', [ 'posts' ] ] ], $seen, 'bfag_cache_purged fires exactly once per purge, from the purger' );
 	}
 
 	public function test_ajax_purge_keeps_the_colon_of_a_pro_tag(): void {
+		$this->rule_carrying( 'post:42,term:9' );
 		bfag_test_ajax_request( 'purge_cache', [ 'tags' => [ 'post:42', 'post:42', [ 'nested' ], 'Term:9' ] ] );
 		$exit = bfag_test_catch_exit( [ $this->menu(), 'ajax_purge_cache' ] );
 		$this->assertSame( 'json_success', $exit->kind );
@@ -467,6 +513,26 @@ final class AdminMenuTest extends TestCase {
 		$exit = bfag_test_catch_exit( [ $this->menu(), 'ajax_retry_webhook' ] );
 		$this->assertSame( [ 'json_error', 404 ], [ $exit->kind, $exit->status ], 'webhook gone' );
 		$this->assertSame( [], $GLOBALS['bfag_test_http_calls'] );
+
+		// U-10: only a failed (or Pro-retrying) outgoing delivery can be retried.
+		foreach ( [ [ 'status' => 'success' ], [ 'status' => 'pending' ], [ 'direction' => 'in' ] ] as $over ) {
+			$this->wpdb->queue( 'get_row', array_merge( $delivery, $over ) );
+			bfag_test_ajax_request( 'retry_webhook', [ 'delivery_id' => '10' ] );
+			$exit = bfag_test_catch_exit( [ $this->menu(), 'ajax_retry_webhook' ] );
+			$this->assertSame( [ 'json_error', 400 ], [ $exit->kind, $exit->status ], wp_json_encode( $over ) );
+			$this->assertSame( 'Only a failed outgoing delivery can be retried.', $exit->payload['message'] );
+		}
+		$this->assertSame( [], $GLOBALS['bfag_test_http_calls'], 'nothing sent for a refused status' );
+		$this->assertSame( [], $this->wpdb->calls_to( 'update' ), 'nothing re-marked pending' );
+		$this->wpdb->queue( 'get_row', array_merge( $delivery, [ 'status' => 'retrying' ] ) );
+		$this->wpdb->queue( 'get_row', $webhook );
+		$this->wpdb->queue( 'get_row', array_merge( $delivery, [ 'status' => 'retrying' ] ) );
+		bfag_test_queue_http( 200, 'ok' );
+		bfag_test_ajax_request( 'retry_webhook', [ 'delivery_id' => '10' ] );
+		$exit = bfag_test_catch_exit( [ $this->menu(), 'ajax_retry_webhook' ] );
+		$this->assertSame( 'json_success', $exit->kind, 'a Pro `retrying` row is accepted' );
+		$this->assertCount( 1, $GLOBALS['bfag_test_http_calls'] );
+		$GLOBALS['bfag_test_http_calls'] = [];
 
 		$this->wpdb->queue( 'get_row', $delivery );
 		$this->wpdb->queue( 'get_row', $webhook );

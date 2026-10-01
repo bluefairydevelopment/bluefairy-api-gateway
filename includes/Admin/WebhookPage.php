@@ -108,7 +108,7 @@ final class WebhookPage extends Page {
 				'count'          => $count,
 				'limit'          => $limit,
 				'last_status'    => $status,
-				'events'         => $this->registry->all(),
+				'registry'       => $this->registry,
 				'page'           => $this,
 				'deliveries_url' => $this->url( [ 'view' => 'deliveries' ] ),
 				'new_secret'     => $this->take_new_secret(),
@@ -133,6 +133,12 @@ final class WebhookPage extends Page {
 		];
 		// The secret never reaches the view, even when editing.
 		unset( $webhook['secret'] );
+		// A failed save re-fills the form once with what was typed (U-11).
+		$remembered = self::take_form();
+		if ( null !== $remembered ) {
+			unset( $remembered['secret'], $remembered['regenerate_secret'] );
+			$webhook = array_merge( $webhook, $remembered );
+		}
 
 		/**
 		 * Preset choices for the webhook form (`slug => label`). Empty in
@@ -149,8 +155,9 @@ final class WebhookPage extends Page {
 			[
 				'webhook'    => $webhook,
 				'events'     => $this->registry->all(),
+				'registry'   => $this->registry,
 				'presets'    => is_array( $presets ) ? $presets : [],
-				'headers'    => $this->headers_to_lines( $this->webhooks->headers_of( $webhook ) ),
+				'headers'    => is_string( $remembered['headers'] ?? null ) ? $remembered['headers'] : $this->headers_to_lines( $this->webhooks->headers_of( $webhook ) ),
 				'is_pro'     => $this->upsell->is_pro(),
 				'form_url'   => $this->url(),
 				'cancel_url' => $this->url(),
@@ -226,12 +233,21 @@ final class WebhookPage extends Page {
 		// Same character class as WebhookRepository: sanitize_key() would strip the dots of `post.published`.
 		$event = preg_replace( '/[^a-z0-9_.\-]/', '', strtolower( (string) ( $fields['event'] ?? '' ) ) ) ?? '';
 		if ( '' === $event || ! $this->registry->exists( $event ) ) {
-			$this->redirect( 'webhook_event_unknown' );
+			$this->fail( 'webhook_event_invalid', $id, $fields );
+		}
+		// The notice names the failing field (U-11): label and URL are checked here; the repository re-checks on write.
+		$label = sanitize_text_field( (string) ( $fields['label'] ?? '' ) );
+		if ( '' === $label || mb_strlen( $label ) > 200 ) {
+			$this->fail( 'webhook_label_invalid', $id, $fields );
+		}
+		$url = esc_url_raw( (string) ( $fields['url'] ?? '' ) );
+		if ( ! $this->url_acceptable( $url ) ) {
+			$this->fail( 'webhook_url_invalid', $id, $fields );
 		}
 
 		$data = [
-			'label'   => (string) ( $fields['label'] ?? '' ),
-			'url'     => esc_url_raw( (string) ( $fields['url'] ?? '' ) ),
+			'label'   => $label,
+			'url'     => $url,
 			'event'   => $event,
 			'headers' => $this->lines_to_headers( (string) ( $fields['headers'] ?? '' ) ),
 			'preset'  => sanitize_key( (string) ( $fields['preset'] ?? '' ) ),
@@ -273,7 +289,7 @@ final class WebhookPage extends Page {
 
 		if ( $id > 0 ) {
 			if ( ! $this->webhooks->update( $id, $data ) ) {
-				$this->redirect( 'webhook_invalid' );
+				$this->fail( 'webhook_invalid', $id, $fields );
 			}
 			$this->redirect( $this->saved( $shown ) );
 		}
@@ -287,9 +303,46 @@ final class WebhookPage extends Page {
 			$data['secret'] = $shown;
 		}
 		if ( false === $this->webhooks->create( $data ) ) {
-			$this->redirect( 'webhook_invalid' );
+			$this->fail( 'webhook_invalid', 0, $fields );
 		}
 		$this->redirect( $this->saved( $shown ) );
+	}
+
+	/**
+	 * The URL rule the repository enforces, asked up front so the notice
+	 * can name it: https (unless `bfag_webhook_allow_http`) and a public
+	 * address by wp_http_validate_url().
+	 *
+	 * @param string $url The submitted URL.
+	 */
+	private function url_acceptable( string $url ): bool {
+		if ( '' === $url || strlen( $url ) > 2000 || false === wp_http_validate_url( $url ) ) {
+			return false;
+		}
+		$scheme = strtolower( (string) wp_parse_url( $url, PHP_URL_SCHEME ) );
+		/** This filter is documented in includes/Webhook/WebhookRepository.php */
+		$allow_http = (bool) apply_filters( 'bfag_webhook_allow_http', false );
+		return 'https' === $scheme || ( 'http' === $scheme && $allow_http );
+	}
+
+	/**
+	 * A refused save: keep what was typed (never the secret) for one
+	 * re-render and go back to the form.
+	 *
+	 * @param string               $notice Notice code.
+	 * @param int                  $id     Webhook id being edited, 0 when adding.
+	 * @param array<string, mixed> $fields The submitted fields.
+	 */
+	private function fail( string $notice, int $id, array $fields ): never {
+		unset( $fields['id'], $fields['secret'], $fields['regenerate_secret'] );
+		self::remember_form( $fields );
+		$this->redirect(
+			$notice,
+			$id > 0 ? [
+				'action' => 'edit',
+				'id'     => $id,
+			] : []
+		);
 	}
 
 	/**

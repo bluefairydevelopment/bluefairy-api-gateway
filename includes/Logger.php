@@ -29,7 +29,15 @@ final class Logger {
 	private static ?Settings $settings = null;
 
 	/**
-	 * Lines written during this request, oldest first (tests read these).
+	 * Most lines kept in the buffer; the oldest is dropped past this (F12),
+	 * so a long import that logs every rejected header cannot grow memory
+	 * without bound. The error log itself still gets every line.
+	 */
+	public const BUFFER_LIMIT = 200;
+
+	/**
+	 * Lines written during this request, oldest first, at most
+	 * BUFFER_LIMIT of them (tests read these).
 	 *
 	 * @var list<string>
 	 */
@@ -66,6 +74,9 @@ final class Logger {
 			$line .= ' ' . (string) wp_json_encode( $context );
 		}
 		self::$buffer[] = $line;
+		if ( count( self::$buffer ) > self::BUFFER_LIMIT ) {
+			array_shift( self::$buffer );
+		}
 		// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- this IS the debug log, opt-in.
 		error_log( $line );
 	}

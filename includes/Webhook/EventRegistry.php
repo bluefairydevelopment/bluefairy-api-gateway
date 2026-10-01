@@ -154,12 +154,42 @@ final class EventRegistry {
 	}
 
 	/**
-	 * Human label for an event; the key itself when unknown.
+	 * Translatable label for an event (F17). The constants keep their
+	 * English labels as keys; the built-ins are translated here, an
+	 * add-on's event shows the label it registered, and an unknown key
+	 * shows itself.
 	 *
 	 * @param string $event Event key.
 	 */
 	public function label( string $event ): string {
-		return $this->all()[ $event ]['label'] ?? $event;
+		return match ( $event ) {
+			'post.published'                   => __( 'Post published', 'bluefairy-api-gateway' ),
+			'post.updated'                     => __( 'Post updated', 'bluefairy-api-gateway' ),
+			'post.deleted'                     => __( 'Post deleted', 'bluefairy-api-gateway' ),
+			'user.registered'                  => __( 'User registered', 'bluefairy-api-gateway' ),
+			'user.updated'                     => __( 'User profile updated', 'bluefairy-api-gateway' ),
+			'comment.created'                  => __( 'Comment created', 'bluefairy-api-gateway' ),
+			'woocommerce.order.created'        => __( 'Order created', 'bluefairy-api-gateway' ),
+			'woocommerce.order.status_changed' => __( 'Order status changed', 'bluefairy-api-gateway' ),
+			'woocommerce.order.completed'      => __( 'Order completed', 'bluefairy-api-gateway' ),
+			'woocommerce.product.updated'      => __( 'Product updated', 'bluefairy-api-gateway' ),
+			default                            => $this->all()[ $event ]['label'] ?? $event,
+		};
+	}
+
+	/**
+	 * Translatable label for an event group (the `<optgroup>` headings).
+	 *
+	 * @param string $group Group key as stored in the event spec.
+	 */
+	public function group_label( string $group ): string {
+		return match ( $group ) {
+			'Content'     => __( 'Content', 'bluefairy-api-gateway' ),
+			'Users'       => __( 'Users', 'bluefairy-api-gateway' ),
+			'WooCommerce' => __( 'WooCommerce', 'bluefairy-api-gateway' ),
+			'Other'       => __( 'Other', 'bluefairy-api-gateway' ),
+			default       => $group,
+		};
 	}
 
 	/**

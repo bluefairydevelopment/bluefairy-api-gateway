@@ -374,18 +374,22 @@ final class CacheManagerTest extends TestCase {
 		$this->assertInstanceOf( \WP_REST_Response::class, $manager->maybe_serve( null, $this->server, $request ) );
 	}
 
-	public function test_ttl_for_prefers_the_rule_then_the_default_setting_and_clamps(): void {
+	/**
+	 * U-09: the rule's TTL is the TTL — `default_cache_ttl` only pre-fills
+	 * the add form and is never read here, however the rule looks.
+	 */
+	public function test_ttl_for_is_the_rules_ttl_clamped_and_never_the_setting(): void {
 		$manager = $this->manager( [ 'default_cache_ttl' => 300 ] );
 		$this->assertSame( 120, $manager->ttl_for( $this->rule( '**', 120 ) ) );
-		$this->assertSame( 300, $manager->ttl_for( null ) );
-		$this->assertSame( 300, $manager->ttl_for( $this->rule( '**', 0 ) ), 'a zero rule TTL falls back' );
+		$this->assertSame( 1, $manager->ttl_for( null ), 'no rule: the floor, not the setting' );
+		$this->assertSame( 1, $manager->ttl_for( $this->rule( '**', 0 ) ), 'a zero rule TTL: the floor, not the setting' );
 		$this->assertSame( 86400, $manager->ttl_for( $this->rule( '**', 999999 ) ) );
-		$this->assertSame( Settings::DEFAULTS['default_cache_ttl'], $this->manager()->ttl_for( null ) );
+		$this->assertNotSame( 300, $manager->ttl_for( null ) );
 	}
 
-	public function test_stored_ttl_falls_back_to_the_setting_when_the_rule_has_none(): void {
+	public function test_a_rule_with_its_own_ttl_keeps_it_whatever_the_setting_says(): void {
 		bfag_test_set_time( 1_700_000_000 );
-		$manager = $this->manager( [ 'default_cache_ttl' => 45 ], [ $this->rule( '**', 0 ) ] );
+		$manager = $this->manager( [ 'default_cache_ttl' => 300 ], [ $this->rule( '**', 45 ) ] );
 		$manager->maybe_store( $this->response(), $this->server, $this->request( 'GET', '/wp/v2/posts' ) );
 		$this->assertSame( 1_700_000_045, array_values( $GLOBALS['bfag_test_transients'] )[0]['expires'] );
 	}

@@ -18,7 +18,7 @@ For the customer-facing feature guide, including the Pro/free comparison table, 
 - **Response cache** — anonymous `GET`/`HEAD` requests to the REST API are stored and served back with an `X-BF-Cache: HIT` header. Every REST response passing through is labelled `HIT`, `MISS` or `BYPASS`, so you can see the decision from `curl`. One cache rule in the free plugin (seeded as `**`, "All routes", 60 s). Purged automatically when a post, term or comment changes; purged by hand from the Cache tab or `POST /bfag/v1/cache/purge`.
 - **Rate limiting** — a sliding-window counter per client IP and rule. The breaching request gets `429` with `Retry-After`, `X-BF-RateLimit-Limit` and `X-BF-RateLimit-Window`. One rule in the free plugin (seeded as 300 requests per 60 s on `**`; logged-in users who can edit posts are exempt by default). One forwarded-IP header of your choosing is honoured, only from the proxies you list.
 - **Outbound webhooks** — up to three webhooks subscribing to six WordPress events (ten with WooCommerce). Each delivery is a JSON `POST` signed with `X-BF-Signature: sha256=HMAC-SHA256(timestamp.body, secret)`, logged with its HTTP status and response, and can be resent from the delivery log.
-- **Dashboard** — cache hit rate, webhook success rate and the rate-limit log size over the last 24 hours, the ten most recent failed deliveries with a Retry button, and the same figures at `GET /bfag/v1/status` for a monitor.
+- **Dashboard** — cache hit rate and webhook success rate over the last 24 hours, the current size of the rate-limit log, the ten most recent failed deliveries with a Retry button, and the same figures at `GET /bfag/v1/status` for a monitoring tool authenticated with an Application Password (or, with Pro, an API key).
 
 ## Installation
 
@@ -64,10 +64,10 @@ All settings live in the single option `bfag_settings` and are edited on **Setti
 
 | Setting | Key | Default | Bounds / values | What it does |
 |---|---|---|---|---|
-| Notification email | `notification_email` | `''` | A valid email, else `''` | The address the Pro add-on's failure alerts go to. The free plugin stores it but sends no mail. |
-| Failure threshold | `failure_threshold` | `5` | 1–100 | Consecutive failed deliveries before the Pro add-on raises an alert. Stored but unused by the free plugin. |
+| Notification email | `notification_email` | `''` | A valid email, else `''` | The address the Pro add-on's failure alerts go to. Shown only with the Pro add-on; the free plugin keeps the value hidden and sends no mail. |
+| Failure threshold | `failure_threshold` | `5` | 1–100 | Consecutive failed deliveries before the Pro add-on raises an alert. Shown only with the Pro add-on. |
 | Enable response cache | `cache_enabled` | `true` | checkbox | Off: nothing is served from or stored in the cache; every response is `BYPASS`. |
-| Default TTL (seconds) | `default_cache_ttl` | `60` | 1–86400 | Used when the matching rule's own TTL is below 1. Every rule saved through the admin form carries a TTL of its own, so in practice the rule wins. |
+| New-rule TTL (seconds) | `default_cache_ttl` | `60` | 1–86400 | Pre-fills the TTL of a new cache rule in the add form. Not a fallback: every rule carries its own TTL and the rule's TTL is the TTL. |
 | Enable rate limiting | `rate_limit_enabled` | `true` | checkbox | Off: no rule is counted and no `429` is ever returned. |
 | Exempt editors | `rate_limit_exempt_editors` | `true` | checkbox | Do not rate-limit logged-in users who can edit posts (the block editor's own REST calls). |
 | Trusted proxies | `trusted_proxies` | `[]` | IPs or CIDRs, one per line; invalid entries discarded | When `REMOTE_ADDR` is one of these, the client IP is taken from the *Client address header* below. Needed behind Cloudflare, a load balancer or a CDN; without it every visitor shares the proxy's bucket, and a notice says so while a forwarded-address header is arriving. |
@@ -104,7 +104,7 @@ Exempt from rate limiting. Returns:
 }
 ```
 
-`kpis` is `null` until the five-minute KPI cron has run once (or the dashboard's **Refresh** button has been pressed), and so are `counts.cache_24h` and `counts.deliveries_24h`, which are copied from it: a monitor polling this route never runs an aggregate query. `counts.webhooks` is live, cached for a minute. `blocked_today` is always `0` in the free plugin.
+`kpis` is `null` until the five-minute KPI cron has run once (or the dashboard's **Refresh** button has been pressed), and so are `counts.cache_24h` and `counts.deliveries_24h`, which are copied from it: a monitor polling this route never runs an aggregate query. `counts.webhooks` is live, cached for a minute. `blocked_today` is always `0` in the free plugin (the dashboard card says *Blocked (Pro)*); with Pro it is the number of addresses currently banned. The route's permission callback accepts the `bfag_manage_gateway` capability or, with Pro, an API key whose scope covers `read`.
 
 ### `POST /wp-json/bfag/v1/cache/purge`
 
@@ -209,6 +209,17 @@ The Pro add-on is built entirely on the `bfag_*` actions and filters, which are 
 ## Uninstalling
 
 Deleting the plugin through the Plugins screen always removes its options, its transients, its cron events and the `bfag_manage_gateway` capability, on every site of a multisite network. The six tables — your rules, webhooks and delivery log — are dropped only when *Delete data on uninstall* was ticked. Deactivating removes the cron events and the capability and leaves everything else in place.
+
+## Development
+
+```
+vendor/bin/phpunit
+vendor/bin/phpcs --standard=phpcs.xml.dist
+vendor/bin/phpstan analyse --memory-limit=1G --no-progress
+node tests/js/admin.test.js
+```
+
+The last line runs `assets/js/admin.js` against a dependency-free fake DOM (no npm): the dashboard Refresh, the notice-dismiss handler and the rate-limit Penalty-row toggle.
 
 ## Coding standards
 

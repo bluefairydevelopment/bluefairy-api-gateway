@@ -19,7 +19,8 @@ use BlueFairy\ApiGateway\Webhook\WebhookRepository;
 
 /**
  * Version, the KPI transient, 24-hour counts and whether Pro is active.
- * Gated by the manage capability; the rate limiter skips this route so a
+ * Gated by Capabilities::request_allowed() (the manage capability, or an
+ * API key whose scope covers the route); the rate limiter skips this route so a
  * monitor polling it cannot lock itself out.
  *
  * A monitor polls this, so it must not run aggregates: the 24-hour counts
@@ -60,10 +61,12 @@ final class StatusController {
 	}
 
 	/**
-	 * Only a gateway manager may read the status.
+	 * A gateway manager, or an API key holding `read`, may read the status.
+	 *
+	 * @param \WP_REST_Request $request The request.
 	 */
-	public function permission(): bool {
-		return Capabilities::current_user_can_manage();
+	public function permission( \WP_REST_Request $request ): bool {
+		return Capabilities::request_allowed( $request );
 	}
 
 	/**

@@ -86,12 +86,14 @@ final class Plugin {
 		$stats       = new Cache\CacheStatsRepository();
 		$cache       = new Cache\CacheManager( $store, new Cache\CacheKeyGenerator( $store ), $cache_rules, $stats, $settings );
 		$cache->register_hooks();
-		( new Cache\CachePurger( $store, $cache_rules ) )->register_hooks();
+		$purger = new Cache\CachePurger( $store, $cache_rules );
+		$purger->register_hooks();
 		( new Cache\PruneCron( $store ) )->register_hooks();
 		self::set( 'cache.store', $store );
 		self::set( 'cache.rules', $cache_rules );
 		self::set( 'cache.stats', $stats );
 		self::set( 'cache.manager', $cache );
+		self::set( 'cache.purger', $purger );
 
 		// Rate limiting.
 		$rl_rules = new RateLimit\RateLimitRuleRepository();
@@ -104,7 +106,7 @@ final class Plugin {
 		// Webhooks.
 		$webhooks   = new Webhook\WebhookRepository();
 		$deliveries = new Webhook\DeliveryRepository( $settings );
-		$dispatcher = new Webhook\WebhookDispatcher( $deliveries, $settings );
+		$dispatcher = new Webhook\WebhookDispatcher( $deliveries, $settings, $webhooks );
 		$registry   = new Webhook\EventRegistry();
 		( new Webhook\EventBus( $webhooks, $dispatcher, $registry, $deliveries ) )->register_hooks();
 		( new Webhook\PruneCron( $deliveries, $settings ) )->register_hooks();
@@ -113,18 +115,20 @@ final class Plugin {
 		self::set( 'webhook.dispatcher', $dispatcher );
 		self::set( 'webhook.events', $registry );
 
-		// Dashboard KPIs.
-		( new Admin\KpiCron( $stats, $deliveries, $hits ) )->register_hooks();
+		// Dashboard KPIs: one instance, shared with the admin's Refresh button.
+		$kpi_cron = new Admin\KpiCron( $stats, $deliveries, $hits );
+		$kpi_cron->register_hooks();
+		self::set( 'kpi.cron', $kpi_cron );
 
 		// REST.
 		$status = new Rest\StatusController( $webhooks );
-		$purge  = new Rest\CacheController( $store );
+		$purge  = new Rest\CacheController( $purger );
 		add_action( 'rest_api_init', [ $status, 'register_routes' ] );
 		add_action( 'rest_api_init', [ $purge, 'register_routes' ] );
 
 		// Admin.
 		if ( is_admin() ) {
-			( new Admin\AdminMenu( $settings, $store, $cache_rules, $stats, $rl_rules, $hits, $webhooks, $deliveries, $dispatcher, $registry ) )->register_hooks();
+			( new Admin\AdminMenu( $settings, $purger, $cache_rules, $rl_rules, $webhooks, $deliveries, $dispatcher, $registry, $kpi_cron ) )->register_hooks();
 		}
 
 		/**
@@ -156,7 +160,8 @@ final class Plugin {
 	}
 
 	/**
-	 * Reset boot state (tests only).
+	 * Reset boot state. A test seam, like RequestContext::reset() and
+	 * Logger::clear(): nothing in the plugin calls it.
 	 */
 	public static function reset(): void {
 		self::$booted      = false;

@@ -113,13 +113,6 @@ final class Settings {
 	}
 
 	/**
-	 * Forget the per-request cache (after an external update_option).
-	 */
-	public function refresh(): void {
-		$this->cache = null;
-	}
-
-	/**
 	 * Coerce raw input into a complete, typed, bounded settings array.
 	 *
 	 * Unknown keys are dropped. Booleans accept checkbox-style values

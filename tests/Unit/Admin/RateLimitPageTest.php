@@ -93,7 +93,12 @@ final class RateLimitPageTest extends TestCase {
 		$table = strpos( $html, '</table>' );
 		$after = strpos( $html, $marker );
 		$form  = strpos( $html, '<form' );
-		$this->assertTrue( false !== $table && false !== $after && false !== $form && $table < $after && $after < $form );
+		$this->assertTrue( false !== $table && false !== $after && false !== $form && $table < $form && $form < $after, 'U-20: the hook fires after the table AND after the form' );
+		$this->assertStringContainsString( '<th scope="col">Count by</th>', $html );
+		$this->assertStringContainsString( '<td>IP address</td>', $html, 'U-23: the Subject column uses the form label' );
+		$this->assertStringNotContainsString( '<td>ip</td>', $html );
+		$this->assertStringContainsString( '<caption class="screen-reader-text">Rate-limit rules</caption>', $html );
+		$this->assertStringContainsString( 'role="button" aria-pressed="true" title="Click to disable this rule"', $html );
 	}
 
 	public function test_pro_shows_the_penalty_column_and_field_and_extra_subject_types(): void {
@@ -106,6 +111,89 @@ final class RateLimitPageTest extends TestCase {
 		$this->assertStringContainsString( '900 s', $html );
 		$this->assertStringContainsString( 'name="bfag[penalty_seconds]"', $html );
 		$this->assertMatchesRegularExpression( '/<option value="user"\s*>/', $html );
+		// U-08: the row is marked for admin.js, shown for an IP rule, and carries the IP-only help text.
+		$this->assertStringContainsString( '<tr data-bfag-penalty-row>', $html );
+		$this->assertStringContainsString( 'IP-address rules only: how long the breaching address is banned. 0 disables.', $html );
+		$this->assertStringNotContainsString( 'How long a subject that breaches this rule is blocked outright', $html );
+		$this->assertStringNotContainsString( 'disabled="disabled"', $html );
+
+		$_GET = [
+			'action' => 'edit',
+			'id'     => '1',
+		];
+		$this->prime_render( [ $this->rule() ], array_merge( $this->rule(), [ 'subject_type' => 'user' ] ) );
+		$html = bfag_test_render( [ $this->page(), 'render' ] );
+		$this->assertStringContainsString( '<tr data-bfag-penalty-row hidden>', $html, 'a per-user rule: the row is hidden server-side too' );
+		$this->assertStringContainsString( 'name="bfag[penalty_seconds]" class="small-text" min="0" max="2592000" value="900" disabled="disabled"', $html );
+	}
+
+	/**
+	 * U-08: the Pro mitigator bans IP addresses only, so a penalty on a
+	 * per-user (or per-key) rule is stored as 0 whatever was posted.
+	 */
+	public function test_pro_stores_a_zero_penalty_for_a_non_ip_subject(): void {
+		add_filter( 'bfag_is_pro', '__return_true' );
+		add_filter( 'bfag_rate_limit_subject_types', static fn( array $t ): array => [ ...$t, 'user' ] );
+		foreach ( [ 'user' => 0, 'ip' => 120 ] as $subject => $expected ) {
+			bfag_test_admin_request(
+				'save_rate_limit_rule',
+				[
+					'subject_type'    => $subject,
+					'route_glob'      => '**',
+					'max_requests'    => '30',
+					'window_seconds'  => '10',
+					'penalty_seconds' => '120',
+				]
+			);
+			$this->redirect_of( [ $this->page(), 'handle_actions' ] );
+		}
+		$inserts = $this->wpdb->calls_to( 'insert' );
+		$this->assertCount( 2, $inserts );
+		$this->assertSame( 0, $inserts[0]['data']['penalty_seconds'], 'user rule: penalty forced to 0' );
+		$this->assertSame( 120, $inserts[1]['data']['penalty_seconds'], 'ip rule: penalty kept' );
+	}
+
+	/**
+	 * U-11: the notice names the failing field, and the typed values come
+	 * back once in the re-rendered form.
+	 */
+	public function test_a_failed_save_names_the_field_and_refills_the_form_once(): void {
+		bfag_test_admin_request(
+			'save_rate_limit_rule',
+			[
+				'label'          => 'Typed',
+				'subject_type'   => 'ip',
+				'route_glob'     => 'wp/v2/(posts)',
+				'max_requests'   => '33',
+				'window_seconds' => '44',
+			]
+		);
+		$location = $this->redirect_of( [ $this->page(), 'handle_actions' ] );
+		$this->assertStringEndsWith( '&bfag_notice=ratelimit_glob_invalid', $location );
+		$this->assertSame( [], $this->wpdb->calls, 'refused before the repository' );
+
+		$this->prime_render( [] );
+		$html = bfag_test_render( [ $this->page(), 'render' ] );
+		$this->assertStringContainsString( 'value="Typed"', $html );
+		$this->assertStringContainsString( 'value="wp/v2/(posts)"', $html );
+		$this->assertStringContainsString( 'required value="33"', $html );
+		$this->assertStringContainsString( 'required value="44"', $html );
+
+		$this->prime_render( [] );
+		$html = bfag_test_render( [ $this->page(), 'render' ] );
+		$this->assertStringNotContainsString( 'value="Typed"', $html, 'shown once' );
+		$this->assertStringContainsString( 'required value="60"', $html, 'defaults again' );
+
+		bfag_test_admin_request(
+			'save_rate_limit_rule',
+			[
+				'subject_type'   => 'ip',
+				'route_glob'     => '**',
+				'max_requests'   => '30',
+				'window_seconds' => '99999',
+			]
+		);
+		$this->assertStringEndsWith( '&bfag_notice=ratelimit_range_invalid', $this->redirect_of( [ $this->page(), 'handle_actions' ] ) );
 	}
 
 	public function test_at_the_limit_the_add_form_gives_way_to_the_upsell_line(): void {
@@ -192,7 +280,7 @@ final class RateLimitPageTest extends TestCase {
 			]
 		);
 		$location = $this->redirect_of( [ $this->page(), 'handle_actions' ] );
-		$this->assertStringEndsWith( '&bfag_notice=ratelimit_invalid', $location );
+		$this->assertStringEndsWith( '&bfag_notice=ratelimit_range_invalid', $location );
 		$this->assertSame( [], $this->wpdb->calls_to( 'insert' ) );
 	}
 

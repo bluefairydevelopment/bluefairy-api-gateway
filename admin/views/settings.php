@@ -6,6 +6,7 @@
  * @var array<string, mixed>                $values   Current settings.
  * @var \BlueFairy\ApiGateway\Settings      $settings The Settings instance, for `bfag_settings_fields`.
  * @var string                              $form_url Where the form posts.
+ * @var bool                                $is_pro   Whether the Pro add-on is active; without it `pro_only` fields are hidden inputs.
  *
  * @package BlueFairy\ApiGateway
  */
@@ -19,15 +20,27 @@ defined( 'ABSPATH' ) || exit;
 	<?php wp_nonce_field( 'bfag_save_settings' ); ?>
 	<table class="form-table" role="presentation">
 		<?php foreach ( $groups as $bfag_group_id => $bfag_group ) : ?>
+			<?php
+			// A group whose every field is Pro-only has no heading in the free plugin; its values still travel as hidden inputs (U-23).
+			$bfag_visible = $is_pro ? $bfag_group['fields'] : array_filter( $bfag_group['fields'], static fn( array $f ): bool => empty( $f['pro_only'] ) );
+			?>
+			<?php if ( [] !== $bfag_visible ) : ?>
 			<tr class="bfag-group-heading"><th colspan="2"><h2 id="bfag-group-<?php echo esc_attr( $bfag_group_id ); ?>"><?php echo esc_html( $bfag_group['label'] ); ?></h2>
-			<?php if ( isset( $bfag_group['note'] ) && '' !== $bfag_group['note'] ) : ?>
+				<?php if ( isset( $bfag_group['note'] ) && '' !== $bfag_group['note'] ) : ?>
 				<p class="description bfag-group-note"><?php echo esc_html( $bfag_group['note'] ); ?></p>
 			<?php endif; ?>
 			</th></tr>
+			<?php endif; ?>
 			<?php foreach ( $bfag_group['fields'] as $bfag_key => $bfag_field ) : ?>
 				<?php
 				$bfag_id    = 'bfag-setting-' . str_replace( '_', '-', $bfag_key );
 				$bfag_value = $values[ $bfag_key ] ?? '';
+				if ( ! $is_pro && ! empty( $bfag_field['pro_only'] ) ) :
+					?>
+					<input type="hidden" name="bfag[<?php echo esc_attr( $bfag_key ); ?>]" value="<?php echo esc_attr( is_scalar( $bfag_value ) ? (string) $bfag_value : '' ); ?>" />
+					<?php
+					continue;
+				endif;
 				?>
 				<tr>
 					<th scope="row"><label for="<?php echo esc_attr( $bfag_id ); ?>"><?php echo esc_html( $bfag_field['label'] ); ?></label></th>

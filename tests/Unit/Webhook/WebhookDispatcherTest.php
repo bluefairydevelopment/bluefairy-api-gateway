@@ -13,6 +13,7 @@ use BlueFairy\ApiGateway\Settings;
 use BlueFairy\ApiGateway\Tests\TestCase;
 use BlueFairy\ApiGateway\Webhook\DeliveryRepository;
 use BlueFairy\ApiGateway\Webhook\WebhookDispatcher;
+use BlueFairy\ApiGateway\Webhook\WebhookRepository;
 
 final class WebhookDispatcherTest extends TestCase {
 
@@ -112,12 +113,100 @@ final class WebhookDispatcherTest extends TestCase {
 		$this->assertSame( [], Logger::lines() );
 	}
 
-	public function test_auth_headers_filter_can_add_authorization_but_not_host(): void {
-		add_filter( 'bfag_webhook_auth_headers', static fn( array $h, array $webhook ): array => [ 'Authorization' => 'Bearer preset-' . $webhook['id'], 'Host' => 'evil.com' ], 10, 2 );
-		$this->dispatcher()->dispatch( $this->webhook( [ 'headers' => '{"Authorization":"Bearer from-row"}' ] ), 'post.published', [] );
+	/**
+	 * F4: `bfag_webhook_request_args` is the one place a credential header
+	 * is accepted — and it is trusted for credentials only. Transport
+	 * headers it plants are sanitised again after the filter.
+	 */
+	public function test_request_args_filter_may_set_authorization_but_its_transport_headers_are_stripped(): void {
+		$this->enable_logging();
+		$dispatcher = new WebhookDispatcher( new DeliveryRepository( new Settings() ), new Settings() );
+		add_filter(
+			'bfag_webhook_request_args',
+			static function ( array $args, array $webhook ): array {
+				$args['headers']['Authorization']   = 'Bearer preset-' . $webhook['id'];
+				$args['headers']['Host']            = 'evil.com';
+				$args['headers']['X-Forwarded-For'] = '127.0.0.1';
+				$args['headers']['X-Split']         = "a\r\nInjected: 1";
+				$args['headers']['X-Preset']        = 'kept';
+				return $args;
+			},
+			10,
+			2
+		);
+		$dispatcher->dispatch( $this->webhook( [ 'headers' => '{"Authorization":"Bearer from-row"}' ] ), 'post.published', [] );
 		$headers = $this->sent_headers_lower();
-		$this->assertSame( 'Bearer preset-7', $headers['authorization'], 'the preset wins; the row cannot supply Authorization' );
-		$this->assertArrayNotHasKey( 'host', $headers );
+		$this->assertSame( 'Bearer preset-7', $headers['authorization'], 'the filter wins; the row cannot supply Authorization' );
+		$this->assertArrayNotHasKey( 'host', $headers, 'Host planted by the filter is stripped' );
+		$this->assertArrayNotHasKey( 'x-forwarded-for', $headers );
+		$this->assertArrayNotHasKey( 'x-split', $headers, 'a CR/LF value is stripped' );
+		$this->assertSame( 'kept', $headers['x-preset'] );
+		$this->assertStringStartsWith( 'sha256=', $headers['x-bf-signature'], 'the core headers survive the second pass' );
+		$this->assertSame( 'application/json', $headers['content-type'] );
+		$this->assertSame( 3, count( array_filter( Logger::lines(), static fn( string $l ): bool => str_contains( $l, 'webhook header rejected' ) && ( str_contains( $l, '"Host"' ) || str_contains( $l, '"X-Forwarded-For"' ) || str_contains( $l, '"X-Split"' ) ) ) ), 'each stripped transport header is logged' );
+		$this->assertFalse( has_filter( 'bfag_webhook_auth_headers' ), 'control' );
+		$this->assertStringNotContainsString( 'bfag_webhook_auth_headers', (string) file_get_contents( BFAG_DIR . 'includes/Webhook/WebhookDispatcher.php' ), 'the dead seam is gone from the code' );
+	}
+
+	/**
+	 * N5: a request-args filter that cannot build a usable request cancels
+	 * the delivery by setting `bfag_skip`; the row is failed with that
+	 * reason, nothing is sent, and the failed action fires as usual.
+	 */
+	public function test_request_args_filter_can_skip_the_delivery_with_a_reason(): void {
+		$failed = [];
+		add_action(
+			'bfag_webhook_delivery_failed',
+			static function ( int $id, array $webhook, int $attempt, ?int $status ) use ( &$failed ): void {
+				$failed[] = [ $id, $attempt, $status ];
+			},
+			10,
+			4
+		);
+		add_filter(
+			'bfag_webhook_request_args',
+			static function ( array $args ): array {
+				$args['bfag_skip'] = 'Mailchimp preset: no email in payload';
+				return $args;
+			}
+		);
+		$this->wpdb->queue( 'insert', 1 );
+		$result = $this->dispatcher()->dispatch( $this->webhook(), 'post.published', [ 'n' => 1 ] );
+
+		$this->assertSame( [], $GLOBALS['bfag_test_http_calls'], 'nothing sent' );
+		$this->assertFalse( $result['success'] );
+		$this->assertNull( $result['http_status'] );
+		$update = $this->wpdb->calls_to( 'update' )[0]['data'];
+		$this->assertSame( 'failed', $update['status'] );
+		$this->assertNull( $update['http_status'] );
+		$this->assertSame( 'Mailchimp preset: no email in payload', $update['response_body'] );
+		$this->assertSame( [ [ 1, 1, null ] ], $failed, 'bfag_webhook_delivery_failed fired once' );
+
+		// Control: an empty string is not a skip.
+		unset( $GLOBALS['bfag_test_hooks']['bfag_webhook_request_args'] );
+		add_filter(
+			'bfag_webhook_request_args',
+			static function ( array $args ): array {
+				$args['bfag_skip'] = '';
+				return $args;
+			}
+		);
+		$this->dispatcher()->dispatch( $this->webhook(), 'post.published', [ 'n' => 2 ] );
+		$this->assertCount( 1, $GLOBALS['bfag_test_http_calls'], 'sent' );
+		$this->assertArrayNotHasKey( 'bfag_skip', $this->sent_args(), 'the marker is not forwarded to wp_remote_post' );
+	}
+
+	/**
+	 * F16: the dispatcher uses the repository it is given rather than
+	 * building a second one.
+	 */
+	public function test_the_repository_handed_in_is_the_one_used(): void {
+		$s          = new Settings();
+		$repository = new WebhookRepository();
+		$dispatcher = new WebhookDispatcher( new DeliveryRepository( $s ), $s, $repository );
+		$property   = new \ReflectionProperty( $dispatcher, 'webhooks' );
+		$this->assertSame( $repository, $property->getValue( $dispatcher ) );
+		$this->assertInstanceOf( WebhookRepository::class, $property->getValue( new WebhookDispatcher( new DeliveryRepository( $s ), $s ) ), 'without one, it builds one' );
 	}
 
 	public function test_row_headers_cannot_override_signature_or_content_type(): void {

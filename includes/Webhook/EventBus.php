@@ -188,13 +188,6 @@ final class EventBus {
 	}
 
 	/**
-	 * Drop the object-cached list of enabled webhooks.
-	 */
-	public function invalidate(): void {
-		wp_cache_delete( WebhookRepository::CACHE_KEY, WebhookRepository::CACHE_GROUP );
-	}
-
-	/**
 	 * Write one delivery as a `pending` row due now, for the cron to send.
 	 *
 	 * @param array<string, mixed> $webhook The webhook row.

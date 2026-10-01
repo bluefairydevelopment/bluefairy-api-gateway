@@ -43,7 +43,7 @@ final class RateLimitRuleRepository {
 	 *
 	 * @var array<string, array{int, int}>
 	 */
-	private const BOUNDS = [
+	public const BOUNDS = [
 		'max_requests'    => [ 1, 65535 ],
 		'window_seconds'  => [ 1, 86400 ],
 		'penalty_seconds' => [ 0, 2592000 ],

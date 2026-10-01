@@ -127,7 +127,10 @@ final class WebhookPageTest extends TestCase {
 		$this->assertStringNotContainsString( 'name="bfag[preset]"', $html, 'no presets, no select' );
 		$this->assertStringNotContainsString( 'name="bfag[max_retries]"', $html, 'free: no retries field' );
 		$this->assertStringContainsString( '<option value="post.published"', $html );
-		$this->assertStringContainsString( '<optgroup label="', $html );
+		$this->assertStringContainsString( '<optgroup label="Content">', $html, 'F17: group label through EventRegistry::group_label()' );
+		$this->assertStringContainsString( '<caption class="screen-reader-text">Webhooks</caption>', $html );
+		$this->assertStringContainsString( '<th scope="col">Last delivery</th>', $html );
+		$this->assertStringContainsString( 'role="button" aria-pressed="false" title="Click to enable this webhook"', $html );
 	}
 
 	/**
@@ -191,6 +194,7 @@ final class WebhookPageTest extends TestCase {
 		$this->assertMatchesRegularExpression( '/<option value="slack"\s+selected="selected">Slack/', $html );
 		$this->assertStringContainsString( 'name="bfag[max_retries]"', $html );
 		$this->assertStringContainsString( 'value="5"', $html );
+		$this->assertStringContainsString( 'Automatic retries after a failed delivery (Pro). 0 = none.', $html, 'U-23: Max retries help text' );
 		$this->assertStringContainsString( 'EXTRA-ROW', $html );
 		$this->assertTrue( strpos( $html, 'EXTRA-ROW' ) > strpos( $html, '<form' ) && strpos( $html, 'EXTRA-ROW' ) < strrpos( $html, '</table>' ), 'inside the form table' );
 		$this->assertIsArray( $seen );
@@ -200,10 +204,24 @@ final class WebhookPageTest extends TestCase {
 
 	public function test_the_delivery_log_sub_view_shows_badges_truncation_and_retry(): void {
 		$_GET = [ 'view' => 'deliveries' ];
+		update_option( 'date_format', 'd/m/Y' );
+		update_option( 'time_format', 'g:i a' );
 		$this->wpdb->queue( 'get_results', [ $this->webhook( 1 ) ] );
-		$this->wpdb->queue( 'get_results', [ $this->delivery( 10, 'failed' ), $this->delivery( 11, 'success', 1 ), $this->delivery( 12, 'pending', 0, 'in' ) ] );
+		$this->wpdb->queue( 'get_results', [ $this->delivery( 10, 'failed' ), $this->delivery( 11, 'success', 1 ), $this->delivery( 12, 'pending', 0, 'in' ), $this->delivery( 13, 'success' ), $this->delivery( 14, 'retrying' ), $this->delivery( 15, 'pending' ) ] );
 
 		$html = bfag_test_render( [ $this->page(), 'render' ] );
+
+		// U-10: Retry only where it means something.
+		$this->assertStringNotContainsString( 'data-bfag-retry="13"', $html, 'a successful delivery is not offered a Retry' );
+		$this->assertStringContainsString( 'data-bfag-retry="14"', $html, 'a Pro `retrying` row is' );
+		$this->assertStringNotContainsString( 'data-bfag-retry="15"', $html, 'an in-flight pending row is not' );
+		// U-12: every timestamp through Page::format_datetime(), labelled as site time.
+		$this->assertStringContainsString( '<th scope="col">Created (site time)</th>', $html );
+		$this->assertStringContainsString( '<th scope="col">Delivered (site time)</th>', $html );
+		$this->assertStringContainsString( '<td>' . \BlueFairy\ApiGateway\Admin\Page::format_datetime( '2026-01-01 00:00:00' ) . '</td>', $html );
+		$this->assertStringContainsString( '<td>01/01/2026 12:00 am</td>', $html );
+		$this->assertStringNotContainsString( '2026-01-01 00:00:00', $html, 'the raw GMT string never reaches the page' );
+		$this->assertStringContainsString( '<caption class="screen-reader-text">Delivery log, newest first</caption>', $html );
 
 		$this->assertStringContainsString( 'Delivery log', $html );
 		$this->assertStringNotContainsString( 'value="save_webhook"', $html, 'no form in the log view' );
@@ -216,6 +234,16 @@ final class WebhookPageTest extends TestCase {
 		$this->assertStringContainsString( 'CRM &lt;sync&gt;', $html );
 		$this->assertStringNotContainsString( self::SECRET, $html );
 		$this->assertStringContainsString( "( 0 = 0 OR webhook_id = 0 ) AND ( '' = '' OR status = '' ) AND ( '' = '' OR direction = '' ) ORDER BY created_at DESC, id DESC LIMIT 50", $this->wpdb->queries_matching( 'bfag_webhook_deliveries' )[0] );
+	}
+
+	/**
+	 * U-12: the helper itself — site-local output in the site's formats.
+	 */
+	public function test_format_datetime_uses_the_site_formats_and_timezone_conversion(): void {
+		$this->assertSame( '2026-10-01 12:00', \BlueFairy\ApiGateway\Admin\Page::format_datetime( '2026-10-01 12:00:00' ), 'defaults: Y-m-d H:i' );
+		update_option( 'date_format', 'F j, Y' );
+		update_option( 'time_format', 'g:i a' );
+		$this->assertSame( 'October 1, 2026 12:00 pm', \BlueFairy\ApiGateway\Admin\Page::format_datetime( '2026-10-01 12:00:00' ) );
 	}
 
 	public function test_the_delivery_log_can_be_filtered_to_one_webhook(): void {
@@ -293,7 +321,7 @@ final class WebhookPageTest extends TestCase {
 			]
 		);
 		$location = $this->redirect_of( [ $this->page(), 'handle_actions' ] );
-		$this->assertStringEndsWith( '&bfag_notice=webhook_event_unknown', $location );
+		$this->assertStringEndsWith( '&bfag_notice=webhook_event_invalid', $location );
 		$this->assertSame( [], $this->wpdb->calls );
 
 		add_filter(
@@ -330,8 +358,54 @@ final class WebhookPageTest extends TestCase {
 			]
 		);
 		$location = $this->redirect_of( [ $this->page(), 'handle_actions' ] );
-		$this->assertStringEndsWith( '&bfag_notice=webhook_invalid', $location );
+		$this->assertStringEndsWith( '&bfag_notice=webhook_url_invalid', $location, 'U-11: the URL notice, not the catch-all' );
 		$this->assertSame( [], $this->wpdb->calls_to( 'insert' ) );
+
+		foreach ( [ 'https://localhost/in', 'https://127.0.0.1/in', 'https://10.0.0.5/in', 'https://hooks.example.net:8443/in' ] as $url ) {
+			bfag_test_admin_request(
+				'save_webhook',
+				[
+					'label' => 'x',
+					'url'   => $url,
+					'event' => 'post.published',
+				]
+			);
+			$this->assertStringEndsWith( '&bfag_notice=webhook_url_invalid', $this->redirect_of( [ $this->page(), 'handle_actions' ] ), $url );
+		}
+		$this->assertSame( [], $this->wpdb->calls_to( 'insert' ) );
+	}
+
+	/**
+	 * U-11: a missing label has its own notice, and a refused save keeps the
+	 * typed values (never the secret) for one re-render of the form.
+	 */
+	public function test_a_failed_save_names_the_label_and_refills_the_form_once_without_the_secret(): void {
+		bfag_test_admin_request(
+			'save_webhook',
+			[
+				'label'   => '',
+				'url'     => 'https://hooks.example.net/typed',
+				'event'   => 'post.updated',
+				'secret'  => 'typed-secret',
+				'headers' => 'X-Typed: yes',
+			]
+		);
+		$location = $this->redirect_of( [ $this->page(), 'handle_actions' ] );
+		$this->assertStringEndsWith( '&bfag_notice=webhook_label_invalid', $location );
+		$parked = get_transient( 'bfag_form_' . get_current_user_id() );
+		$this->assertIsArray( $parked );
+		$this->assertArrayNotHasKey( 'secret', $parked, 'the secret is never parked' );
+
+		$this->prime_list( [], [] );
+		$html = bfag_test_render( [ $this->page(), 'render' ] );
+		$this->assertStringContainsString( 'value="https://hooks.example.net/typed"', $html );
+		$this->assertMatchesRegularExpression( '/<option value="post.updated"\s+selected="selected">/', $html );
+		$this->assertStringContainsString( 'X-Typed: yes', $html );
+		$this->assertStringNotContainsString( 'typed-secret', $html );
+
+		$this->prime_list( [], [] );
+		$html = bfag_test_render( [ $this->page(), 'render' ] );
+		$this->assertStringNotContainsString( 'hooks.example.net/typed', $html, 'shown once' );
 	}
 
 	public function test_creating_past_the_limit_is_refused(): void {

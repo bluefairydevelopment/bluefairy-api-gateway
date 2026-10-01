@@ -12,6 +12,7 @@ use BlueFairy\ApiGateway\Admin\ProUpsell;
 use BlueFairy\ApiGateway\Admin\RateLimitPage;
 use BlueFairy\ApiGateway\Admin\SettingsPage;
 use BlueFairy\ApiGateway\Admin\WebhookPage;
+use BlueFairy\ApiGateway\Cache\CachePurger;
 use BlueFairy\ApiGateway\Cache\CacheRuleRepository;
 use BlueFairy\ApiGateway\Cache\CacheStore;
 use BlueFairy\ApiGateway\Capabilities;
@@ -45,7 +46,7 @@ final class SubmitButtonIdTest extends TestCase {
 
 		$this->wpdb->queue( 'get_results', [] );
 		$this->wpdb->queue( 'get_var', 0 );
-		$html['cache'] = bfag_test_render( [ new CachePage( new CacheRuleRepository(), new CacheStore(), new ProUpsell() ), 'render' ] );
+		$html['cache'] = bfag_test_render( [ new CachePage( new CacheRuleRepository(), new CachePurger( new CacheStore(), new CacheRuleRepository() ), new ProUpsell(), new Settings() ), 'render' ] );
 
 		$this->wpdb->queue( 'get_results', [] );
 		$this->wpdb->queue( 'get_var', 0 );

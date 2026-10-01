@@ -71,13 +71,40 @@ final class SettingsPageTest extends TestCase {
 		$this->assertSame( 'Where the Pro add-on sends failure alerts. Leave blank to use the site admin email.', $fields['notification_email']['description'] );
 		$this->assertSame( 'Consecutive webhook failures before the Pro add-on raises an alert. The free plugin stores this but sends nothing.', $fields['failure_threshold']['description'] );
 
+		// U-23: without Pro the two fields are hidden inputs (values kept, nothing promised) and the General heading goes with them.
+		update_option( 'bfag_settings', [ 'notification_email' => 'ops@example.com' ] );
+		$html = bfag_test_render( [ $this->page(), 'render' ] );
+		$this->assertStringContainsString( '<input type="hidden" name="bfag[notification_email]" value="ops@example.com" />', $html );
+		$this->assertStringContainsString( '<input type="hidden" name="bfag[failure_threshold]" value="5" />', $html );
+		$this->assertStringNotContainsString( 'Where the Pro add-on sends failure alerts', $html );
+		$this->assertStringNotContainsString( 'before the Pro add-on raises an alert', $html );
+		$this->assertStringNotContainsString( '>General</h2>', $html );
+		$this->assertStringContainsString( '>Cache</h2>', $html );
+
+		add_filter( 'bfag_is_pro', '__return_true' );
 		$html = bfag_test_render( [ $this->page(), 'render' ] );
 		$this->assertStringContainsString( 'Where the Pro add-on sends failure alerts. Leave blank to use the site admin email.', $html );
 		$this->assertStringContainsString( 'before the Pro add-on raises an alert', $html );
+		$this->assertStringContainsString( '>General</h2>', $html );
+		$this->assertStringContainsString( 'type="email" id="bfag-setting-notification-email"', $html );
 		$this->assertStringNotContainsString( 'Where alerts are sent.', $html, 'the free plugin sends no alerts' );
 	}
 
+	/**
+	 * U-09: the setting pre-fills a new rule's TTL; it is no longer a fallback.
+	 */
+	public function test_the_ttl_setting_is_labelled_as_the_new_rule_ttl(): void {
+		$field = $this->page()->groups()['cache']['fields']['default_cache_ttl'];
+		$this->assertSame( 'New-rule TTL (seconds)', $field['label'] );
+		$this->assertSame( 'New-rule TTL — pre-fills the TTL of a new cache rule. Every rule carries its own TTL once saved.', $field['description'] );
+		$html = bfag_test_render( [ $this->page(), 'render' ] );
+		$this->assertStringContainsString( 'New-rule TTL — pre-fills the TTL of a new cache rule.', $html );
+		$this->assertStringNotContainsString( 'Default TTL', $html );
+		$this->assertStringNotContainsString( 'Used when a rule has no TTL of its own.', $html );
+	}
+
 	public function test_render_shows_every_field_with_its_value_and_fires_the_fields_hook_inside_the_table(): void {
+		add_filter( 'bfag_is_pro', '__return_true' );
 		update_option(
 			'bfag_settings',
 			[
@@ -196,6 +223,8 @@ final class SettingsPageTest extends TestCase {
 		$html = bfag_test_render( [ $page, 'render_cron_notice' ] );
 		$this->assertStringContainsString( 'notice notice-warning', $html );
 		$this->assertStringContainsString( 'WP-Cron is disabled', $html );
+		$this->assertStringContainsString( 'then tick &#039;Hide the WP-Cron notice&#039; on this page&#039;s Settings tab (Advanced).', $html, 'U-23: says where the box is' );
+		$this->assertStringNotContainsString( 'under Settings › Advanced', $html );
 
 		update_option( 'bfag_settings', [ 'disable_cron_notice' => true ] );
 		$acknowledged = $this->page();

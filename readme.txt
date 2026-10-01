@@ -20,7 +20,7 @@ BlueFairy API Gateway sits in front of the WordPress REST API and does three thi
 
 **Signed outbound webhooks.** Up to three webhooks, each subscribing to one event: post published, updated or deleted; user registered or updated; comment created; and, with WooCommerce, order created, order status changed, order completed, product updated. Each delivery is a JSON `POST` carrying `X-BF-Event`, `X-BF-Delivery`, `X-BF-Timestamp` and `X-BF-Signature: sha256=HMAC-SHA256(timestamp.body, secret)`, so the receiver can verify both origin and freshness. Deliveries are collected during the request and sent once after the response — twenty at most, the rest through a WP-Cron event so a bulk import never ties up the request that saved it — logged with their HTTP status and response body, and any failed delivery can be resent from the log. Targets must be `https://`; a secret is generated for you and shown once, right after saving, for you to copy into the receiver.
 
-**Dashboard.** Cache hit rate, webhook success rate and the hit-log size over the last 24 hours, the ten most recent failed deliveries with a Retry button, and the same figures at `GET /bfag/v1/status` for a monitor — a route that is never rate-limited.
+**Dashboard.** Cache hit rate and webhook success rate over the last 24 hours, the current size of the rate-limit log, the ten most recent failed deliveries with a Retry button, and the same figures at `GET /bfag/v1/status` for a monitoring tool — a route that is never rate-limited.
 
 **Add API Gateway Pro** for up to 500 cache rules, rate-limit rules and webhooks; purges narrowed to the tags a change touches; rate limits per user and per API key with penalty bans; DDoS auto-ban with a blocked-IPs panel; automatic webhook retries with back-off and failure alerts by email; Salesforce, HubSpot and Mailchimp presets; a signed incoming-webhook endpoint; a webhook REST API; API keys with scopes; and WPGraphQL query caching. Pro installs alongside this plugin rather than replacing it.
 
@@ -36,7 +36,7 @@ Activation creates six database tables, seeds one cache rule and one rate-limit 
 
 Everything lives under **Settings → API Gateway**, in five tabs.
 
-**Dashboard** — three cards (cache hit rate, webhook success rate, blocked today) recomputed every five minutes or when you press **Refresh**; the ten newest failed deliveries with **Retry**; the raw counts; and the status endpoint URL with a **Copy** button.
+**Dashboard** — three cards (cache hit rate, webhook success rate, and the Pro ban count — shown as *Blocked (Pro)* without the add-on) recomputed every five minutes or when you press **Refresh**; the ten newest failed deliveries with **Retry**; the raw counts; and the status endpoint URL with a **Copy** button. Timestamps are shown in the site's timezone.
 
 **Cache** — the rules table with an Enabled/Disabled badge you can click, **Edit** and **Delete**, and **Purge all**. The add/edit form takes a label, a route glob (matched without the leading slash: `wc/v3/products/*` matches `wc/v3/products` and `wc/v3/products/12`), a TTL in seconds and optional comma-separated tags. A rule with no tags is purged on every content change; add tags to narrow purging to those tags. Edit the seeded "All routes" rule to narrow it. With more than one rule the most specific one wins, and the table is listed in that order.
 
@@ -68,7 +68,7 @@ Deleting the plugin always removes its options, transients, cron events and the 
 
 = How do retries work? =
 
-In the free plugin a failed delivery — any non-2xx answer, or no answer within ten seconds — is marked `failed` in the log and stays there. Press **Retry** on the dashboard or in the delivery log to resend the stored payload bytes as the next attempt, with a fresh timestamp and signature and the same `X-BF-Delivery` id. A delivery whose stored payload was truncated at the *Max stored payload* setting cannot be retried, because the stored bytes are no longer what was signed. Automatic retries with back-off (one minute, five minutes, thirty minutes, up to a per-webhook limit) and failure alerts are part of API Gateway Pro.
+In the free plugin a failed delivery — any non-2xx answer, or no answer within ten seconds — is marked `failed` in the log and stays there. Press **Retry** — offered on failed deliveries only — on the dashboard or in the delivery log to resend the stored payload bytes as the next attempt, with a fresh timestamp and signature and the same `X-BF-Delivery` id. A delivery whose stored payload was truncated at the *Max stored payload* setting cannot be retried, because the stored bytes are no longer what was signed. Automatic retries with back-off (one minute, five minutes, thirty minutes, up to a per-webhook limit) and failure alerts are part of API Gateway Pro.
 
 = How does my receiver verify the signature? =
 
@@ -108,7 +108,7 @@ The plugin contains no network-specific features. Each site keeps its own rules,
 
 == Screenshots ==
 
-1. Dashboard — cache hit rate, webhook success rate and blocked-today cards, the recent failed deliveries with Retry, and the status endpoint.
+1. Dashboard — cache hit rate, webhook success rate and ban-count cards, the recent failed deliveries with Retry, and the status endpoint.
 2. Cache — the rules table with the seeded "All routes" rule, Purge all, and the add/edit form with route glob, TTL and tags.
 3. Rate limit — the rules table with the seeded per-IP rule and the form: count by, route glob, requests per window.
 4. Webhooks — the webhooks table with Send test, and the add/edit form: URL, event, signing secret and extra headers.

@@ -28,9 +28,19 @@ final class SettingsPage extends Page {
 	/**
 	 * Constructor.
 	 *
-	 * @param Settings $settings Plugin settings.
+	 * @param Settings       $settings Plugin settings.
+	 * @param ProUpsell|null $upsell   Pro state (the Pro-only fields hide without it); null builds one.
 	 */
-	public function __construct( private readonly Settings $settings ) {}
+	public function __construct( private readonly Settings $settings, ?ProUpsell $upsell = null ) {
+		$this->upsell = $upsell ?? new ProUpsell();
+	}
+
+	/**
+	 * Pro state.
+	 *
+	 * @var ProUpsell
+	 */
+	private ProUpsell $upsell;
 
 	/**
 	 * Tab id.
@@ -52,7 +62,11 @@ final class SettingsPage extends Page {
 	 * Field definitions, grouped. Every key of Settings::DEFAULTS appears
 	 * exactly once; the test asserts it.
 	 *
-	 * @return array<string, array{label:string, note?:string, fields:array<string, array{label:string, type:string, description:string, min?:int, max?:int, options?:array<string, string>}>}>
+	 * A field flagged `pro_only` is rendered as a hidden input (its value
+	 * kept) unless the Pro add-on is active: nothing in the free plugin
+	 * reads it, so showing it would be a promise (U-23).
+	 *
+	 * @return array<string, array{label:string, note?:string, fields:array<string, array{label:string, type:string, description:string, min?:int, max?:int, options?:array<string, string>, pro_only?:bool}>}>
 	 */
 	public function groups(): array {
 		return [
@@ -62,11 +76,13 @@ final class SettingsPage extends Page {
 					'notification_email' => [
 						'label'       => __( 'Notification email', 'bluefairy-api-gateway' ),
 						'type'        => 'email',
+						'pro_only'    => true,
 						'description' => __( 'Where the Pro add-on sends failure alerts. Leave blank to use the site admin email.', 'bluefairy-api-gateway' ),
 					],
 					'failure_threshold'  => [
 						'label'       => __( 'Failure threshold', 'bluefairy-api-gateway' ),
 						'type'        => 'number',
+						'pro_only'    => true,
 						'min'         => 1,
 						'max'         => 100,
 						'description' => __( 'Consecutive webhook failures before the Pro add-on raises an alert. The free plugin stores this but sends nothing.', 'bluefairy-api-gateway' ),
@@ -83,11 +99,11 @@ final class SettingsPage extends Page {
 						'description' => __( 'Serve anonymous GET responses from the cache when a rule matches.', 'bluefairy-api-gateway' ),
 					],
 					'default_cache_ttl' => [
-						'label'       => __( 'Default TTL (seconds)', 'bluefairy-api-gateway' ),
+						'label'       => __( 'New-rule TTL (seconds)', 'bluefairy-api-gateway' ),
 						'type'        => 'number',
 						'min'         => 1,
 						'max'         => 86400,
-						'description' => __( 'Used when a rule has no TTL of its own.', 'bluefairy-api-gateway' ),
+						'description' => __( 'New-rule TTL — pre-fills the TTL of a new cache rule. Every rule carries its own TTL once saved.', 'bluefairy-api-gateway' ),
 					],
 				],
 			],
@@ -169,6 +185,7 @@ final class SettingsPage extends Page {
 				'groups'   => $this->groups(),
 				'values'   => $this->settings->all(),
 				'settings' => $this->settings,
+				'is_pro'   => $this->upsell->is_pro(),
 				'form_url' => $this->url(),
 			]
 		);
@@ -187,7 +204,7 @@ final class SettingsPage extends Page {
 			return;
 		}
 		echo '<div class="notice notice-warning"><p>'
-			. esc_html__( 'WP-Cron is disabled (DISABLE_WP_CRON). The gateway prunes its logs and recomputes dashboard figures on WP-Cron: make sure a system cron runs wp-cron.php, then tick "Hide the WP-Cron notice" under Settings › Advanced.', 'bluefairy-api-gateway' )
+			. esc_html__( 'WP-Cron is disabled (DISABLE_WP_CRON). The gateway prunes its logs and recomputes dashboard figures on WP-Cron: make sure a system cron runs wp-cron.php, then tick \'Hide the WP-Cron notice\' on this page\'s Settings tab (Advanced).', 'bluefairy-api-gateway' )
 			. '</p></div>';
 	}
 

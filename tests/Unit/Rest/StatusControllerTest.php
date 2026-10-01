@@ -35,9 +35,23 @@ final class StatusControllerTest extends TestCase {
 		$this->assertSame( [ $controller, 'permission' ], $route['permission_callback'] );
 		$this->assertArrayHasKey( 'args', $route );
 
-		$this->assertFalse( call_user_func( $route['permission_callback'] ), 'no capability, no status' );
+		$request = new \WP_REST_Request( 'GET', '/bfag/v1/status' );
+		$this->assertFalse( call_user_func( $route['permission_callback'], $request ), 'no capability, no status' );
 		bfag_test_grant( Capabilities::MANAGE );
-		$this->assertTrue( call_user_func( $route['permission_callback'] ) );
+		$this->assertTrue( call_user_func( $route['permission_callback'], $request ) );
+	}
+
+	/**
+	 * N3: a `read` key passes; a `write` key does not (write does not imply read).
+	 */
+	public function test_permission_accepts_a_read_key_scope_without_a_user(): void {
+		$permission = [ $this->controller(), 'permission' ];
+		$request    = new \WP_REST_Request( 'GET', '/bfag/v1/status' );
+		$request->set_param( 'bfag_api_key_scope', 'read' );
+		$this->assertTrue( $permission( $request ) );
+		$request = new \WP_REST_Request( 'GET', '/bfag/v1/status' );
+		$request->set_param( 'bfag_api_key_scope', 'write cache:purge' );
+		$this->assertFalse( $permission( $request ) );
 	}
 
 	/**

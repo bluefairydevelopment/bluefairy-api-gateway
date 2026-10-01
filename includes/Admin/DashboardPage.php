@@ -37,14 +37,25 @@ final class DashboardPage extends Page {
 	 * @param WebhookRepository       $webhooks    Webhooks.
 	 * @param DeliveryRepository      $deliveries  Delivery log.
 	 * @param KpiCron                 $kpis        KPI transient (also the source of the hits-table row count).
+	 * @param ProUpsell|null          $upsell      Pro state (the third card differs); null builds one.
 	 */
 	public function __construct(
 		private readonly CacheRuleRepository $cache_rules,
 		private readonly RateLimitRuleRepository $rl_rules,
 		private readonly WebhookRepository $webhooks,
 		private readonly DeliveryRepository $deliveries,
-		private readonly KpiCron $kpis
-	) {}
+		private readonly KpiCron $kpis,
+		?ProUpsell $upsell = null
+	) {
+		$this->upsell = $upsell ?? new ProUpsell();
+	}
+
+	/**
+	 * Pro state.
+	 *
+	 * @var ProUpsell
+	 */
+	private ProUpsell $upsell;
 
 	/**
 	 * Tab id.
@@ -75,6 +86,7 @@ final class DashboardPage extends Page {
 			'dashboard',
 			[
 				'kpis'    => $kpis,
+				'is_pro'  => $this->upsell->is_pro(),
 				'failed'  => $this->deliveries->recent( self::FAILED_LIMIT, [ 'status' => 'failed' ] ),
 				'labels'  => $labels,
 				'counts'  => [

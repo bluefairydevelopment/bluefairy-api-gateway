@@ -93,6 +93,33 @@ final class CapabilitiesTest extends TestCase {
 		}
 		$this->assertSame( 'Read any route', Capabilities::SCOPE_LABELS['read'] );
 		$this->assertSame( "Create, update and delete through any REST route (acts as the key's user)", Capabilities::SCOPE_LABELS['write'] );
+		// F17: the translatable twin agrees with the untranslated map for every scope, and never returns an empty string.
+		foreach ( Capabilities::SCOPES as $scope ) {
+			$this->assertSame( Capabilities::SCOPE_LABELS[ $scope ], Capabilities::scope_label( $scope ), $scope );
+			$this->assertNotSame( '', Capabilities::scope_label( $scope ) );
+		}
+		$this->assertSame( 'unknown:scope', Capabilities::scope_label( 'unknown:scope' ) );
+	}
+
+	/**
+	 * N3: request_allowed() is the permission callback of the base routes.
+	 */
+	public function test_request_allowed_passes_the_capability_or_a_satisfying_key_scope(): void {
+		$purge = new \WP_REST_Request( 'POST', '/bfag/v1/cache/purge' );
+		$this->assertFalse( Capabilities::request_allowed( $purge ), 'anonymous, no key' );
+		$purge->set_param( 'bfag_api_key_scope', 'read' );
+		$this->assertFalse( Capabilities::request_allowed( $purge ), 'read does not cover cache:purge' );
+		$purge->set_param( 'bfag_api_key_scope', 'cache:purge' );
+		$this->assertTrue( Capabilities::request_allowed( $purge ), 'a cache:purge key bound to nobody may purge' );
+
+		$status = new \WP_REST_Request( 'GET', '/bfag/v1/status' );
+		$status->set_param( 'bfag_api_key_scope', 'read' );
+		$this->assertTrue( Capabilities::request_allowed( $status ) );
+		$status->set_param( 'bfag_api_key_scope', '   ' );
+		$this->assertFalse( Capabilities::request_allowed( $status ), 'blank scope' );
+
+		bfag_test_grant( Capabilities::MANAGE );
+		$this->assertTrue( Capabilities::request_allowed( new \WP_REST_Request( 'POST', '/bfag/v1/cache/purge' ) ), 'the capability alone' );
 	}
 
 	public function test_scopes_constant_lists_every_scope_the_map_can_require(): void {
