@@ -141,6 +141,31 @@ final class HarnessTest extends TestCase {
 		$this->assertFalse( wp_cache_supports( 'flush_group' ) );
 	}
 
+	/**
+	 * TF7: `__()` runs the `gettext` filter as core's translate() does, so a
+	 * test can plant a translation and tell "translated" from "the literal"
+	 * — the only way to assert that a string was NOT translated (D6).
+	 */
+	public function test_gettext_stubs_honour_the_gettext_filter_and_did_action_counts(): void {
+		$this->assertSame( 'Plain', __( 'Plain', 'bluefairy-api-gateway' ), 'control: no filter, the literal' );
+		add_filter(
+			'gettext',
+			static function ( string $translation, string $text, string $domain ): string {
+				return 'bluefairy-api-gateway' === $domain ? '[xx] ' . $text : $translation;
+			},
+			10,
+			3
+		);
+		$this->assertSame( '[xx] Plain', __( 'Plain', 'bluefairy-api-gateway' ) );
+		$this->assertSame( '[xx] &lt;b&gt;', esc_html__( '<b>', 'bluefairy-api-gateway' ), 'esc_html__() translates, then escapes' );
+		$this->assertSame( '[xx] a&quot;', esc_attr__( 'a"', 'bluefairy-api-gateway' ) );
+		$this->assertSame( 'Other', __( 'Other', 'other-domain' ), 'the filter sees the domain' );
+
+		$this->assertSame( 0, did_action( 'init' ), 'the harness starts before init, as plugins_loaded is' );
+		do_action( 'init' );
+		$this->assertSame( 1, did_action( 'init' ) );
+	}
+
 	public function test_get_sites_pages_like_core(): void {
 		$GLOBALS['bfag_test_sites'] = range( 1, 5 );
 		$this->assertSame( [ 1, 2 ], get_sites( [ 'fields' => 'ids', 'number' => 2 ] ) );

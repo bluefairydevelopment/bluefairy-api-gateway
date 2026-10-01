@@ -268,7 +268,12 @@ final class DeliveryRepository {
 	}
 
 	/**
-	 * Delivery counts by status since a GMT datetime.
+	 * Outbound delivery counts by status since a GMT datetime.
+	 *
+	 * Outbound only: an inbound row (the Pro receiving endpoint's record of
+	 * a call someone made to this site) is not a delivery this site made,
+	 * so it belongs in neither the success nor the failure figure of the
+	 * dashboard's "Webhook success" card.
 	 *
 	 * @param string $mysql_gmt_datetime 'Y-m-d H:i:s' in GMT.
 	 * @return array{success:int, failed:int, pending:int, retrying:int}
@@ -283,7 +288,7 @@ final class DeliveryRepository {
 			'retrying' => 0,
 		];
 		$rows  = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-			$wpdb->prepare( "SELECT status, COUNT(*) AS n FROM {$wpdb->prefix}bfag_webhook_deliveries WHERE created_at >= %s GROUP BY status LIMIT %d", $mysql_gmt_datetime, 10 ),
+			$wpdb->prepare( "SELECT status, COUNT(*) AS n FROM {$wpdb->prefix}bfag_webhook_deliveries WHERE direction = %s AND created_at >= %s GROUP BY status LIMIT %d", 'out', $mysql_gmt_datetime, 10 ),
 			ARRAY_A
 		);
 		foreach ( is_array( $rows ) ? $rows : [] as $row ) {

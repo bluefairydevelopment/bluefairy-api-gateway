@@ -406,7 +406,11 @@ function wp_kses( mixed $data, mixed $allowed ): string {
 	return strip_tags( is_scalar( $data ) ? (string) $data : '', is_array( $allowed ) ? array_map( 'strval', array_keys( $allowed ) ) : [] );
 }
 function __( string $text, string $domain = 'default' ): string {
-	return $text;
+	// TF7: core's translate() runs the `gettext` filter; a test may plant one
+	// to tell a translated string from the literal (D6: a string that must
+	// not be translated before `init`).
+	$translated = apply_filters( 'gettext', $text, $text, $domain );
+	return is_string( $translated ) ? $translated : $text;
 }
 function _x( string $text, string $context, string $domain = 'default' ): string {
 	return $text;
@@ -415,10 +419,10 @@ function _n( string $single, string $plural, int $number, string $domain = 'defa
 	return 1 === $number ? $single : $plural;
 }
 function esc_html__( string $text, string $domain = 'default' ): string {
-	return esc_html( $text );
+	return esc_html( __( $text, $domain ) );
 }
 function esc_attr__( string $text, string $domain = 'default' ): string {
-	return esc_attr( $text );
+	return esc_attr( __( $text, $domain ) );
 }
 function esc_html_x( string $text, string $context, string $domain = 'default' ): string {
 	return esc_html( $text );

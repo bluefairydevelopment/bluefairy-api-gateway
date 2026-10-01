@@ -369,7 +369,7 @@ final class WebhookDispatcher {
 						'reason'      => $skip,
 					]
 				);
-				return $this->finish( $delivery_id, $webhook, $attempt, false, null, $skip );
+				return $this->finish( $delivery_id, $webhook, $attempt, false, null, $skip, true );
 			}
 
 			// The filter is trusted for credentials, not for transport headers.
@@ -382,7 +382,17 @@ final class WebhookDispatcher {
 			}
 			if ( '' === $url || false === wp_http_validate_url( $url ) ) {
 				Logger::log( 'webhook url rejected', [ 'url' => $url ] );
-				return $this->finish( $delivery_id, $webhook, $attempt, false, null, 'Invalid or unsafe URL' );
+				// D3: stored as the response body so the log says why nothing
+				// was sent; final, because the same URL fails the same way.
+				return $this->finish(
+					$delivery_id,
+					$webhook,
+					$attempt,
+					false,
+					null,
+					'Invalid or unsafe URL (nothing sent): ' . ( '' === $url ? '(empty)' : $url ),
+					true
+				);
 			}
 
 			$response = wp_remote_post( $url, $args );
@@ -405,9 +415,11 @@ final class WebhookDispatcher {
 	 * @param bool                 $success     Whether the response was 2xx.
 	 * @param int|null             $http_status Response code, null for a transport failure.
 	 * @param string               $body        Response body or error message.
+	 * @param bool                 $is_final    True when a retry could never succeed (the preset
+	 *                                          skipped it, or the URL is invalid or unsafe).
 	 * @return array{delivery_id:int, success:bool, http_status:int|null}
 	 */
-	private function finish( int $delivery_id, array $webhook, int $attempt, bool $success, ?int $http_status, string $body ): array {
+	private function finish( int $delivery_id, array $webhook, int $attempt, bool $success, ?int $http_status, string $body, bool $is_final = false ): array {
 		// PN2: a finished row is never due again. Left set, every finished
 		// row stayed in idx_next_retry and the pending sweep paid for it.
 		$this->deliveries->update(
@@ -440,21 +452,30 @@ final class WebhookDispatcher {
 					'webhook_id'  => (int) ( $webhook['id'] ?? 0 ),
 					'attempt'     => $attempt,
 					'http_status' => $http_status,
+					'final'       => $is_final,
 				]
 			);
 
 			/**
-			 * A delivery failed (non-2xx or transport error). The Pro add-on
-			 * schedules retries and alerts from here.
+			 * A delivery failed. The Pro add-on schedules retries and alerts
+			 * from here.
+			 *
+			 * `$final` is true for the two outcomes a retry can never change
+			 * (N-05 / D3): the request-args filter cancelled the delivery
+			 * (`bfag_skip` — the preset could not build a request from this
+			 * payload) or the URL is invalid or unsafe. A scheduler must leave
+			 * such a row `failed`. It is false for an HTTP (non-2xx) or
+			 * transport failure (`$http_status` null), which may be retried.
 			 *
 			 * @since 1.0.0
 			 *
 			 * @param int                  $delivery_id Delivery row id.
 			 * @param array<string, mixed> $webhook     The webhook row.
 			 * @param int                  $attempt     Attempt number.
-			 * @param int|null             $http_status Response code, null for a transport failure.
+			 * @param int|null             $http_status Response code, null when no HTTP response was received.
+			 * @param bool                 $is_final    True when no retry could succeed.
 			 */
-			do_action( 'bfag_webhook_delivery_failed', $delivery_id, $webhook, $attempt, $http_status );
+			do_action( 'bfag_webhook_delivery_failed', $delivery_id, $webhook, $attempt, $http_status, $is_final );
 		}
 
 		return [

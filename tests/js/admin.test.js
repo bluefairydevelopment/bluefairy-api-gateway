@@ -4,8 +4,9 @@
  *   node tests/js/admin.test.js
  *
  * Covers the dashboard Refresh (N4: the "Not computed yet" line is replaced
- * once the server answers), the dismissible-notice handler, and the
- * rate-limit Penalty row that follows the "Count by" select (U-08).
+ * once the server answers; D5: the outcome is said once and the blocked
+ * card's label follows `blocked_label`), the dismissible-notice handler,
+ * and the rate-limit Penalty row that follows the "Count by" select (U-08).
  *
  * @package BlueFairy\ApiGateway
  */
@@ -151,7 +152,7 @@ function load( root, options ) {
 	globalThis.bfagAdmin = {
 		ajaxUrl: '/wp-admin/admin-ajax.php',
 		nonces: Object.assign( { purge: 'n-purge', refresh: 'n-refresh', retry: 'n-retry', toggle: 'n-toggle', dismiss: 'n-dismiss' }, ( options && options.nonces ) || {} ),
-		i18n: { updatedNow: 'Updated just now', refreshed: 'Updated.', working: 'Working…' },
+		i18n: { updatedNow: 'Updated just now', refreshed: 'Updated.', working: 'Working…', activeBlocks: 'Active blocks' },
 	};
 	vm.runInThisContext( fs.readFileSync( SCRIPT, 'utf8' ), { filename: SCRIPT } );
 	return doc;
@@ -170,28 +171,38 @@ function it( name, fn ) {
 	cases.push( { name, fn } );
 }
 
-function dashboard() {
+function dashboard( options ) {
+	const withBlocked = ! options || options.blocked !== false;
 	const value = element( 'span', { 'data-bfag-kpi': 'cache_hit_rate', 'data-bfag-format': 'rate' } );
 	value.textContent = '—';
 	const hits = element( 'span', { 'data-bfag-kpi': 'cache_hits' } );
 	hits.textContent = '—';
+	const blockedLabel = element( 'span', { class: 'bfag-kpi__label', 'data-bfag-kpi-label': 'blocked' } );
+	blockedLabel.textContent = 'Rendered label';
+	const blocked = element( 'span', { 'data-bfag-kpi': 'blocked_today' } );
+	blocked.textContent = '—';
 	const updated = element( 'span', { class: 'bfag-kpi-updated' } );
 	updated.textContent = 'Not computed yet — the figures fill in after the first five-minute cron run, or press Refresh.';
 	const status = element( 'span', { 'data-bfag-status': '' } );
 	const button = element( 'button', { 'data-bfag-refresh': '' } );
+	const cards = [ value, hits ];
+	if ( withBlocked ) {
+		cards.push( element( 'div', { class: 'bfag-kpi' }, [ blockedLabel, blocked ] ) );
+	}
 	const root = element( 'div', {}, [
-		element( 'div', { 'data-bfag-kpis': '' }, [ value, hits ] ),
+		element( 'div', { 'data-bfag-kpis': '' }, cards ),
 		element( 'p', { class: 'bfag-kpi-actions' }, [ button, updated, status ] ),
 	] );
-	return { root, value, hits, updated, status, button };
+	return { root, value, hits, blockedLabel, blocked, updated, status, button };
 }
 
-it( 'Refresh replaces the "Not computed yet" line and fills the cards (N4)', async () => {
+it( 'Refresh replaces the "Not computed yet" line, fills the cards, and says so once (N4, D5)', async () => {
 	const d = dashboard();
 	const fetch = fakeFetch( { success: true, data: { cache_hit_rate: 0.756, cache_hits: 1234, computed_at: 1790812800 } } );
 	const doc = load( d.root, { fetch: fetch } );
 
 	doc.click( d.button );
+	assert.strictEqual( d.status.textContent, 'Working…', 'control: the slot carries the in-flight text until the answer' );
 	await flush();
 
 	assert.strictEqual( fetch.calls.length, 1 );
@@ -201,16 +212,45 @@ it( 'Refresh replaces the "Not computed yet" line and fills the cards (N4)', asy
 	assert.strictEqual( d.value.textContent, '75.6%' );
 	assert.strictEqual( d.hits.textContent, '1,234' );
 	assert.strictEqual( d.button.disabled, false );
-	assert.strictEqual( d.status.textContent, 'Updated.' );
+	assert.strictEqual( d.status.textContent, '', 'D5: the status slot is cleared, so the line does not read "Updated just now Updated."' );
+	assert.strictEqual( ( d.updated.textContent + ' ' + d.status.textContent ).trim(), 'Updated just now', 'the whole line, as a reader sees it' );
 } );
 
-it( 'without computed_at in the answer the updated line is left alone', async () => {
+it( 'without computed_at in the answer the updated line is left alone and the status slot reports instead', async () => {
 	const d = dashboard();
 	const doc = load( d.root, { fetch: fakeFetch( { success: true, data: { cache_hits: 5 } } ) } );
 	doc.click( d.button );
 	await flush();
 	assert.strictEqual( d.hits.textContent, '5' );
 	assert.ok( d.updated.textContent.startsWith( 'Not computed yet' ), 'unchanged: ' + d.updated.textContent );
+	assert.strictEqual( d.status.textContent, 'Updated.', 'the one place the outcome is said' );
+} );
+
+it( 'the blocked card takes its label from blocked_label in the answer, else the default (D5)', async () => {
+	const d = dashboard();
+	const doc = load( d.root, { fetch: fakeFetch( { success: true, data: { blocked_today: 4, blocked_label: 'Banned <now>', computed_at: 1790812800 } } ) } );
+	doc.click( d.button );
+	await flush();
+	assert.strictEqual( d.blockedLabel.textContent, 'Banned <now>', 'renamed by the answer (textContent, so the angle brackets are literal text)' );
+	assert.strictEqual( d.blocked.textContent, '4', 'control: the figure updated too' );
+
+	const e = dashboard();
+	const doc2 = load( e.root, { fetch: fakeFetch( { success: true, data: { blocked_today: 0, computed_at: 1790812800 } } ) } );
+	doc2.click( e.button );
+	await flush();
+	assert.strictEqual( e.blockedLabel.textContent, 'Active blocks', 'no blocked_label: the rendered text is replaced by the default, not left as whatever was there' );
+
+	const f = dashboard();
+	const doc3 = load( f.root, { fetch: fakeFetch( { success: true, data: { blocked_today: 0, blocked_label: '', computed_at: 1790812800 } } ) } );
+	doc3.click( f.button );
+	await flush();
+	assert.strictEqual( f.blockedLabel.textContent, 'Active blocks', 'an empty blocked_label is no label' );
+
+	const g = dashboard( { blocked: false } );
+	const doc4 = load( g.root, { fetch: fakeFetch( { success: true, data: { blocked_label: 'X', computed_at: 1790812800 } } ) } );
+	doc4.click( g.button );
+	await flush();
+	assert.strictEqual( g.blockedLabel.textContent, 'Rendered label', 'the free dashboard has no such card; nothing to rename' );
 } );
 
 it( 'a failed refresh leaves the line and shows the error', async () => {

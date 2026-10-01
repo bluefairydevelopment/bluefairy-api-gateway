@@ -183,7 +183,10 @@ final class RateLimitPageTest extends TestCase {
 		$this->prime_render( [] );
 		$html = bfag_test_render( [ $this->page(), 'render' ] );
 		$this->assertStringNotContainsString( 'value="Typed"', $html, 'shown once' );
-		$this->assertStringContainsString( 'required value="60"', $html, 'defaults again' );
+		$this->assertStringNotContainsString( 'required value="33"', $html );
+		// The add form pre-fills the seeded rule's figures (300 per 60 s), not 60/60.
+		$this->assertStringContainsString( 'id="bfag-rl-max" name="bfag[max_requests]" class="small-text" min="1" max="65535" required value="300"', $html, 'defaults again: max_requests 300' );
+		$this->assertStringContainsString( 'id="bfag-rl-window" name="bfag[window_seconds]" class="small-text" min="1" max="86400" required value="60"', $html, 'window_seconds 60' );
 
 		bfag_test_admin_request(
 			'save_rate_limit_rule',

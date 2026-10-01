@@ -270,6 +270,17 @@ final class Installer {
 	 * pending-flush sweep scanned them all. Null it on the finished rows;
 	 * `pending`/`retrying` rows keep theirs (they are queued or scheduled).
 	 *
+	 * Settings are NOT migrated here, and `provision_site()` never rewrites
+	 * an existing `bfag_settings`: a site keeps every value it was installed
+	 * with. So a change to a key's DEFAULT in `Settings::DEFAULTS` reaches
+	 * new installs only. When a default changes in a way existing sites
+	 * must follow (a key that used to default on and now defaults off, say),
+	 * add a version-gated step here that rewrites that one key — and only
+	 * where the stored value is still the old default, so an administrator's
+	 * deliberate choice survives. (Observed: a site installed from an early
+	 * development build keeps `incoming_enabled` true; nothing shipped with
+	 * that default, so no step is needed.)
+	 *
 	 * @param string $from The schema version being upgraded from.
 	 */
 	private static function upgrade_data( string $from ): void {
@@ -290,13 +301,22 @@ final class Installer {
 	/**
 	 * Register the five-minute schedule. Hooked to `cron_schedules`.
 	 *
+	 * The label is translated only once `init` has run (D6): on an upgrade
+	 * boot `maybe_upgrade()` → `schedule_cron()` → `wp_schedule_event()` →
+	 * `wp_get_schedules()` runs this filter on `plugins_loaded`, and a
+	 * `__()` there loads the text domain early, which WP 6.7+ reports as a
+	 * `_load_textdomain_just_in_time` notice. Nothing reads the label before
+	 * init except that scheduling, so the untranslated string serves it.
+	 *
 	 * @param array<string, array{interval:int, display:string}> $schedules Existing schedules.
 	 * @return array<string, array{interval:int, display:string}>
 	 */
 	public static function cron_schedules( array $schedules ): array {
 		$schedules['bfag_five_minutes'] = [
 			'interval' => 300,
-			'display'  => __( 'Every five minutes (BlueFairy API Gateway)', 'bluefairy-api-gateway' ),
+			'display'  => did_action( 'init' ) > 0
+				? __( 'Every five minutes (BlueFairy API Gateway)', 'bluefairy-api-gateway' )
+				: 'Every five minutes (BlueFairy API Gateway)',
 		];
 		return $schedules;
 	}

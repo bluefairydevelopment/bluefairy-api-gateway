@@ -158,6 +158,32 @@ final class DashboardPageTest extends TestCase {
 	}
 
 	/**
+	 * D5: the dashboard offers Retry under the same rule as the delivery log
+	 * — an outgoing row in AdminMenu::RETRYABLE_STATUSES that is not
+	 * truncated. An inbound row (Pro's receiving endpoint) gets no button
+	 * however it failed; a Pro `retrying` outgoing row does.
+	 */
+	public function test_retry_is_offered_only_on_retryable_outgoing_rows(): void {
+		$inbound             = $this->delivery( 20 );
+		$inbound['direction'] = 'in';
+		$retrying            = $this->delivery( 21 );
+		$retrying['status']  = 'retrying';
+		$pending             = $this->delivery( 22 );
+		$pending['status']   = 'pending';
+		$this->prime( [ $this->delivery( 19 ), $inbound, $retrying, $pending ] );
+
+		$html = bfag_test_render( [ $this->page(), 'render' ] );
+
+		$this->assertStringContainsString( 'data-bfag-retry="19"', $html, 'control: a failed outgoing row is retryable' );
+		$this->assertStringNotContainsString( 'data-bfag-retry="20"', $html, 'an inbound row is never retryable' );
+		$this->assertStringContainsString( 'data-bfag-retry="21"', $html, 'a retrying outgoing row is (RETRYABLE_STATUSES)' );
+		$this->assertStringNotContainsString( 'data-bfag-retry="22"', $html, 'an in-flight row is not' );
+		$this->assertSame( 2, substr_count( $html, 'data-bfag-retry="' ), 'exactly the two retryable rows carry a button' );
+		$this->assertStringContainsString( 'data-bfag-delivery="20"', $html, 'the inbound row is still listed' );
+		$this->assertStringNotContainsString( 'Truncated — cannot retry', $html, 'none of these rows is truncated' );
+	}
+
+	/**
 	 * U-19: with Pro the third card is the count of active bans, named
 	 * "Active blocks" unless the KPI array carries a `blocked_label`.
 	 */
@@ -174,7 +200,7 @@ final class DashboardPageTest extends TestCase {
 		);
 		$this->prime( [] );
 		$html = bfag_test_render( [ $this->page(), 'render' ] );
-		$this->assertStringContainsString( '<span class="bfag-kpi__label">Active blocks</span>', $html );
+		$this->assertStringContainsString( '<span class="bfag-kpi__label" data-bfag-kpi-label="blocked">Active blocks</span>', $html, 'D5: the label is addressable so Refresh can rename it from blocked_label' );
 		$this->assertStringContainsString( 'data-bfag-kpi="blocked_today">9<', $html );
 		$this->assertStringNotContainsString( 'Blocked (Pro)', $html );
 		$this->assertStringNotContainsString( 'Blocks need the Pro add-on', $html );
@@ -191,7 +217,7 @@ final class DashboardPageTest extends TestCase {
 		);
 		$this->prime( [] );
 		$html = bfag_test_render( [ $this->page(), 'render' ] );
-		$this->assertStringContainsString( '<span class="bfag-kpi__label">Banned &lt;now&gt;</span>', $html, 'the KPI array may rename the card' );
+		$this->assertStringContainsString( '<span class="bfag-kpi__label" data-bfag-kpi-label="blocked">Banned &lt;now&gt;</span>', $html, 'the KPI array may rename the card' );
 		$this->assertStringNotContainsString( 'Active blocks', $html );
 	}
 }

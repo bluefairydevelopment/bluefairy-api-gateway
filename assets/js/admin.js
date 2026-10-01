@@ -137,12 +137,22 @@
 					el.textContent = format( json.data[ key ], el.getAttribute( 'data-bfag-format' ) );
 				}
 			} );
-			// The "Not computed yet — press Refresh" line must not survive a refresh (N4).
+			// The blocked card's label follows the answer's `blocked_label`, as
+			// the view does on render; without one it is the plain default (D5).
+			var blockedLabel = document.querySelector( '[data-bfag-kpi-label="blocked"]' );
+			if ( blockedLabel ) {
+				blockedLabel.textContent = ( typeof json.data.blocked_label === 'string' && json.data.blocked_label !== '' ) ? json.data.blocked_label : ( i18n.activeBlocks || 'Active blocks' );
+			}
+			// The "Not computed yet — press Refresh" line must not survive a refresh (N4),
+			// and the outcome is said once: the updated line when it can be rewritten,
+			// the status slot otherwise — not both side by side (D5).
 			var updated = document.querySelector( '.bfag-kpi-updated' );
 			if ( updated && json.data.computed_at ) {
 				updated.textContent = i18n.updatedNow || 'Updated just now';
+				status( button, '', false );
+			} else {
+				status( button, i18n.refreshed || 'Updated.', false );
 			}
-			status( button, i18n.refreshed || 'Updated.', false );
 		} ).catch( function () {
 			button.disabled = false;
 			status( button, i18n.error || 'Error', true );

@@ -23,19 +23,24 @@ recomputes, so opening the dashboard never runs aggregate queries itself.
 | Card | Figure | Sub-line |
 |---|---|---|
 | **Cache hit rate (24 h)** | hits ÷ (hits + misses) over the last 24 hours, as a percentage | `N hits · M misses` |
-| **Webhook success (24 h)** | successful ÷ (successful + failed) deliveries over the last 24 hours | `F failed of T` — T counts pending and retrying deliveries too |
-| **Blocked (Pro)** / **Active bans** | without Pro the card shows `—` and says *Bans need the Pro add-on*; with Pro it is the number of addresses currently banned (the KPI array may rename it through `blocked_label`) | with Pro: `R hits in the rate-limit log` — the row count of the hits table, as of the last KPI run |
+| **Webhook success (24 h)** | successful ÷ (successful + failed) **outgoing** deliveries over the last 24 hours — an inbound row (Pro's receiving endpoint) is someone else's call, not a delivery this site made, and is counted in neither figure | `F failed of T` — T counts pending and retrying deliveries too |
+| **Blocked (Pro)** / **Active blocks** | without Pro the card shows `—` and says *Blocks need the Pro add-on*; with Pro it is the number of addresses currently blocked (the KPI array may rename it through `blocked_label`, and Refresh applies the name from the answer too — without one the card says *Active blocks* again) | with Pro: `R hits in the rate-limit log` — the row count of the hits table, as of the last KPI run |
 
 A card shows `—` when there is nothing to divide: no requests, or no finished
 deliveries. Below the cards, **Refresh** recomputes the figures immediately
 (the sub-line says *Updated N ago*, or *Not computed yet* before the first
-cron run, and *Updated just now* once Refresh has answered).
+cron run, and *Updated just now* once Refresh has answered — said once, not
+followed by a second *Updated.*).
 
 **Recent failed deliveries** lists the ten newest deliveries with status
 `failed`: webhook, event, HTTP status (`—` for a transport error), attempt
-number, time (in the site's timezone and formats — the header says *site time*), and a **Retry** button that resends the stored payload. A
-delivery whose stored payload was truncated shows *Truncated — cannot retry*
-instead. *Open the delivery log* goes to the full log on the Webhooks tab.
+number, time (in the site's timezone and formats — the header says *site time*), and a **Retry** button that resends the stored payload. The button
+follows the delivery log's rule: an **outgoing** `failed` (or Pro `retrying`)
+row that was not truncated. A delivery whose stored payload was truncated
+shows *Truncated — cannot retry* instead; an inbound row (Pro's receiving
+endpoint) is listed without a button, because the plugin will not sign someone
+else's payload with the site's secret. *Open the delivery log* goes to the full
+log on the Webhooks tab.
 
 **At a glance** gives the raw counts: cache rules, rate-limit rules, webhooks,
 rows in the rate-limit hits table (from the last KPI run — a dash until the
@@ -196,7 +201,7 @@ server. Edit it to taste.
 | **Label** | Up to 100 characters. |
 | **Count by** | *IP address* is the only choice in the free plugin. The note under it says *Pro adds per-user and per-API-key limits*. |
 | **Route glob** | Same syntax as a cache rule's. |
-| **Requests … per … seconds** | Requests 1–65535; window 1–86400 seconds. Unlike the cache TTL, a value outside its range is **rejected**, not clamped — a rule that silently became "1 request per day" would be a worse surprise than a refused save. |
+| **Requests … per … seconds** | Requests 1–65535; window 1–86400 seconds. The add form pre-fills the seeded rule's figures, 300 per 60 s. Unlike the cache TTL, a value outside its range is **rejected**, not clamped — a rule that silently became "1 request per day" would be a worse surprise than a refused save. |
 | **Enabled** | *Apply this rule.* |
 
 A rejected save names its cause: *Rate-limit rule not saved: that "Count by"
@@ -572,7 +577,9 @@ notification email is stored as blank; unknown keys are dropped.
 | `bfag_cron_flush_pending` | single event, on demand | send webhook deliveries queued past the twenty-per-flush limit, batch after batch of twenty for up to twenty seconds a run |
 
 The five-minute interval is registered by the plugin on `cron_schedules` as
-`bfag_five_minutes`. The four recurring events are scheduled sixty seconds
+`bfag_five_minutes` (its label is translated only once `init` has run: an
+upgrade boot schedules the events on `plugins_loaded`, and translating there
+would trip WordPress 6.7's early-text-domain notice). The four recurring events are scheduled sixty seconds
 after activation and cleared on deactivation, along with any pending flush
 event. They run on WP-Cron, which is driven
 by page views; on a quiet site the hit log is pruned less often than every
@@ -611,7 +618,9 @@ a single event scheduled on demand and re-armed while queued rows remain.
 ## Uninstalling
 
 Deleting the plugin through the Plugins screen removes its options, every
-`bfag_` transient, its four recurring cron events and any pending flush event,
+`bfag_` transient (the dashboard's `bfag_kpis` is deleted by name through the
+transients API as well as by the options-table sweep, so it goes even when a
+persistent object cache holds it), its four recurring cron events and any pending flush event,
 and the `bfag_manage_gateway` capability, on every site of a multisite network. Your rules, webhooks and
 delivery log — the six `bfag_` tables — are dropped **only** when *Delete
 data on uninstall* was ticked beforehand; by default they stay, because a
@@ -666,9 +675,9 @@ fired.
 | `bfag_webhook_limit` | filter | `( int $limit = 3 )` | Maximum number of webhooks. |
 | `bfag_webhook_events` | filter | `( array $events )` | Add events: `key => [ 'hook' => string, 'label' => string, 'accepted_args' => int, 'group' => string ]`. An add-on event's payload object is `[ 'id' => <first integer hook argument> ]` until `bfag_webhook_payload` fills it in. |
 | `bfag_webhook_payload` | filter | `( array\|null $payload, string $event, array $hook_args )` | The payload before it is signed and sent. Return `null` to suppress the delivery. |
-| `bfag_webhook_request_args` | filter | `( array $args, array $webhook, string $event, array $payload )` | The `wp_remote_post()` arguments. May rewrite `body` and `headers`, set `url` to redirect the delivery, and set `headers['Authorization']` — the only place a credential header is accepted. The filter is trusted for credentials, not for transport: after it runs the headers are sanitised again, so a `Host`, `X-Forwarded-*` or line-break value it plants is dropped. Set `$args['bfag_skip']` to a non-empty string to cancel the delivery: it is logged as `failed` with that string as the response body, nothing is sent, and `bfag_webhook_delivery_failed` fires. |
+| `bfag_webhook_request_args` | filter | `( array $args, array $webhook, string $event, array $payload )` | The `wp_remote_post()` arguments. May rewrite `body` and `headers`, set `url` to redirect the delivery, and set `headers['Authorization']` — the only place a credential header is accepted. The filter is trusted for credentials, not for transport: after it runs the headers are sanitised again, so a `Host`, `X-Forwarded-*` or line-break value it plants is dropped. Set `$args['bfag_skip']` to a non-empty string to cancel the delivery: it is logged as `failed` with that string as the response body, nothing is sent, and `bfag_webhook_delivery_failed` fires with `$is_final` true. |
 | `bfag_webhook_allow_http` | filter | `( bool $allow = false )` | Permit `http://` targets (local development only). |
-| `bfag_webhook_delivery_failed` | action | `( int $delivery_id, array $webhook, int $attempt, int\|null $http_status )` | A delivery got a non-2xx answer or a transport error (`$http_status` null). Pro schedules retries and alerts from here. |
+| `bfag_webhook_delivery_failed` | action | `( int $delivery_id, array $webhook, int $attempt, int\|null $http_status, bool $is_final )` | A delivery failed. `$is_final` is **true** for the two outcomes a retry can never change — the request-args filter cancelled the delivery (`bfag_skip`: the preset could not build a request from this payload), or the URL is invalid or unsafe (logged as `Invalid or unsafe URL (nothing sent): <url>`); a scheduler must leave such a row `failed`. It is **false** for a non-2xx answer or a transport error (`$http_status` null), which may be retried. Pro schedules retries and alerts from here; a listener registered with four accepted arguments keeps working. |
 | `bfag_webhook_delivered` | action | `( int $delivery_id, array $webhook )` | A delivery succeeded. |
 | `bfag_webhook_finish_response` | filter | `( bool $finish )` | Whether the shutdown flush calls `fastcgi_finish_request()` before sending (default: whenever PHP is not running as CLI). A plugin that prints on `shutdown` after this one returns `false`. |
 
@@ -678,7 +687,7 @@ fired.
 |---|---|---|---|
 | `bfag_admin_tabs` | filter | `( array $tabs )` | Add tabs: `id => [ 'label' => string, 'page' => object with render(): void and handle_actions(): void ]`. |
 | `bfag_dashboard_kpis` | filter | `( array $kpis )` | Add or change dashboard figures before they are stored. |
-| `bfag_kpi_blocked_today` | filter | `( int $blocked = 0 )` | The *Active bans* card (Pro). Without Pro the dashboard shows *Blocked (Pro)* instead. `bfag_dashboard_kpis` may add `blocked_label` to rename the card. |
+| `bfag_kpi_blocked_today` | filter | `( int $blocked = 0 )` | The *Active blocks* card (Pro). Without Pro the dashboard shows *Blocked (Pro)* instead. `bfag_dashboard_kpis` may add `blocked_label` to rename the card, on render and on Refresh. |
 | `bfag_settings_fields` | action | `( Settings $settings )` | Render extra `<tr>` rows inside the Settings form table. |
 | `bfag_settings_saved` | action | `( array $clean, array $raw )` | After the base settings are stored; `$raw` is the whole unslashed `$_POST`. |
 | `bfag_cache_page_after` | action | `()` | Render below the cache rules table and its add/edit form. |

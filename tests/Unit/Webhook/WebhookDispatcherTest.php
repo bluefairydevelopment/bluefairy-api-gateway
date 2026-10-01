@@ -157,11 +157,11 @@ final class WebhookDispatcherTest extends TestCase {
 		$failed = [];
 		add_action(
 			'bfag_webhook_delivery_failed',
-			static function ( int $id, array $webhook, int $attempt, ?int $status ) use ( &$failed ): void {
-				$failed[] = [ $id, $attempt, $status ];
+			static function ( int $id, array $webhook, int $attempt, ?int $status, bool $final ) use ( &$failed ): void {
+				$failed[] = [ $id, $attempt, $status, $final ];
 			},
 			10,
-			4
+			5
 		);
 		add_filter(
 			'bfag_webhook_request_args',
@@ -180,7 +180,7 @@ final class WebhookDispatcherTest extends TestCase {
 		$this->assertSame( 'failed', $update['status'] );
 		$this->assertNull( $update['http_status'] );
 		$this->assertSame( 'Mailchimp preset: no email in payload', $update['response_body'] );
-		$this->assertSame( [ [ 1, 1, null ] ], $failed, 'bfag_webhook_delivery_failed fired once' );
+		$this->assertSame( [ [ 1, 1, null, true ] ], $failed, 'bfag_webhook_delivery_failed fired once, and final: a retry cannot build the request either (D3)' );
 
 		// Control: an empty string is not a skip.
 		unset( $GLOBALS['bfag_test_hooks']['bfag_webhook_request_args'] );
@@ -311,9 +311,9 @@ final class WebhookDispatcherTest extends TestCase {
 	public function test_500_marks_failed_and_fires_failed_action_once(): void {
 		bfag_test_queue_http( 500, 'boom' );
 		$failed = [];
-		add_action( 'bfag_webhook_delivery_failed', static function ( int $id, array $webhook, int $attempt, ?int $status ) use ( &$failed ): void {
-			$failed[] = [ $id, $webhook['id'], $attempt, $status ];
-		}, 10, 4 );
+		add_action( 'bfag_webhook_delivery_failed', static function ( int $id, array $webhook, int $attempt, ?int $status, bool $final ) use ( &$failed ): void {
+			$failed[] = [ $id, $webhook['id'], $attempt, $status, $final ];
+		}, 10, 5 );
 		add_action( 'bfag_webhook_delivered', static function (): void {
 			self::fail( 'delivered action must not fire on 500' );
 		} );
@@ -327,16 +327,16 @@ final class WebhookDispatcherTest extends TestCase {
 		$this->assertNull( $update['delivered_at'] );
 		$this->assertArrayHasKey( 'next_retry_at', $update, 'PN2: cleared on failure too, so the Pro scheduler starts from a clean row' );
 		$this->assertNull( $update['next_retry_at'] );
-		$this->assertSame( [ [ 1, 7, 1, 500 ] ], $failed, 'fires exactly once with (delivery_id, webhook, attempt, 500)' );
+		$this->assertSame( [ [ 1, 7, 1, 500, false ] ], $failed, 'fires exactly once with (delivery_id, webhook, attempt, 500, final = false)' );
 		$this->assertSame( [ 'delivery_id' => 1, 'success' => false, 'http_status' => 500 ], $result );
 	}
 
 	public function test_transport_error_marks_failed_with_null_http_status(): void {
 		bfag_test_queue_http_error( 'http_request_failed', 'Connection refused' );
 		$failed = [];
-		add_action( 'bfag_webhook_delivery_failed', static function ( int $id, array $webhook, int $attempt, ?int $status ) use ( &$failed ): void {
-			$failed[] = $status;
-		}, 10, 4 );
+		add_action( 'bfag_webhook_delivery_failed', static function ( int $id, array $webhook, int $attempt, ?int $status, bool $final ) use ( &$failed ): void {
+			$failed[] = [ $status, $final ];
+		}, 10, 5 );
 
 		$result = $this->dispatcher()->dispatch( $this->webhook(), 'post.published', [] );
 
@@ -344,7 +344,7 @@ final class WebhookDispatcherTest extends TestCase {
 		$this->assertSame( 'failed', $update['status'] );
 		$this->assertNull( $update['http_status'] );
 		$this->assertSame( 'Connection refused', $update['response_body'] );
-		$this->assertSame( [ null ], $failed );
+		$this->assertSame( [ [ null, false ] ], $failed, 'a transport error is not final: the next attempt may connect' );
 		$this->assertSame( [ 'delivery_id' => 1, 'success' => false, 'http_status' => null ], $result );
 	}
 
@@ -387,18 +387,73 @@ final class WebhookDispatcherTest extends TestCase {
 	}
 
 	public function test_invalid_or_unsafe_url_fails_without_an_http_call(): void {
-		$failed = 0;
-		add_action( 'bfag_webhook_delivery_failed', static function () use ( &$failed ): void {
-			++$failed;
-		} );
 		foreach ( [ 'http://localhost/hook', 'https://10.0.0.5/hook', 'not a url', '' ] as $url ) {
 			$this->reset();
+			$failed = [];
+			add_action( 'bfag_webhook_delivery_failed', static function ( int $id, array $webhook, int $attempt, ?int $status, bool $final ) use ( &$failed ): void {
+				$failed[] = [ $id, $attempt, $status, $final ];
+			}, 10, 5 );
 			$result = $this->dispatcher()->dispatch( $this->webhook( [ 'url' => $url ] ), 'post.published', [] );
 			$this->assertCount( 0, $GLOBALS['bfag_test_http_calls'], "no request for '$url'" );
 			$this->assertFalse( $result['success'] );
 			$this->assertNull( $result['http_status'] );
-			$this->assertSame( 'failed', $this->wpdb->calls_to( 'update' )[0]['data']['status'] );
+			$update = $this->wpdb->calls_to( 'update' )[0]['data'];
+			$this->assertSame( 'failed', $update['status'] );
+			// D3: the log says why nothing was sent, and the action says a retry cannot help.
+			$this->assertSame( 'Invalid or unsafe URL (nothing sent): ' . ( '' === $url ? '(empty)' : $url ), $update['response_body'], "body for '$url'" );
+			$this->assertSame( [ [ 1, 1, null, true ] ], $failed, "final for '$url'" );
 		}
+	}
+
+	/**
+	 * N-05 / D3: the fifth argument of `bfag_webhook_delivery_failed` is
+	 * true only for the two outcomes a retry can never change — the preset
+	 * skipped the delivery, or the URL is invalid or unsafe — and false for
+	 * an HTTP or transport failure, which the Pro scheduler may retry.
+	 */
+	public function test_delivery_failed_action_marks_skip_and_unsafe_url_final_but_not_http_or_transport_failures(): void {
+		$outcomes = [];
+		$listen   = static function () use ( &$outcomes ): void {
+			add_action( 'bfag_webhook_delivery_failed', static function ( int $id, array $webhook, int $attempt, ?int $status, bool $final ) use ( &$outcomes ): void {
+				$outcomes[] = [ 'status' => $status, 'final' => $final ];
+			}, 10, 5 );
+		};
+
+		$listen();
+		add_filter(
+			'bfag_webhook_request_args',
+			static function ( array $args ): array {
+				$args['bfag_skip'] = 'preset: nothing to send';
+				return $args;
+			}
+		);
+		$this->dispatcher()->dispatch( $this->webhook(), 'post.published', [] );
+
+		$this->reset();
+		$listen();
+		$this->dispatcher()->dispatch( $this->webhook( [ 'url' => 'https://127.0.0.1/hook' ] ), 'post.published', [] );
+
+		$this->reset();
+		$listen();
+		bfag_test_queue_http( 503, 'later' );
+		$this->dispatcher()->dispatch( $this->webhook(), 'post.published', [] );
+
+		$this->reset();
+		$listen();
+		bfag_test_queue_http_error( 'http_request_failed', 'cURL error 28' );
+		$this->dispatcher()->dispatch( $this->webhook(), 'post.published', [] );
+
+		$this->assertSame(
+			[
+				[ 'status' => null, 'final' => true ],
+				[ 'status' => null, 'final' => true ],
+				[ 'status' => 503, 'final' => false ],
+				[ 'status' => null, 'final' => false ],
+			],
+			$outcomes,
+			'skip, unsafe URL, 503, transport error — in that order'
+		);
+		$this->assertCount( 1, $GLOBALS['bfag_test_http_calls'], 'control: only the transport-error attempt made a request after the last reset' );
 	}
 
 	public function test_request_args_filter_can_rewrite_url_and_body(): void {

@@ -72,6 +72,7 @@ final class KpiCronTest extends TestCase {
 		$this->assertSame( 4321, $kpis['hits_table_rows'] );
 		$this->assertIsInt( $kpis['computed_at'] );
 		$this->assertSame( [ 'success' => 8, 'failed' => 2, 'pending' => 1, 'retrying' => 0 ], $kpis['webhook_deliveries'], 'P11: the breakdown /status serves' );
+		$this->assertStringContainsString( "WHERE direction = 'out' AND created_at >=", $this->wpdb->queries_matching( 'bfag_webhook_deliveries' )[0] ?? '', 'the webhook success figure counts outbound deliveries only' );
 		$this->assertSame( 1, preg_match( "/bucket_start >= '([^']+)'/", $this->wpdb->queries_matching( 'bfag_cache_stats' )[0] ?? '', $m ) );
 		$this->assertEqualsWithDelta( time() - DAY_IN_SECONDS, strtotime( $m[1] . ' UTC' ), 5, 'the window is the last 24 hours' );
 	}

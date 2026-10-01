@@ -89,6 +89,13 @@ $bfag_uninstall_site = static function () use ( $bfag_tables, $bfag_option_keys,
 	// option), the limited markers, parked forms and one-time secrets. (Tag
 	// generations are an option, deleted above; a transient in an external
 	// object cache could not be).
+	//
+	// The one transient with a fixed name is deleted through the API first
+	// (D2): with a persistent object cache transients live in the cache, not
+	// in the options table, and the sweep below cannot reach them. The
+	// dynamically named ones (`bfag_limited_<marker>`, `bfag_form_<user>_<tab>`,
+	// `bfag_new_secret_<user>`) are short-lived and expire on their own.
+	delete_transient( 'bfag_kpis' );
 	// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
 	$wpdb->query(
 		$wpdb->prepare(

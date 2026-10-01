@@ -42,9 +42,10 @@ final class AssetsTest extends TestCase {
 			],
 			$l10n['nonces']
 		);
-		foreach ( [ 'confirmDelete', 'confirmPurge', 'working', 'purged', 'refreshed', 'retried', 'retryFailed', 'copied', 'error', 'enabled', 'disabled', 'cold' ] as $key ) {
+		foreach ( [ 'confirmDelete', 'confirmPurge', 'working', 'purged', 'refreshed', 'updatedNow', 'activeBlocks', 'retried', 'retryFailed', 'copied', 'error', 'enabled', 'disabled', 'cold' ] as $key ) {
 			$this->assertArrayHasKey( $key, $l10n['i18n'] );
 		}
+		$this->assertSame( 'Active blocks', $l10n['i18n']['activeBlocks'], 'D5: the label Refresh falls back to when the answer carries no blocked_label — the same text as the view' );
 	}
 
 	public function test_the_asset_files_exist_and_the_script_reads_bfagadmin(): void {

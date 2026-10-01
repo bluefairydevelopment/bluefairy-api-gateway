@@ -55,6 +55,8 @@ final class UninstallTest extends TestCase {
 		$this->assertSame( [], $GLOBALS['bfag_test_single_events'], 'the pending-flush single event goes too, whatever its args' );
 		$this->assertFalse( get_role( 'administrator' )->has_cap( Capabilities::MANAGE ) );
 		$this->assertCount( 1, $this->wpdb->queries_matching( 'DELETE FROM bfw_options WHERE option_name LIKE' ), 'transients are swept' );
+		// D2: the options-table sweep cannot reach a transient held by an external object cache; the KPI transient is deleted by name through the API as well.
+		$this->assertFalse( get_transient( 'bfag_kpis' ), 'bfag_kpis is deleted through delete_transient(), whatever backs transients' );
 	}
 
 	public function test_tag_generations_option_is_deleted_whether_or_not_data_is_deleted(): void {

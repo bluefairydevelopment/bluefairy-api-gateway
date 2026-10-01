@@ -82,6 +82,7 @@ final class Assets {
 				'purged'        => __( 'Cache purged.', 'bluefairy-api-gateway' ),
 				'refreshed'     => __( 'Updated.', 'bluefairy-api-gateway' ),
 				'updatedNow'    => __( 'Updated just now', 'bluefairy-api-gateway' ),
+				'activeBlocks'  => __( 'Active blocks', 'bluefairy-api-gateway' ),
 				'retried'       => __( 'Delivered.', 'bluefairy-api-gateway' ),
 				'retryFailed'   => __( 'Delivery failed again.', 'bluefairy-api-gateway' ),
 				'copied'        => __( 'Copied.', 'bluefairy-api-gateway' ),

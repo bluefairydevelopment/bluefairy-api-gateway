@@ -180,6 +180,32 @@ final class InstallerTest extends TestCase {
 		$this->assertSame( 300, $schedules['bfag_five_minutes']['interval'] );
 	}
 
+	/**
+	 * D6: `wp_get_schedules()` runs this filter from `maybe_upgrade()` →
+	 * `schedule_cron()` on `plugins_loaded`, before `init`; a `__()` there
+	 * trips `_load_textdomain_just_in_time` on WP 6.7+. The label is the
+	 * plain string until init has run, and translated afterwards.
+	 */
+	public function test_cron_schedules_label_is_not_translated_before_init_and_is_after(): void {
+		add_filter(
+			'gettext',
+			static function ( string $translation, string $text ): string {
+				return '[translated] ' . $text;
+			},
+			10,
+			2
+		);
+		$this->assertSame( 0, did_action( 'init' ), 'control: before init' );
+		$before = Installer::cron_schedules( [] )['bfag_five_minutes'];
+		$this->assertSame( 'Every five minutes (BlueFairy API Gateway)', $before['display'], 'before init: the literal — no gettext call' );
+		$this->assertSame( 300, $before['interval'] );
+
+		do_action( 'init' );
+		$after = Installer::cron_schedules( [] )['bfag_five_minutes'];
+		$this->assertSame( '[translated] Every five minutes (BlueFairy API Gateway)', $after['display'], 'after init: translated' );
+		$this->assertSame( 300, $after['interval'] );
+	}
+
 	public function test_schedule_cron_is_idempotent(): void {
 		Installer::schedule_cron();
 		$first = $GLOBALS['bfag_test_cron'];

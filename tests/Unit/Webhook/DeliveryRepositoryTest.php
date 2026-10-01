@@ -223,7 +223,8 @@ final class DeliveryRepositoryTest extends TestCase {
 		$repo = $this->repo();
 		$this->wpdb->queue( 'get_results', [ [ 'status' => 'success', 'n' => '12' ], [ 'status' => 'failed', 'n' => '3' ], [ 'status' => 'weird', 'n' => '9' ] ] );
 		$this->assertSame( [ 'success' => 12, 'failed' => 3, 'pending' => 0, 'retrying' => 0 ], $repo->stats_since( '2026-09-29 00:00:00' ) );
-		$this->assertStringContainsString( "WHERE created_at >= '2026-09-29 00:00:00' GROUP BY status", $this->wpdb->calls_to( 'get_results' )[0]['sql'] );
+		// KPI inbound exclusion: an inbound row (Pro's receiving endpoint) is not a delivery this site made, so it is neither a success nor a failure here.
+		$this->assertStringContainsString( "WHERE direction = 'out' AND created_at >= '2026-09-29 00:00:00' GROUP BY status", $this->wpdb->calls_to( 'get_results' )[0]['sql'] );
 		$this->assertSame( [ 'success' => 0, 'failed' => 0, 'pending' => 0, 'retrying' => 0 ], $repo->stats_since( '2026-09-29 00:00:00' ), 'empty result set' );
 	}
 

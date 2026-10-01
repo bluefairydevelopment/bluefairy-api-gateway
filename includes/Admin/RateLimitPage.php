@@ -80,13 +80,14 @@ final class RateLimitPage extends Page {
 		if ( null === $editing && $at_limit ) {
 			echo '<p class="bfag-limit-line">' . esc_html( $this->upsell->limit_line( sprintf( /* translators: %d: number of rules */ _n( '%d rate-limit rule', '%d rate-limit rules', $limit, 'bluefairy-api-gateway' ), $limit ) ) ) . '</p>';
 		} else {
-			// A failed save re-fills the form once with what was typed (U-11); otherwise the row, or the defaults.
+			// A failed save re-fills the form once with what was typed (U-11); otherwise the row, or the defaults
+			// (the seeded rule's figures, 300 per 60 s — see Installer::seed_default_rules()).
 			$rule = $editing ?? [
 				'id'              => 0,
 				'label'           => '',
 				'subject_type'    => 'ip',
 				'route_glob'      => '',
-				'max_requests'    => 60,
+				'max_requests'    => 300,
 				'window_seconds'  => 60,
 				'penalty_seconds' => 0,
 				'enabled'         => 1,

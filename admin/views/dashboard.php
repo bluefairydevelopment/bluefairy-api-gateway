@@ -43,7 +43,7 @@ $bfag_int  = static function ( mixed $value ): string {
 	<?php if ( $is_pro ) : ?>
 		<?php // The Pro mitigator's figure is the count of active blocks; a `blocked_label` key in the KPI array may rename the card (U-19). ?>
 		<div class="bfag-kpi">
-			<span class="bfag-kpi__label"><?php echo esc_html( is_string( $kpis['blocked_label'] ?? null ) && '' !== $kpis['blocked_label'] ? $kpis['blocked_label'] : __( 'Active blocks', 'bluefairy-api-gateway' ) ); ?></span>
+			<span class="bfag-kpi__label" data-bfag-kpi-label="blocked"><?php echo esc_html( is_string( $kpis['blocked_label'] ?? null ) && '' !== $kpis['blocked_label'] ? $kpis['blocked_label'] : __( 'Active blocks', 'bluefairy-api-gateway' ) ); ?></span>
 			<span class="bfag-kpi__value" data-bfag-kpi="blocked_today"><?php echo esc_html( $bfag_int( $kpis['blocked_today'] ?? null ) ); ?></span>
 			<span class="bfag-kpi__sub">
 				<span data-bfag-kpi="hits_table_rows"><?php echo esc_html( $bfag_int( $kpis['hits_table_rows'] ?? null ) ); ?></span> <?php esc_html_e( 'hits in the rate-limit log', 'bluefairy-api-gateway' ); ?>
@@ -93,6 +93,13 @@ $bfag_int  = static function ( mixed $value ): string {
 		</thead>
 		<tbody>
 			<?php foreach ( $failed as $bfag_row ) : ?>
+				<?php
+				// The same rule as the delivery log (U-10 / D5): Retry only on a failed (or Pro-retrying) OUTGOING row that was not truncated.
+				$bfag_truncated = 1 === (int) $bfag_row['truncated'];
+				$bfag_retryable = ! $bfag_truncated
+					&& 'out' === (string) ( $bfag_row['direction'] ?? '' )
+					&& in_array( (string) $bfag_row['status'], \BlueFairy\ApiGateway\Admin\AdminMenu::RETRYABLE_STATUSES, true );
+				?>
 				<tr data-bfag-delivery="<?php echo esc_attr( (string) $bfag_row['id'] ); ?>">
 					<td><?php echo esc_html( $labels[ (int) $bfag_row['webhook_id'] ] ?? '#' . (int) $bfag_row['webhook_id'] ); ?></td>
 					<td><code><?php echo esc_html( (string) $bfag_row['event'] ); ?></code></td>
@@ -100,9 +107,9 @@ $bfag_int  = static function ( mixed $value ): string {
 					<td><?php echo esc_html( (string) $bfag_row['attempt'] ); ?></td>
 					<td><?php echo esc_html( \BlueFairy\ApiGateway\Admin\Page::format_datetime( (string) $bfag_row['created_at'] ) ); ?></td>
 					<td>
-						<?php if ( 1 === (int) $bfag_row['truncated'] ) : ?>
+						<?php if ( $bfag_truncated ) : ?>
 							<span class="bfag-badge bfag-badge--muted"><?php esc_html_e( 'Truncated — cannot retry', 'bluefairy-api-gateway' ); ?></span>
-						<?php else : ?>
+						<?php elseif ( $bfag_retryable ) : ?>
 							<button type="button" class="button button-small" data-bfag-retry="<?php echo esc_attr( (string) $bfag_row['id'] ); ?>"><?php esc_html_e( 'Retry', 'bluefairy-api-gateway' ); ?></button>
 						<?php endif; ?>
 					</td>
