@@ -1,0 +1,131 @@
+=== BlueFairy API Gateway ===
+Contributors: bluefairydevelopment
+Tags: rest api, cache, rate limit, webhooks, headless
+Requires at least: 6.6
+Tested up to: 7.1
+Requires PHP: 8.1
+Stable tag: 1.0.0
+License: GPLv2 or later
+License URI: https://www.gnu.org/licenses/gpl-2.0.html
+
+REST response caching, per-IP rate limiting and signed outbound webhooks — a hardened API layer for headless WordPress sites and integrations.
+
+== Description ==
+
+BlueFairy API Gateway sits in front of the WordPress REST API and does three things, each managed from one screen at **Settings → API Gateway**.
+
+**Response cache.** Anonymous `GET` responses are stored and served back with an `X-BF-Cache: HIT` header; every REST response is labelled `HIT`, `MISS` or `BYPASS` so you can see the decision from `curl`. Requests from logged-in users, or carrying an `Authorization`, `X-WP-Nonce` or `X-BF-API-Key` header, are never cached. Responses that are not 2xx, that stream, that set a cookie or that ask for `no-store` are never stored. One cache rule, matched by route glob (`wp/v2/posts/**`), seeded on activation as "all routes, 60 seconds". The cache is purged automatically when a post, term or comment changes, and by hand from the Cache tab or `POST /bfag/v1/cache/purge`. Responses live in your persistent object cache (Redis, Memcached) when you have one, otherwise in transients.
+
+**Rate limiting.** A sliding-window counter per client IP and route. The breaching request gets `429 Too Many Requests` with `Retry-After`, `X-BF-RateLimit-Limit` and `X-BF-RateLimit-Window`. One rule, seeded as 60 requests per 60 seconds on every route. Forwarded-IP headers (`CF-Connecting-IP`, `X-Real-IP`, `X-Forwarded-For`) are honoured only from the proxy ranges you list, so a visitor cannot pick their own bucket. The hit log is pruned every five minutes.
+
+**Signed outbound webhooks.** Up to three webhooks, each subscribing to one event: post published, updated or deleted; user registered or updated; comment created; and, with WooCommerce, order created, order status changed, order completed, product updated. Each delivery is a JSON `POST` carrying `X-BF-Event`, `X-BF-Delivery`, `X-BF-Timestamp` and `X-BF-Signature: sha256=HMAC-SHA256(timestamp.body, secret)`, so the receiver can verify both origin and freshness. Deliveries are collected during the request and sent once after the response, logged with their HTTP status and response body, and any failed delivery can be resent from the log. Targets must be `https://`; secrets are generated for you and never displayed again.
+
+**Dashboard.** Cache hit rate, webhook success rate and the hit-log size over the last 24 hours, the ten most recent failed deliveries with a Retry button, and the same figures at `GET /bfag/v1/status` for a monitor — a route that is never rate-limited.
+
+**Add API Gateway Pro** for up to 500 cache rules, rate-limit rules and webhooks; purges narrowed to the tags a change touches; rate limits per user and per API key with penalty bans; DDoS auto-ban with a blocked-IPs panel; automatic webhook retries with back-off and failure alerts by email; Salesforce, HubSpot and Mailchimp presets; a signed incoming-webhook endpoint; a webhook REST API; API keys with scopes; and WPGraphQL query caching. Pro installs alongside this plugin rather than replacing it.
+
+== Installation ==
+
+1. Upload the `bluefairy-api-gateway` folder to `/wp-content/plugins/`, or install the zip from **Plugins → Add New → Upload Plugin**.
+2. Activate the plugin from the **Plugins** screen. PHP 8.1 or newer is required; activation refuses otherwise.
+3. Open **Settings → API Gateway**.
+
+Activation creates six database tables, seeds one cache rule and one rate-limit rule, grants the `bfag_manage_gateway` capability to administrators and schedules three WP-Cron jobs. The cache and the rate limiter are on from the first request; nothing is sent anywhere until you add a webhook.
+
+== Admin Instructions ==
+
+Everything lives under **Settings → API Gateway**, in five tabs.
+
+**Dashboard** — three cards (cache hit rate, webhook success rate, blocked today) recomputed every five minutes or when you press **Refresh**; the ten newest failed deliveries with **Retry**; the raw counts; and the status endpoint URL with a **Copy** button.
+
+**Cache** — the rules table with an Enabled/Disabled badge you can click, **Edit** and **Delete**, and **Purge all**. The add/edit form takes a label, a route glob (matched without the leading slash: `wc/v3/products/*`), a TTL in seconds and optional comma-separated tags. Edit the seeded "All routes" rule to narrow it.
+
+**Rate limit** — the rules table and a form with a label, *Count by* (IP address), a route glob, and *Requests per seconds*. Values outside 1–65535 requests or 1–86400 seconds are refused rather than silently changed.
+
+**Webhooks** — the webhooks table with **Edit**, **Send test** and **Delete**, the **Delivery log** button, and the add/edit form: label, `https://` URL, event, signing secret (blank generates one), extra headers as `Name: value` lines, and an Enabled box. Press **Send test** on a new webhook and check the delivery log for the receiver's response.
+
+**Settings** — notification email and failure threshold (used by the Pro add-on's alerts), the cache switch and default TTL, the rate-limiting switch and trusted proxies, the stored-payload cap and delivery-log retention, debug logging, the WP-Cron notice switch and *Delete data on uninstall*.
+
+To confirm the cache from the command line, request a public route twice and read the header: `curl -sI https://example.com/wp-json/wp/v2/posts | grep -i x-bf-cache` — `MISS` then `HIT`.
+
+== Frequently Asked Questions ==
+
+= Why am I seeing X-BF-Cache: BYPASS? =
+
+`BYPASS` means the request or the response was not cacheable. On the request side: the cache is switched off; the method is not GET or HEAD; you are logged in (a browser with a WordPress cookie, including the admin's own browser); the request carries an `Authorization`, `X-WP-Nonce` or `X-BF-API-Key` header; the route is under `/bfag/v1`; or no enabled cache rule matches the route. On the response side: the status is not 2xx; the response streams (`text/event-stream`); it sets a cookie; or its `Cache-Control` says `no-store` or `private`. Test with `curl` from a fresh shell, not from a logged-in browser tab.
+
+= Does it work without Redis or Memcached? =
+
+Yes. With a persistent object cache responses are stored in the object-cache group `bfag_responses`; without one they are stored as transients in the options table, and purging works the same way on both. A persistent object cache is faster and keeps the options table smaller, so use one on a busy site.
+
+= What happens behind Cloudflare, a load balancer or a reverse proxy? =
+
+By default the client IP is `REMOTE_ADDR`, which behind a proxy is the proxy's own address — so every visitor would share one rate-limit bucket. List the proxy's addresses or CIDR ranges under **Settings → Rate limit → Trusted proxies** (for Cloudflare, its published IP ranges). Only when `REMOTE_ADDR` is inside one of those ranges are `CF-Connecting-IP`, `X-Real-IP` and `X-Forwarded-For` read, in that order, taking the right-most address that is not itself a trusted proxy. Headers from anywhere else are ignored, so a visitor cannot forge their way into a different bucket.
+
+= Does uninstalling delete my data? =
+
+Deleting the plugin always removes its options, transients, cron events and the `bfag_manage_gateway` capability. Your rules, webhooks and delivery log — the six `bfag_` database tables — are dropped only if you ticked **Delete data on uninstall** under Settings → Advanced first. By default they stay, because a delivery log is a record of what was sent, not a cache. Deactivating removes only the cron events and the capability.
+
+= How do retries work? =
+
+In the free plugin a failed delivery — any non-2xx answer, or no answer within ten seconds — is marked `failed` in the log and stays there. Press **Retry** on the dashboard or in the delivery log to resend the stored payload bytes as the next attempt, with a fresh timestamp and signature and the same `X-BF-Delivery` id. A delivery whose stored payload was truncated at the *Max stored payload* setting cannot be retried, because the stored bytes are no longer what was signed. Automatic retries with back-off (one minute, five minutes, thirty minutes, up to a per-webhook limit) and failure alerts are part of API Gateway Pro.
+
+= How does my receiver verify the signature? =
+
+Compute `HMAC-SHA256` with the webhook's secret over the string `X-BF-Timestamp + "." + raw request body`, hex-encode it, prefix `sha256=`, and compare it to `X-BF-Signature` in constant time (`hash_equals()` in PHP, `crypto.timingSafeEqual()` in Node). Read the raw body bytes before any framework parses them. Reject timestamps more than a few minutes old to defeat replay. Full PHP and Node examples are in the FEATURES.md file shipped with the plugin.
+
+= Why does editing a blog post empty the whole cache? =
+
+Because the free plugin has one rule and no way to tell which cached responses a change touches, so any post, term or comment change flushes everything. API Gateway Pro answers the `bfag_cache_purge_tags` filter with the tags each change touches (`post:42`, `type:product`, `term:7`, `tax:category`, `all`), so a rule tagged `type:product` survives a blog post edit.
+
+= Will my logged-in users or my app's authenticated API calls be cached? =
+
+No. A request with a WordPress login cookie, an `Authorization` header (Application Passwords, bearer tokens), an `X-WP-Nonce` or an `X-BF-API-Key` is never served from or stored in the cache, because such a response may contain data nobody else should see. Only anonymous public reads are cached.
+
+= What are the limits in the free plugin? =
+
+One cache rule, one rate-limit rule and three webhooks. Rate limiting counts by IP address only. The admin page tells you when you have reached a limit. Pro raises each to 500 and adds per-user and per-API-key counting.
+
+= The webhook will not save — "it needs a label, an https URL and a known event". =
+
+The URL must start with `https://` and must pass WordPress's own `wp_http_validate_url()` check, which refuses loopback and private addresses such as `localhost`, `127.0.0.1` or `10.x.x.x`. For local development a developer can allow `http://` with the `bfag_webhook_allow_http` filter. The event must be one offered in the dropdown — a WooCommerce event disappears from the list when WooCommerce is deactivated.
+
+= I let the plugin generate the signing secret and never saw it. Where is it? =
+
+It is never displayed. Edit the webhook, tick **Generate a new secret** and, before saving, decide how you will share it: either type your own secret into the field so you know it, or generate one and copy it from the receiver after you have configured verification there. The stored secret cannot be read back from the admin page.
+
+= Does it need WP-Cron? =
+
+The hit-log prune, the delivery-log prune and the dashboard figures run on WP-Cron. Webhook deliveries do not — they are sent at the end of the request that caused them. If `DISABLE_WP_CRON` is set the plugin shows a notice on its own screen; make sure a system cron runs `wp-cron.php`, then tick **Hide the WP-Cron notice**. There are no WP-CLI commands; `wp cron event run bfag_cron_prune_hits` runs a job on demand.
+
+= Does it work with WooCommerce? =
+
+Yes. While WooCommerce is active four more events are offered: order created, order status changed, order completed and product updated, each carrying the order or product fields (id, status, currency, total, customer id, billing email; id, name, SKU, status, price, type). WooCommerce's own REST routes under `wc/v3/…` can be cached and rate-limited like any other, subject to the same rule that authenticated requests are never cached.
+
+= Does it support multisite? =
+
+The plugin contains no network-specific features. Each site keeps its own rules, webhooks and settings. Uninstalling cleans up on every site of the network.
+
+== Screenshots ==
+
+1. Dashboard — cache hit rate, webhook success rate and blocked-today cards, the recent failed deliveries with Retry, and the status endpoint.
+2. Cache — the rules table with the seeded "All routes" rule, Purge all, and the add/edit form with route glob, TTL and tags.
+3. Rate limit — the rules table with the seeded per-IP rule and the form: count by, route glob, requests per window.
+4. Webhooks — the webhooks table with Send test, and the add/edit form: URL, event, signing secret and extra headers.
+5. Settings — the general, cache, rate-limit, webhook and advanced groups.
+
+== Changelog ==
+
+= 1.0.0 =
+* Initial release.
+* REST response cache with `X-BF-Cache: HIT` / `MISS` / `BYPASS`, one route-glob rule, object-cache or transient storage, generation-based purging on post, term and comment changes, Purge all, and `POST /bfag/v1/cache/purge`.
+* Sliding-window rate limiting per IP and route with `429`, `Retry-After` and `X-BF-RateLimit-*` headers, one rule, trusted-proxy IP resolution, five-minute hit-log pruning with a ten-million-row cap.
+* Up to three signed outbound webhooks on six WordPress events and four WooCommerce events, HMAC-SHA256 `X-BF-Signature` over `timestamp.body`, delivery on shutdown with per-request deduplication, a delivery log with Send test and Retry, payload truncation and retention pruning.
+* Dashboard KPIs recomputed every five minutes, `GET /bfag/v1/status` for monitors, and the `bfag_manage_gateway` capability.
+* Thirty-three `bfag_*` actions and filters as the add-on contract.
+* Compatibility: tested against WordPress 7.1; requires PHP 8.1 or newer.
+
+== Upgrade Notice ==
+
+= 1.0.0 =
+Initial release. Rate limiting is on from activation at 60 requests per minute per IP on every REST route — behind Cloudflare or a load balancer, add the proxy ranges under Settings → Rate limit → Trusted proxies before relying on it.
