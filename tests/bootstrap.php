@@ -82,6 +82,7 @@ function bfag_test_reset(): void {
 	$GLOBALS['bfag_test_transients']    = [];
 	$GLOBALS['bfag_test_cache']         = [];
 	$GLOBALS['bfag_test_hooks']         = [];
+	$GLOBALS['bfag_test_fired']         = [];
 	$GLOBALS['bfag_test_http_queue']    = [];
 	$GLOBALS['bfag_test_http_calls']    = [];
 	$GLOBALS['bfag_test_mail']          = [];
