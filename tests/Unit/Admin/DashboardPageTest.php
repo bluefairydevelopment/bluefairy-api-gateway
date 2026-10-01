@@ -101,7 +101,7 @@ final class DashboardPageTest extends TestCase {
 		$this->assertStringContainsString( 'Not computed yet', $html );
 		$this->assertStringContainsString( 'data-bfag-refresh', $html );
 		$this->assertStringContainsString( 'No failed deliveries.', $html );
-		$this->assertStringContainsString( '<th>Rows in the rate-limit hits table</th><td>—</td>', $html, 'cold: a dash, not a live count' );
+		$this->assertStringContainsString( '<th>Rows in the rate-limit hits table</th><td><span data-bfag-kpi="hits_table_rows">—</span></td>', $html, 'cold: a dash, not a live count' );
 		$this->assertSame( [], $this->wpdb->queries_matching( 'bfag_rate_limit_hits' ) );
 		$this->assertStringContainsString( 'https://example.com/wp-json/bfag/v1/status', $html );
 		$this->assertStringContainsString( 'data-bfag-copy="https://example.com/wp-json/bfag/v1/status"', $html );
@@ -152,7 +152,7 @@ final class DashboardPageTest extends TestCase {
 		$this->assertStringContainsString( '<th>Cache rules</th><td>1</td>', $html );
 		$this->assertStringContainsString( '<th>Rate-limit rules</th><td>2</td>', $html );
 		$this->assertStringContainsString( '<th>Webhooks</th><td>3</td>', $html );
-		$this->assertStringContainsString( '<th>Rows in the rate-limit hits table</th><td>345</td>', $html, 'from the KPI transient' );
+		$this->assertStringContainsString( '<th>Rows in the rate-limit hits table</th><td><span data-bfag-kpi="hits_table_rows">345</span></td>', $html, 'from the KPI transient' );
 		$this->assertSame( [], $this->wpdb->queries_matching( 'bfag_rate_limit_hits' ), 'P10: no live COUNT(*) of the hits table on a render' );
 		$this->assertCount( 3, $this->wpdb->calls_to( 'get_var' ), 'exactly the three rule/webhook counts' );
 	}
@@ -181,6 +181,28 @@ final class DashboardPageTest extends TestCase {
 		$this->assertSame( 2, substr_count( $html, 'data-bfag-retry="' ), 'exactly the two retryable rows carry a button' );
 		$this->assertStringContainsString( 'data-bfag-delivery="20"', $html, 'the inbound row is still listed' );
 		$this->assertStringNotContainsString( 'Truncated — cannot retry', $html, 'none of these rows is truncated' );
+	}
+
+	/**
+	 * Refresh rewrites every `[data-bfag-kpi]` element from the answer; the
+	 * At a glance hits-table row must be one, or a free site (no Pro card,
+	 * the only other `hits_table_rows` element) keeps "—" beside
+	 * "Updated just now" until a reload (found by the Step 3b screenshots).
+	 */
+	public function test_the_at_a_glance_hits_row_is_a_refreshable_kpi_on_the_free_plugin(): void {
+		$this->prime( [] );
+		$html = bfag_test_render( [ $this->page(), 'render' ] );
+		$this->assertStringNotContainsString( 'hits in the rate-limit log', $html, 'precondition: free, no Pro card' );
+		$this->assertMatchesRegularExpression(
+			'#Rows in the rate-limit hits table</th><td><span data-bfag-kpi="hits_table_rows">[^<]*</span></td>#',
+			$html
+		);
+		$this->assertSame( 1, substr_count( $html, 'data-bfag-kpi="hits_table_rows"' ) );
+
+		add_filter( 'bfag_is_pro', '__return_true' );
+		$this->prime( [] );
+		$html = bfag_test_render( [ $this->page(), 'render' ] );
+		$this->assertSame( 2, substr_count( $html, 'data-bfag-kpi="hits_table_rows"' ), 'with Pro: the card and the row both refresh' );
 	}
 
 	/**

@@ -127,7 +127,7 @@ $bfag_int  = static function ( mixed $value ): string {
 		<tr><th><?php esc_html_e( 'Cache rules', 'bluefairy-api-gateway' ); ?></th><td><?php echo esc_html( number_format_i18n( $counts['cache_rules'] ) ); ?></td></tr>
 		<tr><th><?php esc_html_e( 'Rate-limit rules', 'bluefairy-api-gateway' ); ?></th><td><?php echo esc_html( number_format_i18n( $counts['rate_limit_rules'] ) ); ?></td></tr>
 		<tr><th><?php esc_html_e( 'Webhooks', 'bluefairy-api-gateway' ); ?></th><td><?php echo esc_html( number_format_i18n( $counts['webhooks'] ) ); ?></td></tr>
-		<tr><th><?php esc_html_e( 'Rows in the rate-limit hits table', 'bluefairy-api-gateway' ); ?></th><td><?php echo esc_html( null === $counts['hits_table_rows'] ? '—' : number_format_i18n( $counts['hits_table_rows'] ) ); ?></td></tr>
+		<tr><th><?php esc_html_e( 'Rows in the rate-limit hits table', 'bluefairy-api-gateway' ); ?></th><td><span data-bfag-kpi="hits_table_rows"><?php echo esc_html( null === $counts['hits_table_rows'] ? '—' : number_format_i18n( $counts['hits_table_rows'] ) ); ?></span></td></tr>
 	</tbody>
 </table>
 

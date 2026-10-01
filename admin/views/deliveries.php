@@ -25,6 +25,7 @@ defined( 'ABSPATH' ) || exit;
 	<span class="bfag-status" data-bfag-status aria-live="polite"></span>
 </div>
 
+<div class="bfag-table-scroll">
 <table class="widefat striped bfag-table">
 	<caption class="screen-reader-text"><?php esc_html_e( 'Delivery log, newest first', 'bluefairy-api-gateway' ); ?></caption>
 	<thead>
@@ -111,3 +112,4 @@ defined( 'ABSPATH' ) || exit;
 		<?php endforeach; ?>
 	</tbody>
 </table>
+</div>

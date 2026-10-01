@@ -248,6 +248,9 @@ final class WebhookPageTest extends TestCase {
 		$this->assertStringContainsString( '<td>01/01/2026 12:00 am</td>', $html );
 		$this->assertStringNotContainsString( '2026-01-01 00:00:00', $html, 'the raw GMT string never reaches the page' );
 		$this->assertStringContainsString( '<caption class="screen-reader-text">Delivery log, newest first</caption>', $html );
+		// The log table scrolls inside the main column rather than running under the side panel.
+		$this->assertMatchesRegularExpression( '#<div class="bfag-table-scroll">\s*<table class="widefat striped bfag-table">\s*<caption class="screen-reader-text">Delivery log#', $html );
+		$this->assertMatchesRegularExpression( '#</table>\s*</div>#', substr( $html, (int) strpos( $html, 'Delivery log, newest first' ) ) );
 
 		$this->assertStringContainsString( 'Delivery log', $html );
 		$this->assertStringNotContainsString( 'value="save_webhook"', $html, 'no form in the log view' );

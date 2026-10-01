@@ -16,6 +16,13 @@
 	flex: 0 0 300px;
 }
 
+/* A table wider than the main column scrolls inside it instead of running
+   under the side panel (the delivery log at 1280px, Step 3b screenshots). */
+.bfag-table-scroll {
+	overflow-x: auto;
+	max-width: 100%;
+}
+
 @media (max-width: 1100px) {
 	.bfag-layout {
 		flex-direction: column;
