@@ -1,0 +1,452 @@
+<?php
+/**
+ * Persistence for webhook subscriptions (`bfag_webhooks`).
+ *
+ * @package BlueFairy\ApiGateway
+ */
+
+declare(strict_types=1);
+
+namespace BlueFairy\ApiGateway\Webhook;
+
+use BlueFairy\ApiGateway\Logger;
+
+/**
+ * CRUD for the `bfag_webhooks` table.
+ *
+ * The repository stays dumb about events: it stores a sanitised key and the
+ * admin page checks it against EventRegistry. It is strict about the URL
+ * (https, and `wp_http_validate_url()` so a private address cannot be
+ * registered as a target) and about `headers`, which must decode to a flat
+ * object of strings — the dispatcher sanitises them again at send time.
+ *
+ * `all_enabled()` is the hot path (EventBus reads it on every request) and is
+ * object-cached under `bfag/webhooks_enabled`; every write clears that key.
+ */
+final class WebhookRepository {
+
+	public const CACHE_GROUP = 'bfag';
+	public const CACHE_KEY   = 'webhooks_enabled';
+	public const CACHE_TTL   = 300;
+
+	/**
+	 * Every webhook, newest last.
+	 *
+	 * @param int $limit Maximum rows.
+	 * @return list<array<string, mixed>>
+	 */
+	public function all( int $limit = 200 ): array {
+		global $wpdb;
+
+		$limit = max( 1, min( 1000, $limit ) );
+		$rows  = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+			$wpdb->prepare( "SELECT * FROM {$wpdb->prefix}bfag_webhooks ORDER BY id ASC LIMIT %d", $limit ),
+			ARRAY_A
+		);
+		return $this->normalize_rows( $rows );
+	}
+
+	/**
+	 * Every enabled webhook, object-cached for five minutes.
+	 *
+	 * @return list<array<string, mixed>>
+	 */
+	public function all_enabled(): array {
+		global $wpdb;
+
+		$cached = wp_cache_get( self::CACHE_KEY, self::CACHE_GROUP );
+		if ( is_array( $cached ) ) {
+			return $cached;
+		}
+		$rows = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+			$wpdb->prepare( "SELECT * FROM {$wpdb->prefix}bfag_webhooks WHERE enabled = %d ORDER BY id ASC LIMIT %d", 1, 1000 ),
+			ARRAY_A
+		);
+		$rows = $this->normalize_rows( $rows );
+		wp_cache_set( self::CACHE_KEY, $rows, self::CACHE_GROUP, self::CACHE_TTL );
+		return $rows;
+	}
+
+	/**
+	 * One webhook by id.
+	 *
+	 * @param int $id Row id.
+	 * @return array<string, mixed>|null
+	 */
+	public function find( int $id ): ?array {
+		global $wpdb;
+
+		if ( $id <= 0 ) {
+			return null;
+		}
+		$row = $wpdb->get_row( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+			$wpdb->prepare( "SELECT * FROM {$wpdb->prefix}bfag_webhooks WHERE id = %d LIMIT 1", $id ),
+			ARRAY_A
+		);
+		return is_array( $row ) ? $this->normalize( $row ) : null;
+	}
+
+	/**
+	 * Enabled webhooks subscribed to $event.
+	 *
+	 * @param string $event Event key.
+	 * @return list<array<string, mixed>>
+	 */
+	public function for_event( string $event ): array {
+		return array_values(
+			array_filter(
+				$this->all_enabled(),
+				static fn( array $row ): bool => $row['event'] === $event
+			)
+		);
+	}
+
+	/**
+	 * Number of webhooks, enabled or not.
+	 */
+	public function count(): int {
+		global $wpdb;
+
+		return (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$wpdb->prefix}bfag_webhooks" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+	}
+
+	/**
+	 * Distinct event keys that have at least one enabled webhook.
+	 *
+	 * @return list<string>
+	 */
+	public function enabled_events(): array {
+		$events = [];
+		foreach ( $this->all_enabled() as $row ) {
+			$events[ (string) $row['event'] ] = true;
+		}
+		return array_keys( $events );
+	}
+
+	/**
+	 * Insert a webhook. Returns the new id, or false when the limit is
+	 * reached or the data is invalid (the reason is logged).
+	 *
+	 * @param array<string, mixed> $data label, url, event, secret, headers, preset, enabled, max_retries.
+	 */
+	public function create( array $data ): int|false {
+		global $wpdb;
+
+		$limit = $this->limit();
+		if ( $this->count() >= $limit ) {
+			Logger::log( 'webhook limit reached', [ 'limit' => $limit ] );
+			return false;
+		}
+
+		$clean = $this->validate( $data, true );
+		if ( null === $clean ) {
+			return false;
+		}
+		$clean['created_at'] = gmdate( 'Y-m-d H:i:s' );
+
+		$result = $wpdb->insert( $wpdb->prefix . 'bfag_webhooks', $clean, $this->formats( $clean ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+		$this->invalidate();
+		if ( false === $result ) {
+			Logger::log( 'webhook insert failed', [ 'error' => $wpdb->last_error ] );
+			return false;
+		}
+		return (int) $wpdb->insert_id;
+	}
+
+	/**
+	 * Update the given columns of a webhook. Only keys present in $data are
+	 * touched; an invalid value fails the whole update.
+	 *
+	 * @param int                  $id   Row id.
+	 * @param array<string, mixed> $data Columns to change.
+	 */
+	public function update( int $id, array $data ): bool {
+		global $wpdb;
+
+		if ( $id <= 0 ) {
+			return false;
+		}
+		$clean = $this->validate( $data, false );
+		if ( null === $clean || [] === $clean ) {
+			return false;
+		}
+		$result = $wpdb->update( $wpdb->prefix . 'bfag_webhooks', $clean, [ 'id' => $id ], $this->formats( $clean ), [ '%d' ] ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+		$this->invalidate();
+		return false !== $result;
+	}
+
+	/**
+	 * Delete a webhook and its delivery log inside one transaction, so a
+	 * failure half-way cannot leave orphaned deliveries (dbDelta cannot
+	 * manage a foreign key, so the cascade lives here).
+	 *
+	 * @param int $id Row id.
+	 */
+	public function delete( int $id ): bool {
+		global $wpdb;
+
+		if ( $id <= 0 ) {
+			return false;
+		}
+		// phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+		$wpdb->query( 'START TRANSACTION' );
+		$deliveries = $wpdb->query(
+			$wpdb->prepare( "DELETE FROM {$wpdb->prefix}bfag_webhook_deliveries WHERE webhook_id = %d", $id )
+		);
+		$webhook    = false === $deliveries ? false : $wpdb->delete( $wpdb->prefix . 'bfag_webhooks', [ 'id' => $id ], [ '%d' ] );
+		if ( false === $webhook ) {
+			$wpdb->query( 'ROLLBACK' );
+			$this->invalidate();
+			Logger::log(
+				'webhook delete rolled back',
+				[
+					'id'    => $id,
+					'error' => $wpdb->last_error,
+				]
+			);
+			return false;
+		}
+		$wpdb->query( 'COMMIT' );
+		// phpcs:enable
+		$this->invalidate();
+		return true;
+	}
+
+	/**
+	 * Enable or disable a webhook.
+	 *
+	 * @param int  $id      Row id.
+	 * @param bool $enabled New state.
+	 */
+	public function set_enabled( int $id, bool $enabled ): bool {
+		return $this->update( $id, [ 'enabled' => $enabled ] );
+	}
+
+	/**
+	 * How many webhooks may exist. Three in the free plugin; the Pro add-on
+	 * raises it through `bfag_webhook_limit`.
+	 */
+	public function limit(): int {
+		/**
+		 * Filter the maximum number of webhooks.
+		 *
+		 * @since 1.0.0
+		 *
+		 * @param int $limit Default 3.
+		 */
+		return max( 0, (int) apply_filters( 'bfag_webhook_limit', 3 ) );
+	}
+
+	/**
+	 * The custom headers of a row as name => value. Garbage decodes to [].
+	 *
+	 * @param array<string, mixed> $row A webhook row.
+	 * @return array<string, string>
+	 */
+	public function headers_of( array $row ): array {
+		$raw = $row['headers'] ?? null;
+		if ( is_string( $raw ) ) {
+			$raw = json_decode( $raw, true );
+		}
+		if ( ! is_array( $raw ) ) {
+			return [];
+		}
+		$out = [];
+		foreach ( $raw as $name => $value ) {
+			if ( ! is_string( $name ) || '' === $name || ! is_scalar( $value ) ) {
+				continue;
+			}
+			$out[ $name ] = (string) $value;
+		}
+		return $out;
+	}
+
+	/**
+	 * Drop the object-cached enabled list.
+	 */
+	public function invalidate(): void {
+		wp_cache_delete( self::CACHE_KEY, self::CACHE_GROUP );
+	}
+
+	/**
+	 * Validate and coerce input. On create every required column is present
+	 * (with defaults); on update only the supplied keys are returned. Null
+	 * means invalid, and the reason is logged.
+	 *
+	 * @param array<string, mixed> $data   Raw input.
+	 * @param bool                 $create Whether defaults apply.
+	 * @return array<string, mixed>|null
+	 */
+	private function validate( array $data, bool $create ): ?array {
+		$clean = [];
+
+		if ( $create || array_key_exists( 'label', $data ) ) {
+			$label = sanitize_text_field( is_scalar( $data['label'] ?? null ) ? (string) $data['label'] : '' );
+			if ( '' === $label || mb_strlen( $label ) > 200 ) {
+				Logger::log( 'webhook rejected: label must be 1-200 characters' );
+				return null;
+			}
+			$clean['label'] = $label;
+		}
+
+		if ( $create || array_key_exists( 'url', $data ) ) {
+			$url = $this->validate_url( is_scalar( $data['url'] ?? null ) ? trim( (string) $data['url'] ) : '' );
+			if ( null === $url ) {
+				return null;
+			}
+			$clean['url'] = $url;
+		}
+
+		if ( $create || array_key_exists( 'event', $data ) ) {
+			$event = strtolower( is_scalar( $data['event'] ?? null ) ? (string) $data['event'] : '' );
+			$event = preg_replace( '/[^a-z0-9_.\-]/', '', $event ) ?? '';
+			if ( '' === $event || strlen( $event ) > 100 ) {
+				Logger::log( 'webhook rejected: invalid event key' );
+				return null;
+			}
+			$clean['event'] = $event;
+		}
+
+		if ( $create || array_key_exists( 'secret', $data ) ) {
+			$secret = is_scalar( $data['secret'] ?? null ) ? trim( (string) $data['secret'] ) : '';
+			if ( '' === $secret && $create ) {
+				$secret = bin2hex( random_bytes( 32 ) );
+			}
+			if ( '' !== $secret ) {
+				if ( strlen( $secret ) > 255 ) {
+					Logger::log( 'webhook rejected: secret longer than 255 characters' );
+					return null;
+				}
+				$clean['secret'] = $secret;
+			}
+		}
+
+		if ( $create || array_key_exists( 'headers', $data ) ) {
+			$headers = $this->validate_headers( $data['headers'] ?? null );
+			if ( null === $headers ) {
+				return null;
+			}
+			$clean['headers'] = $headers;
+		}
+
+		if ( $create || array_key_exists( 'preset', $data ) ) {
+			$clean['preset'] = substr( sanitize_key( $data['preset'] ?? '' ), 0, 50 );
+		}
+
+		if ( $create || array_key_exists( 'enabled', $data ) ) {
+			$clean['enabled'] = array_key_exists( 'enabled', $data ) ? (int) \BlueFairy\ApiGateway\Settings::to_bool( $data['enabled'] ) : 1;
+		}
+
+		if ( $create || array_key_exists( 'max_retries', $data ) ) {
+			$retries              = is_scalar( $data['max_retries'] ?? null ) ? (int) $data['max_retries'] : 3;
+			$clean['max_retries'] = max( 0, min( 10, $retries ) );
+		}
+
+		return $clean;
+	}
+
+	/**
+	 * A target URL must be well-formed, pass WordPress's own safety check
+	 * and use https unless `bfag_webhook_allow_http` says otherwise.
+	 *
+	 * @param string $url Raw URL.
+	 */
+	private function validate_url( string $url ): ?string {
+		if ( '' === $url || strlen( $url ) > 2000 || false === wp_http_validate_url( $url ) ) {
+			Logger::log( 'webhook rejected: invalid url', [ 'url' => $url ] );
+			return null;
+		}
+		$scheme = strtolower( (string) wp_parse_url( $url, PHP_URL_SCHEME ) );
+
+		/**
+		 * Allow plain-http webhook targets (local development only).
+		 *
+		 * @since 1.0.0
+		 *
+		 * @param bool $allow Default false.
+		 */
+		$allow_http = (bool) apply_filters( 'bfag_webhook_allow_http', false );
+
+		if ( 'https' !== $scheme && ! ( 'http' === $scheme && $allow_http ) ) {
+			Logger::log( 'webhook rejected: url must be https', [ 'url' => $url ] );
+			return null;
+		}
+		return $url;
+	}
+
+	/**
+	 * Headers arrive as an array or a JSON string; both must be a flat object
+	 * of scalar values. Stored as a JSON string.
+	 *
+	 * @param mixed $raw Raw headers.
+	 */
+	private function validate_headers( mixed $raw ): ?string {
+		if ( null === $raw || '' === $raw || [] === $raw ) {
+			return '{}';
+		}
+		if ( is_string( $raw ) ) {
+			$raw = json_decode( $raw, true );
+		}
+		if ( ! is_array( $raw ) ) {
+			Logger::log( 'webhook rejected: headers must be a JSON object' );
+			return null;
+		}
+		$clean = [];
+		foreach ( $raw as $name => $value ) {
+			if ( ! is_string( $name ) || '' === $name || ! is_scalar( $value ) ) {
+				Logger::log( 'webhook rejected: headers must map names to string values' );
+				return null;
+			}
+			$clean[ $name ] = (string) $value;
+		}
+		$encoded = wp_json_encode( $clean );
+		return is_string( $encoded ) ? $encoded : null;
+	}
+
+	/**
+	 * The wpdb format strings for a column set.
+	 *
+	 * @param array<string, mixed> $columns Column => value.
+	 * @return list<string>
+	 */
+	private function formats( array $columns ): array {
+		$out = [];
+		foreach ( array_keys( $columns ) as $column ) {
+			$out[] = in_array( $column, [ 'enabled', 'max_retries' ], true ) ? '%d' : '%s';
+		}
+		return $out;
+	}
+
+	/**
+	 * Cast a result set.
+	 *
+	 * @param mixed $rows Whatever get_results returned.
+	 * @return list<array<string, mixed>>
+	 */
+	private function normalize_rows( mixed $rows ): array {
+		$out = [];
+		foreach ( is_array( $rows ) ? $rows : [] as $row ) {
+			if ( is_array( $row ) ) {
+				$out[] = $this->normalize( $row );
+			}
+		}
+		return $out;
+	}
+
+	/**
+	 * Cast one row's integer columns.
+	 *
+	 * @param array<string, mixed> $row Raw row.
+	 * @return array<string, mixed>
+	 */
+	private function normalize( array $row ): array {
+		$row['id']          = (int) ( $row['id'] ?? 0 );
+		$row['enabled']     = (int) ( $row['enabled'] ?? 0 );
+		$row['max_retries'] = (int) ( $row['max_retries'] ?? 3 );
+		$row['event']       = (string) ( $row['event'] ?? '' );
+		$row['url']         = (string) ( $row['url'] ?? '' );
+		$row['secret']      = (string) ( $row['secret'] ?? '' );
+		$row['label']       = (string) ( $row['label'] ?? '' );
+		return $row;
+	}
+}
