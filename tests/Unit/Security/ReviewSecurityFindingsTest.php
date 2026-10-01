@@ -51,7 +51,8 @@ final class ReviewSecurityFindingsTest extends TestCase {
 
 	protected function setUp(): void {
 		parent::setUp();
-		$this->breaches = [];
+		$this->breaches                    = [];
+		$GLOBALS['bfag_test_serving_rest'] = true; // TF4: the limiter tests here are top-level REST requests.
 		add_action(
 			'bfag_rate_limit_breached',
 			function ( string $subject, array $rule ): void {

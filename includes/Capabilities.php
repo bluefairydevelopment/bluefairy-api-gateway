@@ -34,9 +34,13 @@ final class Capabilities {
 	public const SCOPES = [ 'read', 'write', 'cache:purge', 'webhook:read', 'webhook:write' ];
 
 	/**
-	 * One-line description of each scope, keyed like SCOPES, for the Pro
-	 * add-on's API-key form. A key acts as the user it is bound to, so
-	 * `write` is as powerful as that user's REST access.
+	 * The untranslated one-line description of each scope, keyed like
+	 * SCOPES. This is the fallback map: scope_label() returns the same text
+	 * `__()`-wrapped and falls back here for a scope it does not know, and
+	 * the Pro add-on's API-key form reads it through `defined()` when the
+	 * base is too old to have scope_label(). Views use scope_label(). A key
+	 * acts as the user it is bound to, so `write` is as powerful as that
+	 * user's REST access.
 	 *
 	 * @var array<string, string>
 	 */

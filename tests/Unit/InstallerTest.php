@@ -31,9 +31,12 @@ final class InstallerTest extends TestCase {
 		$this->assertStringContainsString( 'truncated TINYINT(1)', $schema['bfag_webhook_deliveries'] );
 		$this->assertStringContainsString( "  KEY idx_webhook_id (webhook_id),\n", $schema['bfag_webhook_deliveries'], 'P8: last_status / per-webhook log read by webhook_id ORDER BY id' );
 		$this->assertStringContainsString( "  KEY idx_created_at (created_at)\n", $schema['bfag_webhook_deliveries'], 'P14: recent() orders by created_at' );
-		// The harness mirrors BFAG_DB_VERSION with a fallback define; the shipped value is in the plugin file.
+		$this->assertStringContainsString( "  KEY idx_status_retry (status,next_retry_at),\n", $schema['bfag_webhook_deliveries'], 'PN2: pending() filters on status then next_retry_at' );
+		$this->assertStringContainsString( "  KEY idx_webhook_dir_id (webhook_id,direction,id),\n", $schema['bfag_webhook_deliveries'], 'PN3: last_statuses() groups MAX(id) by webhook_id under direction = out — a loose index scan' );
+		// N-16: the harness reads BFAG_DB_VERSION from the plugin file; the shipped value is what the tests see.
 		$this->assertSame( 1, preg_match( "/define\\( 'BFAG_DB_VERSION', '([^']+)' \\);/", (string) file_get_contents( BFAG_FILE ), $v ) );
-		$this->assertSame( '1.0.1', $v[1], 'bumped so dbDelta adds the new keys on upgrade' );
+		$this->assertSame( '1.0.2', $v[1], 'bumped so dbDelta adds the new keys on upgrade' );
+		$this->assertSame( $v[1], BFAG_DB_VERSION, 'the harness constant is the plugin file\'s, not a mirror' );
 	}
 
 	public function test_create_tables_runs_db_delta_once_per_table(): void {
@@ -289,6 +292,7 @@ final class InstallerTest extends TestCase {
 		$this->assertCount( 6, $GLOBALS['bfag_test_db_delta'] );
 
 		$this->wpdb->missing_tables( [] );
+		$this->age_install_error( Installer::INSTALL_RETRY_SECONDS + 1 ); // PN6: a boot inside the back-off would not retry.
 		Installer::maybe_upgrade();
 		$this->assertSame( BFAG_DB_VERSION, get_option( 'bfag_db_version' ), 'control: the next boot completes the upgrade' );
 		$this->assertFalse( get_option( Installer::INSTALL_ERROR_OPTION ) );
@@ -297,6 +301,182 @@ final class InstallerTest extends TestCase {
 	public function test_install_error_is_an_owned_option(): void {
 		$this->assertSame( 'bfag_install_error', Installer::INSTALL_ERROR_OPTION );
 		$this->assertContains( Installer::INSTALL_ERROR_OPTION, Installer::OPTIONS );
+		$this->assertNotContains( 'bfag_kpis', Installer::OPTIONS, 'N-09: bfag_kpis is a transient, not an option' );
+	}
+
+	/**
+	 * Move the recorded install failure $seconds into the past.
+	 */
+	private function age_install_error( int $seconds ): void {
+		$error = get_option( Installer::INSTALL_ERROR_OPTION );
+		$this->assertIsArray( $error, 'precondition: an install error is recorded' );
+		$error['at'] -= $seconds;
+		update_option( Installer::INSTALL_ERROR_OPTION, $error, false );
+	}
+
+	// ------------------------------------------------------------------
+	// PN6 / WPMAP-115: a broken install backs off instead of retrying every boot
+	// ------------------------------------------------------------------
+
+	public function test_a_broken_install_is_retried_once_per_back_off_window_not_on_every_boot(): void {
+		ini_set( 'error_log', '/dev/null' );
+		$this->assertSame( 300, Installer::INSTALL_RETRY_SECONDS );
+		$this->wpdb->missing_tables( [ 'bfag_webhooks' ] );
+		$this->wpdb->always( 'get_var', '0' );
+
+		Installer::maybe_upgrade(); // First boot: no version, provision, fail.
+		$this->assertCount( 6, $GLOBALS['bfag_test_db_delta'] );
+		$first = get_option( Installer::INSTALL_ERROR_OPTION );
+		$this->assertEqualsWithDelta( time(), $first['at'], 5 );
+
+		// Second boot, seconds later: nothing runs — no dbDelta, no SHOW TABLES, no option write.
+		$GLOBALS['bfag_test_db_delta'] = [];
+		$this->wpdb->calls             = [];
+		Installer::maybe_upgrade();
+		$this->assertCount( 0, $GLOBALS['bfag_test_db_delta'], 'inside the back-off: not retried' );
+		$this->assertSame( [], $this->wpdb->queries_matching( 'SHOW TABLES' ) );
+		$this->assertSame( $first, get_option( Installer::INSTALL_ERROR_OPTION ), 'the record is untouched' );
+		$this->assertFalse( get_option( 'bfag_db_version' ) );
+
+		// The same boot, with the failure older than the window: retried, and the attempt time moves.
+		$this->age_install_error( Installer::INSTALL_RETRY_SECONDS + 1 );
+		Installer::maybe_upgrade();
+		$this->assertCount( 6, $GLOBALS['bfag_test_db_delta'], 'past the back-off: retried' );
+		$this->assertEqualsWithDelta( time(), get_option( Installer::INSTALL_ERROR_OPTION )['at'], 5, 'the attempt time is refreshed, so the next back-off starts now' );
+
+		// Activation always retries, back-off or not.
+		$GLOBALS['bfag_test_db_delta'] = [];
+		Installer::activate();
+		$this->assertCount( 6, $GLOBALS['bfag_test_db_delta'], 'activate() ignores the back-off' );
+
+		// A site behind on the schema (not a fresh install) is throttled the same way.
+		$GLOBALS['bfag_test_db_delta'] = [];
+		update_option( 'bfag_db_version', '0.9.0' );
+		Installer::maybe_upgrade();
+		$this->assertCount( 0, $GLOBALS['bfag_test_db_delta'], 'an upgrade inside the back-off is not retried either' );
+		$this->assertSame( '0.9.0', get_option( 'bfag_db_version' ) );
+
+		// Healthy install: the back-off never enters into it.
+		$this->wpdb->missing_tables( [] );
+		delete_option( Installer::INSTALL_ERROR_OPTION );
+		update_option( 'bfag_db_version', BFAG_DB_VERSION );
+		Installer::maybe_upgrade();
+		$this->assertCount( 0, $GLOBALS['bfag_test_db_delta'], 'control: up to date, nothing to do' );
+		update_option( 'bfag_db_version', '0.9.0' );
+		Installer::maybe_upgrade();
+		$this->assertCount( 6, $GLOBALS['bfag_test_db_delta'], 'control: behind with no error recorded — upgraded at once' );
+		$this->assertSame( BFAG_DB_VERSION, get_option( 'bfag_db_version' ) );
+	}
+
+	public function test_the_install_error_is_rewritten_only_when_it_changes_or_a_retry_is_due(): void {
+		ini_set( 'error_log', '/dev/null' );
+		$this->wpdb->missing_tables( [ 'bfag_webhooks' ] );
+		$this->wpdb->last_error = 'denied';
+		Installer::activate();
+		$first = get_option( Installer::INSTALL_ERROR_OPTION );
+		$this->assertSame( 'denied', $first['db_error'] );
+
+		// Same tables, same error, inside the window (an activation retry): the record stands, its time included.
+		$first['at'] -= 10;
+		update_option( Installer::INSTALL_ERROR_OPTION, $first, false );
+		Installer::activate();
+		$this->assertSame( $first, get_option( Installer::INSTALL_ERROR_OPTION ), 'unchanged content inside the window is not rewritten' );
+
+		// A different error: rewritten at once.
+		$this->wpdb->last_error = 'disk full';
+		Installer::activate();
+		$this->assertSame( 'disk full', get_option( Installer::INSTALL_ERROR_OPTION )['db_error'] );
+		$this->assertEqualsWithDelta( time(), get_option( Installer::INSTALL_ERROR_OPTION )['at'], 5 );
+
+		// Different tables: rewritten.
+		$this->wpdb->missing_tables( [ 'bfag_webhooks', 'bfag_cache_stats' ] );
+		Installer::activate();
+		$this->assertSame( [ 'bfw_bfag_cache_stats', 'bfw_bfag_webhooks' ], get_option( Installer::INSTALL_ERROR_OPTION )['tables'] );
+	}
+
+	// ------------------------------------------------------------------
+	// PN2: the 1.0.2 data step
+	// ------------------------------------------------------------------
+
+	public function test_upgrading_from_before_1_0_2_nulls_next_retry_at_on_finished_deliveries_once(): void {
+		update_option( 'bfag_db_version', '1.0.1' );
+		Installer::maybe_upgrade();
+		$this->assertSame(
+			[ "UPDATE bfw_bfag_webhook_deliveries SET next_retry_at = NULL WHERE status IN ('success', 'failed') AND next_retry_at IS NOT NULL" ],
+			$this->wpdb->queries_matching( 'next_retry_at = NULL' ),
+			'finished rows leave idx_next_retry; pending and retrying rows keep their due time'
+		);
+		$this->assertSame( BFAG_DB_VERSION, get_option( 'bfag_db_version' ) );
+
+		$this->wpdb->calls = [];
+		Installer::maybe_upgrade();
+		$this->assertSame( [], $this->wpdb->queries_matching( 'next_retry_at = NULL' ), 'once: the version is recorded, the step does not run again' );
+
+		// The step belongs to the < 1.0.2 transition only.
+		$step = new \ReflectionMethod( Installer::class, 'upgrade_data' );
+		$this->wpdb->calls = [];
+		$step->invoke( null, '1.0.2' );
+		$step->invoke( null, '1.0.3' );
+		$this->assertSame( [], $this->wpdb->queries_matching( 'next_retry_at' ), 'from 1.0.2 or later: nothing' );
+		$step->invoke( null, '0.9.0' );
+		$this->assertCount( 1, $this->wpdb->queries_matching( 'next_retry_at = NULL' ), 'control: from any earlier version it runs' );
+
+		// Tables that failed to create: no data step, no version.
+		ini_set( 'error_log', '/dev/null' );
+		$this->wpdb->calls = [];
+		$this->wpdb->missing_tables( [ 'bfag_webhook_deliveries' ] );
+		update_option( 'bfag_db_version', '1.0.1' );
+		delete_option( Installer::INSTALL_ERROR_OPTION );
+		Installer::maybe_upgrade();
+		$this->assertSame( [], $this->wpdb->queries_matching( 'next_retry_at' ), 'no UPDATE against a table that is not there' );
+		$this->assertSame( '1.0.1', get_option( 'bfag_db_version' ) );
+	}
+
+	// ------------------------------------------------------------------
+	// N-14 / PN8: each_site()
+	// ------------------------------------------------------------------
+
+	public function test_each_site_restores_the_current_site_and_cache_addition_even_when_a_site_throws(): void {
+		$GLOBALS['bfag_test_multisite'] = true;
+		$GLOBALS['bfag_test_sites']     = [ 1, 2, 3 ];
+		$each                           = new \ReflectionMethod( Installer::class, 'each_site' );
+		$visited                        = [];
+
+		try {
+			$each->invoke(
+				null,
+				true,
+				static function () use ( &$visited ): void {
+					$visited[] = get_current_blog_id();
+					if ( 2 === get_current_blog_id() ) {
+						throw new \RuntimeException( 'site 2 exploded' );
+					}
+				}
+			);
+			self::fail( 'the exception must propagate' );
+		} catch ( \RuntimeException $e ) {
+			$this->assertSame( 'site 2 exploded', $e->getMessage() );
+		}
+		$this->assertSame( [ 1, 2 ], $visited );
+		$this->assertSame( 1, get_current_blog_id(), 'N-14: restored to the main site in finally' );
+		$this->assertSame( [], $GLOBALS['bfag_test_blog_stack'], 'nothing left on the switch stack' );
+		$this->assertSame( [ true, false ], $GLOBALS['bfag_test_suspended'], 'PN8: cache addition suspended around the loop and resumed in finally' );
+
+		// Control: a clean run visits every site, resumes the cache, and a single-site run never suspends it.
+		$GLOBALS['bfag_test_suspended'] = [];
+		$visited                        = [];
+		$each->invoke( null, true, static function () use ( &$visited ): void {
+			$visited[] = get_current_blog_id();
+		} );
+		$this->assertSame( [ 1, 2, 3 ], $visited );
+		$this->assertSame( [ true, false ], $GLOBALS['bfag_test_suspended'] );
+		$GLOBALS['bfag_test_suspended'] = [];
+		$each->invoke( null, false, static function (): void {} );
+		$this->assertSame( [], $GLOBALS['bfag_test_suspended'], 'single site: no suspension' );
+
+		// set_time_limit() is a PHP builtin the harness cannot intercept: pin the guarded call in the source.
+		$source = (string) file_get_contents( BFAG_DIR . 'includes/Installer.php' );
+		$this->assertMatchesRegularExpression( '/if \( function_exists\( \'set_time_limit\' \) \) \{\s*set_time_limit\( 0 \);/', $source, 'PN8: the time limit is lifted where PHP allows' );
 	}
 
 	// ------------------------------------------------------------------

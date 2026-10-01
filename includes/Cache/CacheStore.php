@@ -61,9 +61,19 @@ final class CacheStore {
 	public const MAX_TRANSIENT_BYTES = 65536;
 
 	/**
-	 * Expired transient pairs deleted per cleanup slice.
+	 * Expired transient pairs deleted per cleanup slice. 1,000: a slice of
+	 * 5,000 names was a 600 KB DELETE statement taking about a second (PN7).
 	 */
-	public const PRUNE_BATCH = 5000;
+	public const PRUNE_BATCH = 1000;
+
+	/**
+	 * Prefix of every transient this plugin family writes: the `_transient_timeout_`
+	 * rows swept by prune_expired() are matched on it, so the limited
+	 * markers, the parked forms and the Pro add-on's `bfagp_` transients
+	 * are swept with the responses (PN11) instead of waiting for core's
+	 * daily sweep.
+	 */
+	public const PRUNE_PREFIX = 'bfag';
 
 	/**
 	 * Most slices one cleanup run issues.
@@ -173,11 +183,12 @@ final class CacheStore {
 	}
 
 	/**
-	 * Delete expired response transients from the options table, both rows
-	 * of each pair, PRUNE_BATCH pairs a slice until a slice finds none (or
-	 * PRUNE_MAX_ITERATIONS slices have run). Nothing to do on the object
-	 * cache backend, where entries expire on their own. Returns pairs
-	 * deleted.
+	 * Delete every expired `bfag…` transient from the options table (the
+	 * responses, and every other transient of this plugin family — see
+	 * PRUNE_PREFIX), both rows of each pair, PRUNE_BATCH pairs a slice until
+	 * a slice finds none (or PRUNE_MAX_ITERATIONS slices have run). Nothing
+	 * to do on the object cache backend, where entries expire on their own.
+	 * Returns pairs deleted.
 	 */
 	public function prune_expired(): int {
 		if ( $this->use_object_cache() ) {
@@ -191,7 +202,7 @@ final class CacheStore {
 			$timeouts = $wpdb->get_col(
 				$wpdb->prepare(
 					"SELECT option_name FROM {$wpdb->options} WHERE option_name LIKE %s AND option_value < %d LIMIT %d",
-					$wpdb->esc_like( '_transient_timeout_' . self::TRANSIENT_PREFIX ) . '%',
+					$wpdb->esc_like( '_transient_timeout_' . self::PRUNE_PREFIX ) . '%',
 					time(),
 					self::PRUNE_BATCH
 				)
@@ -218,19 +229,6 @@ final class CacheStore {
 			}
 		}
 		return $deleted;
-	}
-
-	/**
-	 * Remove one entry from the active backend.
-	 *
-	 * @param string $key Cache key.
-	 */
-	public function delete( string $key ): void {
-		if ( $this->use_object_cache() ) {
-			wp_cache_delete( $key, self::GROUP );
-			return;
-		}
-		delete_transient( self::TRANSIENT_PREFIX . $key );
 	}
 
 	/**

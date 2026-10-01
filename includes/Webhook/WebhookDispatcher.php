@@ -148,8 +148,9 @@ final class WebhookDispatcher {
 			$this->deliveries->update(
 				$delivery_id,
 				[
-					'status'  => 'pending',
-					'attempt' => $attempt,
+					'status'        => 'pending',
+					'attempt'       => $attempt,
+					'next_retry_at' => null,
 				]
 			);
 		}
@@ -196,11 +197,16 @@ final class WebhookDispatcher {
 		$body    = (string) $row['payload'];
 		$decoded = json_decode( $body, true );
 		$attempt = (int) $row['attempt'] + 1;
+		// PN2: a `retrying` row carries the due time the Pro scheduler set.
+		// Flipped to `pending` with it still set, the row is also what
+		// DeliveryRepository::pending() selects — and the flush cron would
+		// send it a second time mid-redeliver. Clear it with the status.
 		$this->deliveries->update(
 			$delivery_id,
 			[
-				'status'  => 'pending',
-				'attempt' => $attempt,
+				'status'        => 'pending',
+				'attempt'       => $attempt,
+				'next_retry_at' => null,
 			]
 		);
 		return $this->send( $webhook, (string) $row['event'], is_array( $decoded ) ? $decoded : [], $body, $attempt, $delivery_id );
@@ -208,10 +214,12 @@ final class WebhookDispatcher {
 
 	/**
 	 * Send a delivery the EventBus queued past its flush limit: the row's
-	 * stored payload, as the attempt the row records (1). The webhook is
-	 * looked up by the row; a missing or disabled one, or a truncated
-	 * payload, marks the row `failed` without sending. `next_retry_at` is
-	 * cleared first so the row is handed out once.
+	 * stored payload, as the attempt the row records (1). The webhook comes
+	 * from `WebhookRepository::all_enabled()` — object-cached, so a batch of
+	 * queued rows costs no webhook query per row (PN4); a webhook missing
+	 * from it (deleted or disabled), or a truncated payload, marks the row
+	 * `failed` without sending. `next_retry_at` is cleared first so the row
+	 * is handed out once.
 	 *
 	 * @param array<string, mixed> $row A delivery row from DeliveryRepository::pending().
 	 * @return array{delivery_id:int, success:bool, http_status:int|null}
@@ -223,7 +231,14 @@ final class WebhookDispatcher {
 			'success'     => false,
 			'http_status' => null,
 		];
-		$webhook     = $this->webhooks->find( (int) ( $row['webhook_id'] ?? 0 ) );
+		$webhook_id  = (int) ( $row['webhook_id'] ?? 0 );
+		$webhook     = null;
+		foreach ( $this->webhooks->all_enabled() as $candidate ) {
+			if ( (int) ( $candidate['id'] ?? 0 ) === $webhook_id ) {
+				$webhook = $candidate;
+				break;
+			}
+		}
 		if ( null === $webhook || 1 !== (int) ( $webhook['enabled'] ?? 0 ) ) {
 			Logger::log( 'pending delivery dropped: webhook missing or disabled', [ 'delivery_id' => $delivery_id ] );
 			$this->deliveries->update(
@@ -393,6 +408,8 @@ final class WebhookDispatcher {
 	 * @return array{delivery_id:int, success:bool, http_status:int|null}
 	 */
 	private function finish( int $delivery_id, array $webhook, int $attempt, bool $success, ?int $http_status, string $body ): array {
+		// PN2: a finished row is never due again. Left set, every finished
+		// row stayed in idx_next_retry and the pending sweep paid for it.
 		$this->deliveries->update(
 			$delivery_id,
 			[
@@ -401,6 +418,7 @@ final class WebhookDispatcher {
 				'response_body' => substr( $body, 0, 2000 ),
 				'delivered_at'  => $success ? gmdate( 'Y-m-d H:i:s' ) : null,
 				'attempt'       => $attempt,
+				'next_retry_at' => null,
 			]
 		);
 

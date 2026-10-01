@@ -146,7 +146,8 @@ final class CachePageTest extends TestCase {
 		);
 		$location = $this->redirect_of( [ $this->page(), 'handle_actions' ] );
 		$this->assertStringEndsWith( '&bfag_notice=cache_invalid', $location );
-		$this->assertIsArray( get_transient( 'bfag_form_' . get_current_user_id() ) );
+		$this->assertIsArray( get_transient( 'bfag_form_' . get_current_user_id() . '_cache' ), 'N-15: parked per user AND per tab' );
+		$this->assertFalse( get_transient( 'bfag_form_' . get_current_user_id() ), 'not under the old per-user key' );
 
 		$this->prime_render( [] );
 		$html = bfag_test_render( [ $this->page(), 'render' ] );
@@ -154,7 +155,7 @@ final class CachePageTest extends TestCase {
 		$this->assertStringContainsString( 'value="wp/v2/(posts|pages)"', $html );
 		$this->assertStringContainsString( 'required value="77"', $html );
 		$this->assertStringContainsString( 'value="kept"', $html );
-		$this->assertFalse( get_transient( 'bfag_form_' . get_current_user_id() ), 'deleted on read' );
+		$this->assertFalse( get_transient( 'bfag_form_' . get_current_user_id() . '_cache' ), 'deleted on read' );
 
 		$this->prime_render( [] );
 		$html = bfag_test_render( [ $this->page(), 'render' ] );

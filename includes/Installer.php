@@ -51,7 +51,6 @@ final class Installer {
 		'bfag_version',
 		'bfag_cache_generation',
 		'bfag_tag_generations',
-		'bfag_kpis',
 		'bfag_install_error',
 	];
 
@@ -60,6 +59,19 @@ final class Installer {
 	 * and the database error. Present only while the tables are missing.
 	 */
 	public const INSTALL_ERROR_OPTION = 'bfag_install_error';
+
+	/**
+	 * Seconds a boot waits after a failed install before it tries dbDelta
+	 * again (PN6 / WPMAP-115). The `at` of INSTALL_ERROR_OPTION is the last
+	 * attempt; activate() always retries.
+	 */
+	public const INSTALL_RETRY_SECONDS = 300;
+
+	/**
+	 * The first schema version whose upgrade step nulls `next_retry_at` on
+	 * finished delivery rows (PN2).
+	 */
+	private const RETRY_CLEANUP_VERSION = '1.0.2';
 
 	/**
 	 * Recurring cron hooks and their schedules.
@@ -105,15 +117,29 @@ final class Installer {
 			$callback();
 			return;
 		}
-		foreach ( get_sites(
-			[
-				'fields' => 'ids',
-				'number' => 0,
-			]
-		) as $site_id ) {
-			switch_to_blog( (int) $site_id );
-			$callback();
-			restore_current_blog();
+		// PN8: a large network is provisioned inline (DDL and seeds per site);
+		// lift the time limit where PHP allows, and keep every site's option
+		// reads out of the object cache so the loop's memory stays flat.
+		if ( function_exists( 'set_time_limit' ) ) {
+			set_time_limit( 0 );
+		}
+		wp_suspend_cache_addition( true );
+		try {
+			foreach ( get_sites(
+				[
+					'fields' => 'ids',
+					'number' => 0,
+				]
+			) as $site_id ) {
+				switch_to_blog( (int) $site_id );
+				try {
+					$callback();
+				} finally {
+					restore_current_blog(); // N-14: a callback that throws must not leave the request on another site.
+				}
+			}
+		} finally {
+			wp_suspend_cache_addition( false );
 		}
 	}
 
@@ -154,8 +180,11 @@ final class Installer {
 			return;
 		}
 		switch_to_blog( (int) $site->blog_id );
-		self::provision_site();
-		restore_current_blog();
+		try {
+			self::provision_site();
+		} finally {
+			restore_current_blog();
+		}
 	}
 
 	/**
@@ -191,24 +220,71 @@ final class Installer {
 	 * distinct from the schema version) is brought up to date whenever it
 	 * differs (F13), so a code-only release still leaves the right number
 	 * behind.
+	 *
+	 * A broken install (INSTALL_ERROR_OPTION present) is retried at most
+	 * once per INSTALL_RETRY_SECONDS rather than on every boot (PN6): six
+	 * dbDelta statements, six SHOW TABLES, an option write and an error-log
+	 * line per request is what a site with a missing CREATE privilege paid.
 	 */
 	public static function maybe_upgrade(): void {
 		$current = get_option( 'bfag_db_version', '' );
-		if ( '' === $current || false === $current ) {
+		$missing = '' === $current || false === $current;
+		if ( ! $missing && BFAG_VERSION !== (string) get_option( 'bfag_version', '' ) ) {
+			update_option( 'bfag_version', BFAG_VERSION, false );
+		}
+		if ( ! $missing && version_compare( (string) $current, BFAG_DB_VERSION, '>=' ) ) {
+			return;
+		}
+		if ( self::install_retry_throttled() ) {
+			return;
+		}
+		if ( $missing ) {
 			self::provision_site();
 			return;
 		}
-		if ( BFAG_VERSION !== (string) get_option( 'bfag_version', '' ) ) {
-			update_option( 'bfag_version', BFAG_VERSION, false );
-		}
-		if ( version_compare( (string) $current, BFAG_DB_VERSION, '>=' ) ) {
-			return;
-		}
 		if ( self::create_tables() ) {
+			self::upgrade_data( (string) $current );
 			update_option( 'bfag_db_version', BFAG_DB_VERSION, false );
 		}
 		Capabilities::add_caps();
 		self::schedule_cron();
+	}
+
+	/**
+	 * Is a retry of a failed install still inside the back-off window?
+	 */
+	private static function install_retry_throttled(): bool {
+		$error = get_option( self::INSTALL_ERROR_OPTION );
+		if ( ! is_array( $error ) || ! isset( $error['at'] ) || ! is_numeric( $error['at'] ) ) {
+			return false;
+		}
+		return ( time() - (int) $error['at'] ) < self::INSTALL_RETRY_SECONDS;
+	}
+
+	/**
+	 * One-off data steps between schema versions, run after dbDelta and
+	 * before the new version is recorded.
+	 *
+	 * From < 1.0.2 (PN2): `next_retry_at` was never cleared when a delivery
+	 * finished, so `idx_next_retry` held every finished row and the
+	 * pending-flush sweep scanned them all. Null it on the finished rows;
+	 * `pending`/`retrying` rows keep theirs (they are queued or scheduled).
+	 *
+	 * @param string $from The schema version being upgraded from.
+	 */
+	private static function upgrade_data( string $from ): void {
+		global $wpdb;
+
+		if ( version_compare( $from, self::RETRY_CLEANUP_VERSION, '<' ) ) {
+			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- one-off upgrade step on a plugin table.
+			$wpdb->query(
+				$wpdb->prepare(
+					"UPDATE {$wpdb->prefix}bfag_webhook_deliveries SET next_retry_at = NULL WHERE status IN (%s, %s) AND next_retry_at IS NOT NULL",
+					'success',
+					'failed'
+				)
+			);
+		}
 	}
 
 	/**
@@ -341,6 +417,8 @@ final class Installer {
   KEY idx_webhook_status (webhook_id,status),
   KEY idx_webhook_id (webhook_id),
   KEY idx_next_retry (next_retry_at),
+  KEY idx_status_retry (status,next_retry_at),
+  KEY idx_webhook_dir_id (webhook_id,direction,id),
   KEY idx_prune (status,created_at),
   KEY idx_created_at (created_at)
 ) {$engine};",
@@ -389,15 +467,23 @@ final class Installer {
 			return true;
 		}
 
-		update_option(
-			self::INSTALL_ERROR_OPTION,
-			[
-				'tables'   => $missing,
-				'db_error' => $db_error,
-				'at'       => time(),
-			],
-			false
-		);
+		// `at` is the time of this attempt: maybe_upgrade() throttles the
+		// next one on it. The option is rewritten only when something it
+		// carries changed — the tables, the error, or (on a retry) the time.
+		$previous = get_option( self::INSTALL_ERROR_OPTION );
+		$previous = is_array( $previous ) ? $previous : [];
+		$same     = ( $previous['tables'] ?? null ) === $missing && ( $previous['db_error'] ?? null ) === $db_error;
+		if ( ! $same || ! self::install_retry_throttled() ) {
+			update_option(
+				self::INSTALL_ERROR_OPTION,
+				[
+					'tables'   => $missing,
+					'db_error' => $db_error,
+					'at'       => time(),
+				],
+				false
+			);
+		}
 		// phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- a failed install must be visible whatever the debug_logging setting.
 		error_log( '[bfag] could not create tables: ' . implode( ', ', $missing ) . ( '' !== $db_error ? ' — ' . $db_error : '' ) );
 		return false;

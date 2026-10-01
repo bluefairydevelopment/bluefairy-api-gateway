@@ -25,10 +25,12 @@ use BlueFairy\ApiGateway\Support\RequestContext;
  * needs `Retry-After` and the `X-BF-RateLimit-*` headers and only a response
  * can carry headers through `WP_REST_Server::dispatch()`.
  *
- * Two seams for the Pro add-on: `bfag_rate_limit_is_blocked` (its ban list,
- * checked before any rule, after the editor exemption) and
- * `bfag_rate_limit_breached` (its DDoS mitigator, fired once per NEW breach
- * — a subject refused from the limited marker fires nothing).
+ * Three seams for the Pro add-on: `bfag_rate_limit_is_blocked` (its ban list,
+ * checked before any rule, after the editor exemption),
+ * `bfag_rate_limit_breached` (its DDoS mitigator, fired once per NEW breach)
+ * and `bfag_rate_limit_refused` (fired on every request the limited marker
+ * refuses, with the running count of refusals this window and no database
+ * work, so a DDoS threshold can mean "requests over the limit").
  */
 final class RateLimitMiddleware {
 
@@ -152,8 +154,28 @@ final class RateLimitMiddleware {
 			// from the marker alone: no INSERT, no COUNT, no breach action,
 			// until it expires. The marker is keyed on the rule's limits too,
 			// so editing the rule retires every marker it left (R2-07).
-			$marker = self::limited_key( $subject, (int) $rule['id'], $max, $window );
-			if ( $this->is_limited( $marker ) ) {
+			$marker  = self::limited_key( $subject, (int) $rule['id'], $max, $window );
+			$refused = $this->refuse_from_marker( $marker );
+			if ( null !== $refused ) {
+				/**
+				 * A request was refused from the limited marker: the
+				 * subject already breached this rule in the current
+				 * window. Fired on EVERY refusal, with the running count
+				 * of refusals this window — and with no database work, so
+				 * the Pro DDoS mitigator can decide a block when the count
+				 * crosses its threshold without a COUNT(*) of its own.
+				 * The threshold therefore means "requests over the limit
+				 * in the window"; the breach itself fired
+				 * `bfag_rate_limit_breached` once, when the marker was set.
+				 *
+				 * @since 1.0.0
+				 *
+				 * @param string               $subject        The counted subject.
+				 * @param array<string, mixed> $rule           The rule row.
+				 * @param string               $ip             Client IP.
+				 * @param int                  $refused_so_far Refusals of this subject under this rule this window, this one included.
+				 */
+				do_action( 'bfag_rate_limit_refused', $subject, $rule, $ip, $refused );
 				return $this->limited_response( $rule );
 			}
 			// Counted against the rule, not the path: one rule = one budget per
@@ -266,33 +288,107 @@ final class RateLimitMiddleware {
 	}
 
 	/**
-	 * Did this subject breach this rule within the current window?
+	 * How many requests of $subject the marker has refused under $rule_id
+	 * in the current window; 0 when the subject is not limited or the rule
+	 * is not enabled. Reads the enabled rules (object-cached) for the
+	 * rule's limits, which are part of the marker key.
 	 *
-	 * @param string $marker Key from limited_key().
+	 * @param string $subject The counted subject.
+	 * @param int    $rule_id The rule's id.
 	 */
-	private function is_limited( string $marker ): bool {
-		if ( true === wp_using_ext_object_cache() ) {
-			return false !== wp_cache_get( $marker, self::LIMITED_GROUP );
+	public function refused_count( string $subject, int $rule_id ): int {
+		foreach ( $this->rules->all_enabled() as $rule ) {
+			if ( (int) $rule['id'] === $rule_id ) {
+				$marker = $this->read_marker( self::limited_key( $subject, $rule_id, (int) $rule['max_requests'], (int) $rule['window_seconds'] ) );
+				return null === $marker ? 0 : $marker['refused'];
+			}
 		}
-		return false !== get_transient( self::LIMITED_PREFIX . $marker );
+		return 0;
 	}
 
 	/**
-	 * Remember a breach for the rest of the window: in the object cache
-	 * when it is persistent, else as a transient (one options row with
-	 * its timeout, gone when the window ends).
+	 * Refuse this request from the marker if the subject breached this rule
+	 * within the current window: count the refusal in the marker and return
+	 * the running total, or null when the subject is not limited.
+	 *
+	 * The count is a read-modify-write of the marker, so two refusals
+	 * racing on a persistent object cache may lose one: it is a running
+	 * figure for a threshold, not an audit count.
+	 *
+	 * @param string $marker Key from limited_key().
+	 */
+	private function refuse_from_marker( string $marker ): ?int {
+		$value = $this->read_marker( $marker );
+		if ( null === $value ) {
+			return null;
+		}
+		++$value['refused'];
+		$this->write_marker( $marker, $value, max( 1, $value['until'] - time() ) );
+		return $value['refused'];
+	}
+
+	/**
+	 * The marker as stored — `[ 'until' => <unix>, 'refused' => <int> ]` —
+	 * or null when absent or expired. A marker written before this shape
+	 * (a bare timestamp) reads as zero refusals.
+	 *
+	 * @param string $marker Key from limited_key().
+	 * @return array{until:int, refused:int}|null
+	 */
+	private function read_marker( string $marker ): ?array {
+		$raw = true === wp_using_ext_object_cache()
+			? wp_cache_get( $marker, self::LIMITED_GROUP )
+			: get_transient( self::LIMITED_PREFIX . $marker );
+		if ( false === $raw || null === $raw ) {
+			return null;
+		}
+		if ( is_array( $raw ) ) {
+			return [
+				'until'   => (int) ( $raw['until'] ?? 0 ),
+				'refused' => max( 0, (int) ( $raw['refused'] ?? 0 ) ),
+			];
+		}
+		return [
+			'until'   => is_numeric( $raw ) ? (int) $raw : 0,
+			'refused' => 0,
+		];
+	}
+
+	/**
+	 * Store the marker for $ttl seconds: in the object cache when it is
+	 * persistent, else as a transient (one options row with its timeout,
+	 * gone when the window ends).
+	 *
+	 * @param string                        $marker Key from limited_key().
+	 * @param array{until:int, refused:int} $value  The marker.
+	 * @param int                           $ttl    Seconds to keep it.
+	 */
+	private function write_marker( string $marker, array $value, int $ttl ): void {
+		if ( true === wp_using_ext_object_cache() ) {
+			wp_cache_set( $marker, $value, self::LIMITED_GROUP, $ttl );
+			return;
+		}
+		set_transient( self::LIMITED_PREFIX . $marker, $value, $ttl );
+	}
+
+	/**
+	 * Remember a breach for the rest of the window, with a refusal count
+	 * of zero: the breaching request is counted by the hits table, not by
+	 * the marker.
 	 *
 	 * @param string $marker Key from limited_key().
 	 * @param int    $window Seconds until the subject may try again.
 	 */
 	private function mark_limited( string $marker, int $window ): void {
-		$until  = time() + max( 1, $window );
 		$window = max( 1, $window );
-		if ( true === wp_using_ext_object_cache() ) {
-			wp_cache_set( $marker, $until, self::LIMITED_GROUP, $window );
-			return;
-		}
-		set_transient( self::LIMITED_PREFIX . $marker, $until, $window );
+		$this->write_marker(
+			$marker,
+			[
+				'until'   => time() + $window,
+				'refused' => 0,
+			],
+			$window
+		);
 	}
 
 	/**

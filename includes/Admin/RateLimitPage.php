@@ -94,7 +94,7 @@ final class RateLimitPage extends Page {
 			$this->view(
 				'ratelimit-form',
 				[
-					'rule'          => array_merge( $rule, self::take_form() ?? [] ),
+					'rule'          => array_merge( $rule, $this->take_form() ?? [] ),
 					'subject_types' => $this->rules->subject_types(),
 					'is_pro'        => $this->upsell->is_pro(),
 					'form_url'      => $this->url(),
@@ -208,7 +208,7 @@ final class RateLimitPage extends Page {
 	 */
 	private function fail( string $notice, int $id, array $fields ): never {
 		unset( $fields['id'] );
-		self::remember_form( $fields );
+		$this->remember_form( $fields );
 		$this->redirect(
 			$notice,
 			$id > 0 ? [

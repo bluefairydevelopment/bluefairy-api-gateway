@@ -177,23 +177,29 @@ final class HitCounter {
 	}
 
 	/**
-	 * The storage engine's row estimate (`SHOW TABLE STATUS`), free where
-	 * COUNT(*) walks the table. Off by a margin on InnoDB, which is fine for
-	 * a ten-million-row cap; the dashboard figure is the exact count.
+	 * An upper bound on the rows in the hits table, from one indexed read:
+	 * `MAX(id) - MIN(id) + 1` (0 when empty). The engine's `SHOW TABLE
+	 * STATUS` estimate was read before, but MySQL 8 caches it for up to a
+	 * day (`information_schema_stats_expiry`), so a table that had just
+	 * filled could read as small (PN9). The bound over-counts only by rows
+	 * deleted from the middle of the id range: the prune removes the OLDEST
+	 * hits and ids rise with `hit_at`, so in practice it is the live count;
+	 * it never under-counts, so the cap still fires. The dashboard figure
+	 * is the KPI cron's exact COUNT(*).
 	 */
 	public function approximate_rows(): int {
 		global $wpdb;
 
-		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- plugin table; the engine's estimate, read every five minutes.
-		$status = $wpdb->get_row( $wpdb->prepare( 'SHOW TABLE STATUS LIKE %s', $wpdb->esc_like( $wpdb->prefix . 'bfag_rate_limit_hits' ) ), ARRAY_A );
-		return is_array( $status ) && isset( $status['Rows'] ) && is_numeric( $status['Rows'] ) ? (int) $status['Rows'] : 0;
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- plugin table, prefix interpolation; two index ends, read every five minutes.
+		$bound = $wpdb->get_var( "SELECT COALESCE(MAX(id) - MIN(id) + 1, 0) FROM {$wpdb->prefix}bfag_rate_limit_hits" );
+		return is_numeric( $bound ) ? max( 0, (int) $bound ) : 0;
 	}
 
 	/**
 	 * Safety cap: when the pruner has fallen so far behind that the table
 	 * holds more than $threshold rows, empty it rather than let every
 	 * request's COUNT degrade further. Logged, because it forgives every
-	 * subject's current window. Reads the engine's estimate, not COUNT(*):
+	 * subject's current window. Reads the id-range bound, not COUNT(*):
 	 * this runs every five minutes on a table the KPI cron already counts.
 	 *
 	 * @param int $threshold Row count above which the table is truncated.

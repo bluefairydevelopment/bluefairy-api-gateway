@@ -54,7 +54,12 @@ final class HarnessTest extends TestCase {
 		$this->assertNotFalse( wp_next_scheduled( 'bfag_h', [ 7 ] ), 'the event scheduled with [7] stays' );
 		$this->assertFalse( wp_next_scheduled( 'bfag_h', [] ) );
 		$this->assertSame( 0, wp_clear_scheduled_hook( 'bfag_h_rec' ), 'the recurring event carries args' );
-		$this->assertNotFalse( wp_next_scheduled( 'bfag_h_rec' ) );
+		$this->assertNotFalse( wp_next_scheduled( 'bfag_h_rec', [ 1 ] ) );
+		$this->assertFalse( wp_next_scheduled( 'bfag_h_rec' ), 'TF5: as core, a recurring event is keyed by hook AND args' );
+		wp_schedule_event( 200, 'daily', 'bfag_h_rec', [ 2 ] );
+		$this->assertCount( 2, array_filter( array_keys( $GLOBALS['bfag_test_cron'] ), static fn( string $k ): bool => str_starts_with( $k, 'bfag_h_rec' ) ), 'two recurring events of one hook with different args coexist' );
+		$this->assertSame( 1, wp_clear_scheduled_hook( 'bfag_h_rec', [ 2 ] ), 'and are cleared by their own args' );
+		$this->assertNotFalse( wp_next_scheduled( 'bfag_h_rec', [ 1 ] ) );
 		$this->assertSame( 1, wp_clear_scheduled_hook( 'bfag_h', [ 7 ] ), 'the same args clear it' );
 
 		wp_schedule_single_event( 100, 'bfag_h', [ 8 ] );
@@ -105,6 +110,35 @@ final class HarnessTest extends TestCase {
 
 		$this->assertSame( [ 2, 2 ], $GLOBALS['bfag_test_switched'] );
 		$this->assertFalse( restore_current_blog(), 'nothing left to restore' );
+	}
+
+	/**
+	 * TF1: the date stubs render in the site timezone, as core does.
+	 */
+	public function test_date_stubs_honour_the_site_timezone(): void {
+		$noon = gmmktime( 12, 0, 0, 10, 1, 2026 );
+		$this->assertSame( '2026-10-01 12:00:00', get_date_from_gmt( '2026-10-01 12:00:00' ), 'no timezone_string: UTC' );
+		update_option( 'timezone_string', 'America/Chicago' );
+		$this->assertSame( '2026-10-01 07:00:00', get_date_from_gmt( '2026-10-01 12:00:00' ), 'CDT is UTC−5' );
+		$this->assertSame( '07:00', get_date_from_gmt( '2026-10-01 12:00:00', 'H:i' ) );
+		bfag_test_set_time( $noon );
+		$this->assertSame( '07:00', date_i18n( 'H:i' ), 'no timestamp: now, in the site timezone' );
+		$this->assertSame( '12:00', date_i18n( 'H:i', false, true ), '$gmt: now, in UTC' );
+		$this->assertSame( '12:00', date_i18n( 'H:i', $noon ), 'a given timestamp is a WP timestamp (already shifted) and is formatted as-is, as core does' );
+		update_option( 'timezone_string', 'Not/AZone' );
+		$this->assertSame( '2026-10-01 12:00:00', get_date_from_gmt( '2026-10-01 12:00:00' ), 'an invalid zone falls back to UTC' );
+	}
+
+	/**
+	 * TF4 / TF6: the REST-serving flag defaults false (as core, outside a
+	 * REST request) and wp_cache_supports() is switchable.
+	 */
+	public function test_rest_serving_defaults_false_and_cache_supports_is_switchable(): void {
+		$this->assertFalse( wp_is_serving_rest_request(), 'a test that needs the top-level REST request sets bfag_test_serving_rest itself' );
+		$this->assertTrue( wp_cache_supports( 'flush_group' ) );
+		$this->assertFalse( wp_cache_supports( 'flush_runtime' ) );
+		$GLOBALS['bfag_test_cache_supports'] = [];
+		$this->assertFalse( wp_cache_supports( 'flush_group' ) );
 	}
 
 	public function test_get_sites_pages_like_core(): void {

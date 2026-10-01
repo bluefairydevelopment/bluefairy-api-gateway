@@ -36,7 +36,14 @@ final class UninstallTest extends TestCase {
 		$this->seed();
 		update_option( 'bfag_settings', [ 'delete_data_on_uninstall' => false ] );
 		wp_schedule_single_event( time(), 'bfag_cron_flush_pending', [ 7 ] );
+		update_user_meta( 3, 'bfag_proxy_notice_dismissed', 1 );
+		update_user_meta( 4, 'bfag_proxy_notice_dismissed', 1 );
+		update_user_meta( 4, 'other_plugin_meta', 'keep' );
 		$this->run_uninstall();
+
+		$this->assertSame( '', get_user_meta( 3, 'bfag_proxy_notice_dismissed', true ), 'N-08: the proxy-notice dismissal is removed from every user' );
+		$this->assertSame( '', get_user_meta( 4, 'bfag_proxy_notice_dismissed', true ) );
+		$this->assertSame( 'keep', get_user_meta( 4, 'other_plugin_meta', true ), 'only our key' );
 
 		$this->assertSame( [], $this->wpdb->queries_matching( 'DROP TABLE' ), 'tables are kept unless opted in' );
 		foreach ( Installer::OPTIONS as $key ) {

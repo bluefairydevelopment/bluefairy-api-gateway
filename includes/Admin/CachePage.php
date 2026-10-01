@@ -99,7 +99,7 @@ final class CachePage extends Page {
 			$this->view(
 				'cache-form',
 				[
-					'rule'       => array_merge( $rule, self::take_form() ?? [] ),
+					'rule'       => array_merge( $rule, $this->take_form() ?? [] ),
 					'form_url'   => $this->url(),
 					'cancel_url' => $this->url(),
 				]
@@ -194,7 +194,7 @@ final class CachePage extends Page {
 	 */
 	private function fail( string $notice, int $id, array $fields ): never {
 		unset( $fields['id'] );
-		self::remember_form( $fields );
+		$this->remember_form( $fields );
 		$this->redirect(
 			$notice,
 			$id > 0 ? [

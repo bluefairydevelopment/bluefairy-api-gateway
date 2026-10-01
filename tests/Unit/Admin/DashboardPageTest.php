@@ -133,7 +133,8 @@ final class DashboardPageTest extends TestCase {
 		$this->assertStringContainsString( 'data-bfag-kpi="webhook_success_rate" data-bfag-format="rate">50.0%<', $html );
 		$this->assertStringNotContainsString( 'data-bfag-kpi="blocked_today">9<', $html, 'free: the ban count is not a free figure' );
 		$this->assertStringContainsString( 'Blocked (Pro)', $html );
-		$this->assertStringContainsString( 'Updated 120 secs ago', $html );
+		$this->assertMatchesRegularExpression( '/Updated [^<]+ ago/', $html, 'TF6: the human time, whatever core phrases it as' );
+		$this->assertStringNotContainsString( 'Updated just now', $html );
 		$this->assertStringNotContainsString( 'Not computed yet', $html );
 
 		$this->assertStringContainsString( 'CRM &lt;sync&gt;', $html );

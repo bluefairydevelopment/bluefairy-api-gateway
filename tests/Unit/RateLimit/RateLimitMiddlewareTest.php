@@ -36,11 +36,20 @@ final class RateLimitMiddlewareTest extends TestCase {
 	 */
 	private array $breach_flags = [];
 
+	/**
+	 * Every bfag_rate_limit_refused firing, as [ subject, rule id, ip, refused_so_far ].
+	 *
+	 * @var list<array{string, int, string, int}>
+	 */
+	private array $refusals = [];
+
 	protected function setUp(): void {
 		parent::setUp();
 		$this->server       = new \WP_REST_Server();
 		$this->breaches     = [];
 		$this->breach_flags = [];
+		$this->refusals     = [];
+		$GLOBALS['bfag_test_serving_rest'] = true; // TF4: these are top-level REST requests; the harness default is false, as core.
 		add_action(
 			'bfag_rate_limit_breached',
 			function ( string $subject, array $rule, \WP_REST_Request $request, string $ip, bool $forwarded_without_proxy ): void {
@@ -49,6 +58,14 @@ final class RateLimitMiddlewareTest extends TestCase {
 			},
 			10,
 			5
+		);
+		add_action(
+			'bfag_rate_limit_refused',
+			function ( string $subject, array $rule, string $ip, int $refused_so_far ): void {
+				$this->refusals[] = [ $subject, (int) $rule['id'], $ip, $refused_so_far ];
+			},
+			10,
+			4
 		);
 	}
 
@@ -198,7 +215,8 @@ final class RateLimitMiddlewareTest extends TestCase {
 
 		$this->assertSame( 429, $this->check( $middleware )->get_status() );
 		$marker = 'bfag_limited_' . RateLimitMiddleware::limited_key( '203.0.113.10', 3, 5, 60 );
-		$this->assertEqualsWithDelta( time() + 60, get_transient( $marker ), 5, 'the marker holds the end of the window (real clock, as hit_at is)' );
+		$this->assertEqualsWithDelta( time() + 60, get_transient( $marker )['until'], 5, 'the marker holds the end of the window (real clock, as hit_at is)' );
+		$this->assertSame( 0, get_transient( $marker )['refused'], 'the breaching request is counted by the hits table, not the marker' );
 		$this->assertSame( 1_700_000_060, $GLOBALS['bfag_test_transients'][ $marker ]['expires'], 'and expires with it' );
 		$this->assertSame( 'limited:' . md5( '203.0.113.10|rule:3|5|60' ), RateLimitMiddleware::limited_key( '203.0.113.10', 3, 5, 60 ), 'the key carries the limits, so an edited rule retires its markers' );
 
@@ -222,6 +240,76 @@ final class RateLimitMiddlewareTest extends TestCase {
 		$this->assertCount( 1, $this->wpdb->calls_to( 'insert' ) );
 	}
 
+	/**
+	 * PN1: every request the marker refuses fires `bfag_rate_limit_refused`
+	 * with the running count of refusals this window, and costs no query —
+	 * so the Pro threshold can mean "requests over the limit" without a
+	 * COUNT(*) per 429. The breach itself fires `bfag_rate_limit_breached`
+	 * once and is not a refusal.
+	 */
+	public function test_each_marker_refusal_fires_the_refused_action_with_a_running_count_and_no_database_work(): void {
+		bfag_test_set_time( 1_700_000_000 );
+		$rules      = [ $this->rule( [ 'id' => 3, 'max_requests' => 5, 'window_seconds' => 60 ] ) ];
+		$middleware = $this->middleware( $rules );
+		$this->wpdb->queue( 'get_var', '6' );
+		$this->assertSame( 429, $this->check( $middleware )->get_status(), 'the breach' );
+		$this->assertCount( 1, $this->breaches );
+		$this->assertSame( [], $this->refusals, 'the breaching request is not a refusal' );
+		$this->assertSame( 0, $middleware->refused_count( '203.0.113.10', 3 ) );
+
+		$this->wpdb->calls = [];
+		for ( $n = 1; $n <= 3; $n++ ) {
+			$this->assertSame( 429, $this->check( $middleware )->get_status() );
+		}
+		$this->assertSame(
+			[
+				[ '203.0.113.10', 3, '203.0.113.10', 1 ],
+				[ '203.0.113.10', 3, '203.0.113.10', 2 ],
+				[ '203.0.113.10', 3, '203.0.113.10', 3 ],
+			],
+			$this->refusals,
+			'one firing per refusal, the count running'
+		);
+		$this->assertCount( 1, $this->breaches, 'still the one breach' );
+		$this->assertSame( [], $this->wpdb->calls, 'no INSERT, no COUNT, nothing: the count lives in the marker' );
+		$marker = 'bfag_limited_' . RateLimitMiddleware::limited_key( '203.0.113.10', 3, 5, 60 );
+		$this->assertSame( 3, get_transient( $marker )['refused'] );
+		$this->assertEqualsWithDelta( 1_700_000_060, $GLOBALS['bfag_test_transients'][ $marker ]['expires'], 5, 'the marker still ends with the window' );
+		$this->assertSame( 3, $middleware->refused_count( '203.0.113.10', 3 ) );
+		$this->assertSame( 0, $middleware->refused_count( '203.0.113.99', 3 ), 'another subject' );
+		$this->assertSame( 0, $middleware->refused_count( '203.0.113.10', 4 ), 'a rule that is not enabled' );
+		$this->assertSame( [], $this->wpdb->calls, 'refused_count() reads the cached rules and the marker only' );
+
+		bfag_test_set_time( 1_700_000_061 );
+		$this->assertSame( 0, $middleware->refused_count( '203.0.113.10', 3 ), 'the window passed: the marker is gone' );
+		$this->wpdb->queue( 'get_var', '1' );
+		$this->assertNull( $this->check( $middleware ), 'and the subject is counted again' );
+		$this->assertCount( 3, $this->refusals, 'a counted request fires no refusal' );
+	}
+
+	public function test_the_refused_count_is_kept_in_the_object_cache_marker_too_and_a_bare_legacy_marker_starts_at_zero(): void {
+		wp_using_ext_object_cache( true );
+		bfag_test_set_time( 1_700_000_000 );
+		$middleware = $this->middleware( [ $this->rule( [ 'id' => 1, 'max_requests' => 0, 'window_seconds' => 30 ] ) ] );
+		$this->assertSame( 429, $this->check( $middleware )->get_status(), 'max 0: the first hit breaches' );
+		$key = RateLimitMiddleware::limited_key( '203.0.113.10', 1, 0, 30 );
+		$this->assertSame( 0, wp_cache_get( $key, 'bfag' )['refused'] );
+
+		$this->wpdb->calls = [];
+		$this->check( $middleware );
+		$this->check( $middleware );
+		$this->assertSame( 2, wp_cache_get( $key, 'bfag' )['refused'] );
+		$this->assertSame( 2, $middleware->refused_count( '203.0.113.10', 1 ) );
+		$this->assertSame( [ 1, 2 ], array_column( $this->refusals, 3 ) );
+		$this->assertSame( [], $this->wpdb->calls );
+
+		// A marker written by the previous release held the bare end-of-window timestamp.
+		wp_cache_set( $key, 1_700_000_030, 'bfag', 30 );
+		$this->assertSame( 0, $middleware->refused_count( '203.0.113.10', 1 ), 'reads as zero refusals' );
+		$this->assertSame( 429, $this->check( $middleware )->get_status(), 'and still refuses' );
+		$this->assertSame( [ 'until' => 1_700_000_030, 'refused' => 1 ], wp_cache_get( $key, 'bfag' ), 'upgraded in place' );
+	}
+
 	public function test_the_marker_lives_in_the_object_cache_when_it_is_persistent(): void {
 		wp_using_ext_object_cache( true );
 		bfag_test_set_time( 1_700_000_000 );
@@ -229,7 +317,7 @@ final class RateLimitMiddlewareTest extends TestCase {
 
 		$this->assertSame( 429, $this->check( $middleware )->get_status(), 'max 0: the first hit breaches' );
 		$key = RateLimitMiddleware::limited_key( '203.0.113.10', 1, 0, 30 );
-		$this->assertEqualsWithDelta( time() + 30, wp_cache_get( $key, 'bfag' ), 5 );
+		$this->assertEqualsWithDelta( time() + 30, wp_cache_get( $key, 'bfag' )['until'], 5 );
 		$this->assertSame( 1_700_000_030, $GLOBALS['bfag_test_cache_expires']['bfag'][ $key ] );
 		$this->assertSame( [], $GLOBALS['bfag_test_transients'], 'no transient' );
 

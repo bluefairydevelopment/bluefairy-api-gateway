@@ -55,7 +55,12 @@ if ( ! defined( 'BFAG_VERSION' ) ) {
 	define( 'BFAG_VERSION', '1.0.0' );
 }
 if ( ! defined( 'BFAG_DB_VERSION' ) ) {
-	define( 'BFAG_DB_VERSION', '1.0.0' );
+	// N-16: read from the plugin file, never mirrored here — a mirror drifted to 1.0.0 while the plugin shipped 1.0.1.
+	$bfag_plugin_source = (string) file_get_contents( dirname( __DIR__ ) . '/bluefairy-api-gateway.php' );
+	if ( 1 !== preg_match( "/define\\( 'BFAG_DB_VERSION', '([^']+)' \\);/", $bfag_plugin_source, $bfag_db_version_match ) ) {
+		throw new RuntimeException( 'tests/bootstrap.php: BFAG_DB_VERSION not found in bluefairy-api-gateway.php' );
+	}
+	define( 'BFAG_DB_VERSION', $bfag_db_version_match[1] );
 }
 if ( ! defined( 'BFAG_FILE' ) ) {
 	define( 'BFAG_FILE', dirname( __DIR__ ) . '/bluefairy-api-gateway.php' );
@@ -119,7 +124,9 @@ function bfag_test_reset(): void {
 	$GLOBALS['bfag_test_switched']      = [];
 	$GLOBALS['bfag_test_network_active'] = true;
 	$GLOBALS['bfag_test_doing_cron']    = false;
-	$GLOBALS['bfag_test_serving_rest']  = true;
+	$GLOBALS['bfag_test_serving_rest']  = false; // As core: true only while WP_REST_Server serves the HTTP request (TF4).
+	$GLOBALS['bfag_test_cache_supports'] = [ 'flush_group' ]; // Features wp_cache_supports() reports (TF6).
+	$GLOBALS['bfag_test_suspended']     = []; // Every wp_suspend_cache_addition() call, in order.
 	$GLOBALS['wpdb']                    = new BlueFairy\ApiGateway\Tests\FakeWpdb();
 	$_SERVER['REMOTE_ADDR']             = '203.0.113.10';
 	$_SERVER['REQUEST_METHOD']          = 'GET';
@@ -232,7 +239,7 @@ function wp_cache_flush(): bool {
 	return true;
 }
 function wp_cache_supports( string $feature ): bool {
-	return 'flush_group' === $feature;
+	return in_array( $feature, $GLOBALS['bfag_test_cache_supports'] ?? [ 'flush_group' ], true );
 }
 function wp_using_ext_object_cache( ?bool $using = null ): ?bool {
 	// Mirrors core: $_wp_using_ext_object_cache is null on an install without a
@@ -515,14 +522,42 @@ function current_time( string $type, int|bool $gmt = 0 ): int|string {
 function wp_date( string $format, ?int $timestamp = null, mixed $timezone = null ): string|false {
 	return gmdate( $format, $timestamp ?? bfag_test_now() );
 }
+/**
+ * The site timezone: option `timezone_string`, UTC when unset or invalid (TF1).
+ */
+function bfag_test_timezone(): DateTimeZone {
+	$name = (string) get_option( 'timezone_string', '' );
+	try {
+		return new DateTimeZone( '' === $name ? 'UTC' : $name );
+	} catch ( Exception ) {
+		return new DateTimeZone( 'UTC' );
+	}
+}
+/**
+ * As core: with no timestamp, "now" in the site timezone (UTC when $gmt);
+ * with one, the timestamp is a "WP timestamp" already shifted by the site
+ * offset — get_date_from_gmt() + strtotime() produce one — so it is formatted
+ * as-is in UTC.
+ */
 function date_i18n( string $format, int|bool $timestamp = false, bool $gmt = false ): string {
-	return gmdate( $format, false === $timestamp ? bfag_test_now() : (int) $timestamp );
+	if ( false === $timestamp ) {
+		$now = new DateTimeImmutable( '@' . bfag_test_now() );
+		return $now->setTimezone( $gmt ? new DateTimeZone( 'UTC' ) : bfag_test_timezone() )->format( $format );
+	}
+	return gmdate( $format, (int) $timestamp );
 }
 function human_time_diff( int $from, int $to = 0 ): string {
 	return abs( ( 0 === $to ? bfag_test_now() : $to ) - $from ) . ' secs';
 }
+/**
+ * As core: a GMT `Y-m-d H:i:s` rendered in the site timezone (TF1).
+ */
 function get_date_from_gmt( string $date, string $format = 'Y-m-d H:i:s' ): string {
-	return gmdate( $format, (int) strtotime( $date ) );
+	$utc = date_create( $date, new DateTimeZone( 'UTC' ) );
+	if ( false === $utc ) {
+		return gmdate( $format, 0 );
+	}
+	return $utc->setTimezone( bfag_test_timezone() )->format( $format );
 }
 function mysql2date( string $format, string $date, bool $translate = true ): string|int|false {
 	return gmdate( $format, (int) strtotime( $date ) );
@@ -935,16 +970,26 @@ function wp_schedule_event( int $timestamp, string $recurrence, string $hook, ar
 	if ( ! isset( wp_get_schedules()[ $recurrence ] ) ) {
 		return false;
 	}
-	$GLOBALS['bfag_test_cron'][ $hook ] = compact( 'timestamp', 'recurrence', 'args' );
+	$GLOBALS['bfag_test_cron'][ bfag_test_cron_key( $hook, $args ) ] = compact( 'timestamp', 'recurrence', 'args' );
 	return true;
+}
+/**
+ * The slot of a recurring event in $GLOBALS['bfag_test_cron']: the hook name
+ * alone for an event with no args (what the plugin schedules, so tests may
+ * still read `bfag_test_cron[ $hook ]`), else `hook:md5(serialize(args))` —
+ * core keys events by hook AND args (TF5).
+ */
+function bfag_test_cron_key( string $hook, array $args ): string {
+	return [] === $args ? $hook : $hook . ':' . md5( serialize( $args ) );
 }
 function wp_schedule_single_event( int $timestamp, string $hook, array $args = [], bool $wp_error = false ): bool {
 	$GLOBALS['bfag_test_single_events'][] = compact( 'timestamp', 'hook', 'args' );
 	return true;
 }
 function wp_next_scheduled( string $hook, array $args = [] ): int|false {
-	if ( isset( $GLOBALS['bfag_test_cron'][ $hook ] ) ) {
-		return (int) $GLOBALS['bfag_test_cron'][ $hook ]['timestamp'];
+	$key = bfag_test_cron_key( $hook, $args );
+	if ( isset( $GLOBALS['bfag_test_cron'][ $key ] ) ) {
+		return (int) $GLOBALS['bfag_test_cron'][ $key ]['timestamp'];
 	}
 	foreach ( $GLOBALS['bfag_test_single_events'] as $event ) {
 		if ( $event['hook'] === $hook && $event['args'] === $args ) {
@@ -959,8 +1004,9 @@ function wp_next_scheduled( string $hook, array $args = [] ): int|false {
 function wp_clear_scheduled_hook( string $hook, array $args = [], bool $wp_error = false ): int|false {
 	$key   = md5( serialize( $args ) );
 	$count = 0;
-	if ( isset( $GLOBALS['bfag_test_cron'][ $hook ] ) && md5( serialize( $GLOBALS['bfag_test_cron'][ $hook ]['args'] ) ) === $key ) {
-		unset( $GLOBALS['bfag_test_cron'][ $hook ] );
+	$slot  = bfag_test_cron_key( $hook, $args );
+	if ( isset( $GLOBALS['bfag_test_cron'][ $slot ] ) ) {
+		unset( $GLOBALS['bfag_test_cron'][ $slot ] );
 		$count = 1;
 	}
 	$before                             = count( $GLOBALS['bfag_test_single_events'] );
@@ -968,8 +1014,13 @@ function wp_clear_scheduled_hook( string $hook, array $args = [], bool $wp_error
 	return $count + ( $before - count( $GLOBALS['bfag_test_single_events'] ) );
 }
 function wp_unschedule_hook( string $hook, bool $wp_error = false ): int|false {
-	$count = isset( $GLOBALS['bfag_test_cron'][ $hook ] ) ? 1 : 0;
-	unset( $GLOBALS['bfag_test_cron'][ $hook ] );
+	$count = 0;
+	foreach ( array_keys( $GLOBALS['bfag_test_cron'] ) as $slot ) {
+		if ( $slot === $hook || str_starts_with( (string) $slot, $hook . ':' ) ) {
+			unset( $GLOBALS['bfag_test_cron'][ $slot ] );
+			++$count;
+		}
+	}
 	$before                             = count( $GLOBALS['bfag_test_single_events'] );
 	$GLOBALS['bfag_test_single_events'] = array_values( array_filter( $GLOBALS['bfag_test_single_events'], static fn( array $e ): bool => $e['hook'] !== $hook ) );
 	return $count + ( $before - count( $GLOBALS['bfag_test_single_events'] ) );

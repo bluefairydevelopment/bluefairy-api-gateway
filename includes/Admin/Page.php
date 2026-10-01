@@ -179,22 +179,23 @@ abstract class Page {
 	/**
 	 * Park the submitted fields so the tab can re-fill its form once after a
 	 * failed save, instead of discarding what the admin typed. Keyed per
-	 * user; read back (and deleted) by take_form().
+	 * user AND per tab (N-15: a refused webhook save must not re-fill the
+	 * cache rule form); read back (and deleted) by take_form().
 	 *
 	 * @param array<string, mixed> $fields The sanitised form fields.
 	 */
-	protected static function remember_form( array $fields ): void {
-		set_transient( self::form_transient(), $fields, self::FORM_TTL );
+	protected function remember_form( array $fields ): void {
+		set_transient( $this->form_transient(), $fields, self::FORM_TTL );
 	}
 
 	/**
-	 * The fields parked by the current user's last failed save, deleted on
-	 * read so a later visit shows a blank form again.
+	 * The fields parked by the current user's last failed save on this tab,
+	 * deleted on read so a later visit shows a blank form again.
 	 *
 	 * @return array<string, mixed>|null
 	 */
-	protected static function take_form(): ?array {
-		$transient = self::form_transient();
+	protected function take_form(): ?array {
+		$transient = $this->form_transient();
 		$fields    = get_transient( $transient );
 		if ( ! is_array( $fields ) ) {
 			return null;
@@ -204,10 +205,11 @@ abstract class Page {
 	}
 
 	/**
-	 * Transient carrying the last failed submission for the current user.
+	 * Transient carrying the current user's last failed submission on this
+	 * tab: `bfag_form_<user_id>_<tab>`.
 	 */
-	private static function form_transient(): string {
-		return 'bfag_form_' . get_current_user_id();
+	private function form_transient(): string {
+		return 'bfag_form_' . get_current_user_id() . '_' . $this->tab();
 	}
 
 	/**

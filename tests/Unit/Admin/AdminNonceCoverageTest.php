@@ -217,8 +217,8 @@ final class AdminNonceCoverageTest extends TestCase {
 				}
 				$k++;
 			}
-			$permission = null;
-			$n          = count( $args );
+			$found = []; // TF3: every permission_callback of the call — a multi-method route carries one per arm.
+			$n     = count( $args );
 			for ( $a = 0; $a < $n; $a++ ) {
 				$tok = $args[ $a ];
 				if ( is_array( $tok ) && T_CONSTANT_ENCAPSED_STRING === $tok[0] && 'permission_callback' === trim( $tok[1], '"\'' ) ) {
@@ -244,10 +244,12 @@ final class AdminNonceCoverageTest extends TestCase {
 						$text .= is_array( $t ) ? $t[1] : $t;
 						$b++;
 					}
-					$permission = trim( $text );
+					$found[] = trim( $text );
 				}
 			}
-			$out[] = $permission;
+			foreach ( [] === $found ? [ null ] : $found as $permission ) {
+				$out[] = $permission;
+			}
 		}
 		return $out;
 	}
@@ -316,6 +318,32 @@ final class AdminNonceCoverageTest extends TestCase {
 	public function test_the_scanner_catches_a_route_without_a_real_permission_callback(): void {
 		$specimen = '<?php register_rest_route( "a/v1", "/x", [ "methods" => "GET", "callback" => "f", "permission_callback" => "__return_true" ] ); register_rest_route( "a/v1", "/y", [ "methods" => "GET", "callback" => "f" ] ); register_rest_route( "a/v1", "/z", [ "callback" => [ $this, "f" ], "permission_callback" => [ $this, "permission" ], "args" => [ "t" => [ "sanitize_callback" => "g" ] ] ] );';
 		$this->assertSame( [ "'__return_true'", null, "[ \$this, 'permission' ]" ], array_map( static fn( ?string $p ): ?string => null === $p ? null : str_replace( '"', "'", $p ), self::route_permissions( token_get_all( $specimen ) ) ) );
+
+		// TF3: a multi-method route — one args array per arm. Reading only the last arm hid an open first arm.
+		$multi = '<?php register_rest_route( "a/v1", "/m", [ [ "methods" => "GET", "callback" => "f", "permission_callback" => "__return_true" ], [ "methods" => "POST", "callback" => "g", "permission_callback" => [ $this, "permission" ] ] ] );';
+		$this->assertSame( [ "'__return_true'", "[ \$this, 'permission' ]" ], array_map( static fn( ?string $p ): ?string => null === $p ? null : str_replace( '"', "'", $p ), self::route_permissions( token_get_all( $multi ) ) ), 'both arms are collected, the open one first' );
+	}
+
+	/**
+	 * TF7 (the Pro suite's specimen): a check that is only mentioned in a
+	 * comment, a string or a docblock is not a check.
+	 */
+	public function test_the_scanner_ignores_a_check_that_is_only_mentioned(): void {
+		$specimen = '<?php class X {'
+			. ' public function handle_comment_only() { /* check_admin_referer( "x" ); current_user_can( "x" ) */ $id = absint( $_POST["id"] ); }'
+			. ' public function handle_string_only() { $why = "check_admin_referer( x ) and current_user_can( x )"; return $why; }'
+			. ' public function handle_docblock_only() {'
+			. "\n /** calls check_ajax_referer( 'x', 'nonce' ) and current_user_can( 'x' ) */\n"
+			. ' return 1; }'
+			. ' }';
+		$this->assertSame(
+			[
+				'handle_comment_only'  => [ 'nonce', 'capability' ],
+				'handle_string_only'   => [ 'nonce', 'capability' ],
+				'handle_docblock_only' => [ 'nonce', 'capability' ],
+			],
+			self::violations( $specimen )
+		);
 	}
 
 	public function test_every_handler_in_admin_and_rest_verifies_a_nonce_and_the_capability(): void {

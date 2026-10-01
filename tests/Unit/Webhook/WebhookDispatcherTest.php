@@ -301,6 +301,8 @@ final class WebhookDispatcherTest extends TestCase {
 		$this->assertSame( 200, $update['data']['http_status'] );
 		$this->assertSame( 'thanks', $update['data']['response_body'] );
 		$this->assertMatchesRegularExpression( '/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/', $update['data']['delivered_at'] );
+		$this->assertArrayHasKey( 'next_retry_at', $update['data'], 'PN2: a finished row is never due again' );
+		$this->assertNull( $update['data']['next_retry_at'] );
 
 		$this->assertSame( [ 'delivery_id' => 1, 'success' => true, 'http_status' => 200 ], $result );
 		$this->assertSame( [ [ 1, 7 ] ], $delivered );
@@ -323,6 +325,8 @@ final class WebhookDispatcherTest extends TestCase {
 		$this->assertSame( 500, $update['http_status'] );
 		$this->assertSame( 'boom', $update['response_body'] );
 		$this->assertNull( $update['delivered_at'] );
+		$this->assertArrayHasKey( 'next_retry_at', $update, 'PN2: cleared on failure too, so the Pro scheduler starts from a clean row' );
+		$this->assertNull( $update['next_retry_at'] );
 		$this->assertSame( [ [ 1, 7, 1, 500 ] ], $failed, 'fires exactly once with (delivery_id, webhook, attempt, 500)' );
 		$this->assertSame( [ 'delivery_id' => 1, 'success' => false, 'http_status' => 500 ], $result );
 	}
@@ -420,7 +424,7 @@ final class WebhookDispatcherTest extends TestCase {
 		$this->dispatcher()->dispatch( $this->webhook(), 'post.published', [ 'r' => 1 ], 3, 42 );
 		$this->assertCount( 0, $this->wpdb->calls_to( 'insert' ) );
 		$updates = $this->wpdb->calls_to( 'update' );
-		$this->assertSame( [ 'status' => 'pending', 'attempt' => 3 ], $updates[0]['data'] );
+		$this->assertSame( [ 'status' => 'pending', 'attempt' => 3, 'next_retry_at' => null ], $updates[0]['data'], 'PN2: the due time goes with the status flip' );
 		$this->assertSame( [ 'id' => 42 ], $updates[0]['where'] );
 		$this->assertSame( 'success', $updates[1]['data']['status'] );
 		$this->assertSame( 3, $updates[1]['data']['attempt'] );
@@ -470,7 +474,7 @@ final class WebhookDispatcherTest extends TestCase {
 		$this->assertSame( '11', $args['headers']['X-BF-Delivery'] );
 		$this->assertSame( 'sha256=' . hash_hmac( 'sha256', $args['headers']['X-BF-Timestamp'] . '.' . $stored, 's3cret-value' ), $args['headers']['X-BF-Signature'] );
 		$updates = $this->wpdb->calls_to( 'update' );
-		$this->assertSame( [ 'status' => 'pending', 'attempt' => 3 ], $updates[0]['data'] );
+		$this->assertSame( [ 'status' => 'pending', 'attempt' => 3, 'next_retry_at' => null ], $updates[0]['data'], 'PN2: a retrying row flipped to pending with its due time still set would be selected by the flush cron and sent twice' );
 		$this->assertSame( 3, $updates[1]['data']['attempt'] );
 		$this->assertSame( 'success', $updates[1]['data']['status'] );
 		$this->assertCount( 0, $this->wpdb->calls_to( 'insert' ) );
@@ -483,12 +487,14 @@ final class WebhookDispatcherTest extends TestCase {
 	 */
 	public function test_dispatch_pending_sends_the_stored_bytes_as_attempt_one_after_clearing_the_due_time(): void {
 		$stored = '{"object":{"id":9}}';
-		$this->wpdb->queue( 'get_row', $this->webhook( [ 'enabled' => '1' ] ) ); // WebhookRepository::find().
+		wp_cache_set( WebhookRepository::CACHE_KEY, [ $this->webhook( [ 'id' => 6 ] ), $this->webhook() ], WebhookRepository::CACHE_GROUP ); // all_enabled(), warm.
 		bfag_test_queue_http( 204 );
 
 		$result = $this->dispatcher()->dispatch_pending( [ 'id' => 31, 'webhook_id' => 7, 'event' => 'post.updated', 'payload' => $stored, 'truncated' => 0, 'status' => 'pending', 'attempt' => 1, 'next_retry_at' => '2026-01-01 00:00:00' ] );
 
-		$this->assertStringContainsString( 'WHERE id = 7', $this->wpdb->calls_to( 'get_row' )[0]['sql'], 'the webhook of the row' );
+		$this->assertSame( [], $this->wpdb->calls_to( 'get_row' ), 'PN4: no find(): the webhook is picked from the cached enabled list' );
+		$this->assertSame( [], $this->wpdb->calls_to( 'get_results' ), 'and the list was warm' );
+		$this->assertSame( 'https://hooks.example.com/in', $GLOBALS['bfag_test_http_calls'][0]['url'], 'the row\'s webhook (id 7), not the first in the list' );
 		$args = $this->sent_args();
 		$this->assertSame( $stored, $args['body'] );
 		$this->assertSame( '31', $args['headers']['X-BF-Delivery'] );
@@ -506,10 +512,11 @@ final class WebhookDispatcherTest extends TestCase {
 		$this->enable_logging(); // After dispatcher(): that helper resets the settings option.
 		$row        = [ 'id' => 32, 'webhook_id' => 7, 'event' => 'post.updated', 'payload' => '{}', 'truncated' => 0, 'status' => 'pending', 'attempt' => 1 ];
 
-		$this->assertSame( [ 'delivery_id' => 32, 'success' => false, 'http_status' => null ], $dispatcher->dispatch_pending( $row ), 'missing webhook' );
-		$this->wpdb->queue( 'get_row', $this->webhook( [ 'enabled' => '0' ] ) );
-		$this->assertFalse( $dispatcher->dispatch_pending( $row )['success'], 'disabled webhook' );
-		$this->wpdb->queue( 'get_row', $this->webhook( [ 'enabled' => '1' ] ) );
+		wp_cache_set( WebhookRepository::CACHE_KEY, [], WebhookRepository::CACHE_GROUP );
+		$this->assertSame( [ 'delivery_id' => 32, 'success' => false, 'http_status' => null ], $dispatcher->dispatch_pending( $row ), 'missing webhook (not in the enabled list)' );
+		wp_cache_set( WebhookRepository::CACHE_KEY, [ $this->webhook( [ 'enabled' => 0 ] ) ], WebhookRepository::CACHE_GROUP );
+		$this->assertFalse( $dispatcher->dispatch_pending( $row )['success'], 'a disabled row that somehow sits in the list' );
+		wp_cache_set( WebhookRepository::CACHE_KEY, [ $this->webhook() ], WebhookRepository::CACHE_GROUP );
 		$this->assertFalse( $dispatcher->dispatch_pending( [ 'truncated' => 1 ] + $row )['success'], 'truncated payload' );
 
 		$this->assertSame( [], $GLOBALS['bfag_test_http_calls'], 'nothing sent' );

@@ -39,7 +39,8 @@ final class HotPathQueryCountTest extends TestCase {
 
 	protected function setUp(): void {
 		parent::setUp();
-		$_SERVER['REMOTE_ADDR'] = '203.0.113.9';
+		$_SERVER['REMOTE_ADDR']            = '203.0.113.9';
+		$GLOBALS['bfag_test_serving_rest'] = true; // TF4: the top-level REST request (the harness default is false, as core).
 		update_option( 'bfag_settings', Settings::DEFAULTS );
 		$this->store  = new CacheStore();
 		$this->keys   = new CacheKeyGenerator( $this->store );

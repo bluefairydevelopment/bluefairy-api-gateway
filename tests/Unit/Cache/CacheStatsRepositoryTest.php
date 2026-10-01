@@ -93,18 +93,21 @@ final class CacheStatsRepositoryTest extends TestCase {
 		wp_using_ext_object_cache( true );
 		$bucket   = time() - ( time() % 300 );
 		$previous = $bucket - 300;
-		$older    = $bucket - 600;
+		$late     = $bucket - 900; // The oldest bucket a counter (TTL 900 s) can still be alive in: lost when the cron ran late (PN10).
+		$expired  = $bucket - 1200;
 		wp_cache_set( CacheStatsRepository::counter_key( $previous, 'hits' ), 7, 'bfag' );
 		wp_cache_set( CacheStatsRepository::counter_key( $previous, 'misses' ), 2, 'bfag' );
 		wp_cache_set( CacheStatsRepository::counter_key( $bucket, 'hits' ), 3, 'bfag' );
-		wp_cache_set( CacheStatsRepository::counter_key( $older, 'hits' ), 50, 'bfag' );
+		wp_cache_set( CacheStatsRepository::counter_key( $late, 'hits' ), 50, 'bfag' );
+		wp_cache_set( CacheStatsRepository::counter_key( $expired, 'hits' ), 9, 'bfag' );
 		$this->wpdb->always( 'query', 1 );
 
-		$this->assertSame( 2, $this->stats->flush_counters() );
+		$this->assertSame( 3, $this->stats->flush_counters() );
 
 		$queries = array_column( $this->wpdb->calls_to( 'query' ), 'sql' );
 		$this->assertSame(
 			[
+				"INSERT INTO bfw_bfag_cache_stats (bucket_start, hits, misses) VALUES ('" . gmdate( 'Y-m-d H:i:s', $late ) . "', 50, 0) ON DUPLICATE KEY UPDATE hits = hits + 50, misses = misses + 0",
 				"INSERT INTO bfw_bfag_cache_stats (bucket_start, hits, misses) VALUES ('" . gmdate( 'Y-m-d H:i:s', $previous ) . "', 7, 2) ON DUPLICATE KEY UPDATE hits = hits + 7, misses = misses + 2",
 				"INSERT INTO bfw_bfag_cache_stats (bucket_start, hits, misses) VALUES ('" . gmdate( 'Y-m-d H:i:s', $bucket ) . "', 3, 0) ON DUPLICATE KEY UPDATE hits = hits + 3, misses = misses + 0",
 			],
@@ -112,11 +115,35 @@ final class CacheStatsRepositoryTest extends TestCase {
 		);
 		$this->assertSame( 0, wp_cache_get( CacheStatsRepository::counter_key( $previous, 'hits' ), 'bfag' ), 'decremented by what was written' );
 		$this->assertSame( 0, wp_cache_get( CacheStatsRepository::counter_key( $bucket, 'hits' ), 'bfag' ) );
-		$this->assertSame( 50, wp_cache_get( CacheStatsRepository::counter_key( $older, 'hits' ), 'bfag' ), 'only the current and previous bucket are flushed' );
+		$this->assertSame( 0, wp_cache_get( CacheStatsRepository::counter_key( $late, 'hits' ), 'bfag' ), 'a bucket three back is flushed, not lost' );
+		$this->assertSame( 9, wp_cache_get( CacheStatsRepository::counter_key( $expired, 'hits' ), 'bfag' ), 'a bucket past the TTL (expired in a real cache) is not read' );
+		$this->assertFalse( wp_cache_get( CacheStatsRepository::FLUSH_LOCK_KEY, 'bfag' ), 'the lock is released' );
 
 		$this->wpdb->calls = [];
 		$this->assertSame( 0, $this->stats->flush_counters(), 'nothing left to write' );
 		$this->assertSame( [], $this->wpdb->calls );
+	}
+
+	/**
+	 * PN10: the dashboard Refresh and the KPI cron can flush at once; the
+	 * second finds the lock held, writes nothing and leaves the counters.
+	 */
+	public function test_flush_counters_skips_while_another_flush_holds_the_lock(): void {
+		wp_using_ext_object_cache( true );
+		$bucket = time() - ( time() % 300 );
+		wp_cache_set( CacheStatsRepository::counter_key( $bucket, 'hits' ), 5, 'bfag' );
+		$this->wpdb->always( 'query', 1 );
+		$this->assertTrue( wp_cache_add( CacheStatsRepository::FLUSH_LOCK_KEY, 1, 'bfag', 30 ), 'another flush is running' );
+
+		$this->assertSame( 0, $this->stats->flush_counters() );
+		$this->assertSame( [], $this->wpdb->calls, 'nothing written' );
+		$this->assertSame( 5, wp_cache_get( CacheStatsRepository::counter_key( $bucket, 'hits' ), 'bfag' ), 'nothing decremented: the holder will write it' );
+		$this->assertSame( 1, wp_cache_get( CacheStatsRepository::FLUSH_LOCK_KEY, 'bfag' ), 'the holder keeps its lock' );
+
+		wp_cache_delete( CacheStatsRepository::FLUSH_LOCK_KEY, 'bfag' );
+		$this->assertSame( 1, $this->stats->flush_counters(), 'control: once released, the flush runs' );
+		$this->assertSame( 'stats:flush_lock', CacheStatsRepository::FLUSH_LOCK_KEY );
+		$this->assertSame( 30, CacheStatsRepository::FLUSH_LOCK_TTL, 'a crashed holder blocks at most 30 s' );
 	}
 
 	public function test_flush_counters_keeps_the_counter_when_the_upsert_fails_and_is_a_no_op_without_a_persistent_cache(): void {

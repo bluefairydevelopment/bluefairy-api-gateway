@@ -299,14 +299,15 @@ final class HitCounterTest extends TestCase {
 		ini_set( 'error_log', '/dev/null' );
 		$counter = new HitCounter();
 
-		$this->wpdb->queue( 'get_row', [ 'Rows' => '10' ] );
+		$this->wpdb->queue( 'get_var', '10' );
 		$this->assertFalse( $counter->rotate_if_huge( 10 ), 'equal to the threshold is not above it' );
 		$this->assertCount( 0, $this->wpdb->queries_matching( 'TRUNCATE' ) );
 		$this->assertSame( [], Logger::lines() );
-		$this->assertSame( [], $this->wpdb->calls_to( 'get_var' ), 'P10: no COUNT(*) — the engine estimate' );
-		$this->assertSame( "SHOW TABLE STATUS LIKE 'bfw\\\\_bfag\\\\_rate\\\\_limit\\\\_hits'", $this->wpdb->calls_to( 'get_row' )[0]['sql'], 'esc_like()d name, then prepare() escapes the backslash: the same shape as the installer SHOW TABLES LIKE' );
+		$this->assertSame( [], $this->wpdb->queries_matching( 'COUNT(*)' ), 'P10: no COUNT(*)' );
+		$this->assertSame( [], $this->wpdb->queries_matching( 'SHOW TABLE STATUS' ), 'PN9: not the engine estimate either (a day stale on MySQL 8)' );
+		$this->assertSame( [ 'SELECT COALESCE(MAX(id) - MIN(id) + 1, 0) FROM bfw_bfag_rate_limit_hits' ], array_column( $this->wpdb->calls_to( 'get_var' ), 'sql' ), 'the id-range bound: two index ends' );
 
-		$this->wpdb->queue( 'get_row', [ 'Rows' => '11' ] );
+		$this->wpdb->queue( 'get_var', '11' );
 		$this->assertTrue( $counter->rotate_if_huge( 10 ) );
 		$this->assertSame( [ 'TRUNCATE TABLE bfw_bfag_rate_limit_hits' ], $this->wpdb->queries_matching( 'TRUNCATE' ) );
 		$this->assertCount( 1, Logger::lines() );
@@ -315,11 +316,13 @@ final class HitCounterTest extends TestCase {
 
 	public function test_rotate_if_huge_default_threshold_is_ten_million(): void {
 		$this->assertSame( 10000000, HitCounter::ROTATE_THRESHOLD );
-		$this->wpdb->queue( 'get_row', [ 'Rows' => '10000000' ] );
+		$this->wpdb->queue( 'get_var', '10000000' );
 		$this->assertFalse( ( new HitCounter() )->rotate_if_huge() );
-		$this->wpdb->queue( 'get_row', [ 'Rows' => '10000001' ] );
+		$this->wpdb->queue( 'get_var', '10000001' );
 		$this->assertTrue( ( new HitCounter() )->rotate_if_huge() );
-		$this->assertSame( 0, ( new HitCounter() )->approximate_rows(), 'no status row (a table that does not exist): zero, never a truncate' );
+		$this->assertSame( 0, ( new HitCounter() )->approximate_rows(), 'no answer (a table that does not exist): zero, never a truncate' );
+		$this->wpdb->queue( 'get_var', '-3' );
+		$this->assertSame( 0, ( new HitCounter() )->approximate_rows(), 'never negative' );
 	}
 
 	public function test_rotate_if_huge_against_sqlite_empties_the_table(): void {
@@ -327,9 +330,18 @@ final class HitCounterTest extends TestCase {
 		$counter = new HitCounter();
 		$db->seed_hit( 'a', '/r', 0 );
 		$db->seed_hit( 'a', '/r', 0 );
+		$this->assertSame( 2, $counter->approximate_rows(), 'MAX(id) - MIN(id) + 1 over a real table' );
 		$this->assertFalse( $counter->rotate_if_huge( 2 ) );
 		$this->assertSame( 2, $counter->total_rows() );
 		$this->assertTrue( $counter->rotate_if_huge( 1 ) );
 		$this->assertSame( 0, $counter->total_rows() );
+		$this->assertSame( 0, $counter->approximate_rows(), 'empty table: COALESCE gives zero' );
+		// After a prune of the oldest rows the bound is exact: the two newest ids live, no hole in the range.
+		$db->seed_hit( 'a', '/r', 7200 );
+		$db->seed_hit( 'a', '/r', 0 );
+		$db->seed_hit( 'a', '/r', 0 );
+		$counter->prune( 3600 );
+		$this->assertSame( 2, $counter->total_rows() );
+		$this->assertSame( 2, $counter->approximate_rows(), 'oldest-first deletes leave no hole in the id range' );
 	}
 }

@@ -34,6 +34,15 @@ final class CacheStatsRepository {
 	public const COUNTER_TTL   = 3 * self::BUCKET_SECONDS;
 
 	/**
+	 * Object-cache key held while flush_counters() runs, and how long a
+	 * crashed run may hold it. The dashboard Refresh and the KPI cron can
+	 * flush at the same moment; two flushes reading the same counter would
+	 * write it twice and decrement it below zero (PN10).
+	 */
+	public const FLUSH_LOCK_KEY = 'stats:flush_lock';
+	public const FLUSH_LOCK_TTL = 30;
+
+	/**
 	 * Count a cache hit in the current bucket.
 	 */
 	public function record_hit(): void {
@@ -60,21 +69,43 @@ final class CacheStatsRepository {
 	}
 
 	/**
-	 * Move the object-cache counters of the current and the previous bucket
-	 * into the table (one upsert per bucket that has anything) and
-	 * decrement each counter by what was flushed, so hits counted while the
-	 * flush ran are not lost. The KPI cron calls this before it aggregates.
+	 * Move the object-cache counters of every bucket a counter can still be
+	 * alive in — from `now − COUNTER_TTL` to the current bucket — into the
+	 * table (one upsert per bucket that has anything) and decrement each
+	 * counter by what was flushed, so hits counted while the flush ran are
+	 * not lost. Reading only the current and previous bucket lost a bucket
+	 * whenever the cron ran late (PN10). One flush runs at a time: a second
+	 * caller finds FLUSH_LOCK_KEY held and returns 0, leaving the counters
+	 * for the holder. The KPI cron calls this before it aggregates.
 	 * Returns the buckets written.
 	 */
 	public function flush_counters(): int {
 		if ( true !== wp_using_ext_object_cache() ) {
 			return 0;
 		}
+		if ( ! wp_cache_add( self::FLUSH_LOCK_KEY, 1, self::COUNTER_GROUP, self::FLUSH_LOCK_TTL ) ) {
+			return 0;
+		}
+		try {
+			return $this->flush_buckets();
+		} finally {
+			wp_cache_delete( self::FLUSH_LOCK_KEY, self::COUNTER_GROUP );
+		}
+	}
+
+	/**
+	 * The flush itself, under the lock.
+	 */
+	private function flush_buckets(): int {
 		global $wpdb;
 
 		$written = 0;
-		$current = $this->bucket_start( $this->now() );
-		foreach ( [ $current - self::BUCKET_SECONDS, $current ] as $bucket ) {
+		$now     = $this->now();
+		$buckets = [];
+		for ( $bucket = $this->bucket_start( $now - self::COUNTER_TTL ); $bucket <= $now; $bucket += self::BUCKET_SECONDS ) {
+			$buckets[] = $bucket;
+		}
+		foreach ( $buckets as $bucket ) {
 			$counts = [];
 			foreach ( [ 'hits', 'misses' ] as $kind ) {
 				$value           = wp_cache_get( self::counter_key( $bucket, $kind ), self::COUNTER_GROUP );

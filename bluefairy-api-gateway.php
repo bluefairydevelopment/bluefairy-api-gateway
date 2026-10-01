@@ -25,7 +25,7 @@ define( 'BFAG_FILE', __FILE__ );
 define( 'BFAG_DIR', plugin_dir_path( __FILE__ ) );
 define( 'BFAG_URL', plugin_dir_url( __FILE__ ) );
 define( 'BFAG_VERSION', '1.0.0' );
-define( 'BFAG_DB_VERSION', '1.0.1' );
+define( 'BFAG_DB_VERSION', '1.0.2' );
 
 // Autoloader — no Composer required at runtime. Only this plugin's namespace;
 // the Pro add-on loads its own classes.

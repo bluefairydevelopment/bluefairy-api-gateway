@@ -31,8 +31,6 @@ final class CacheStoreTest extends TestCase {
 		$this->assertSame( [ 'id' => 1 ], $store->get( 'k0' )['data'] ?? null, 'round-trips through transients' );
 		$this->assertArrayHasKey( 'bfag_resp_k0', $GLOBALS['bfag_test_transients'] );
 		$this->assertArrayNotHasKey( CacheStore::GROUP, $GLOBALS['bfag_test_cache'], 'a null answer means no persistent object cache' );
-		$store->delete( 'k0' );
-		$this->assertNull( $store->get( 'k0' ) );
 
 		// A real drop-in sets it to true, and only then does the object-cache group take over.
 		wp_using_ext_object_cache( true );
@@ -159,6 +157,9 @@ final class CacheStoreTest extends TestCase {
 	/**
 	 * P1: the cleanup selects expired timeout rows in slices of PRUNE_BATCH,
 	 * deletes each pair by name, and loops until a slice comes back short.
+	 * PN7: the slice is 1,000 (a 5,000-name DELETE was a 600 KB statement).
+	 * PN11: the LIKE covers every `bfag…` transient, the Pro add-on's
+	 * `bfagp_` ones included, not only the stored responses.
 	 */
 	public function test_prune_expired_deletes_each_expired_pair_and_loops_until_a_short_slice(): void {
 		bfag_test_set_time( 1_700_000_000 );
@@ -168,19 +169,21 @@ final class CacheStoreTest extends TestCase {
 			$full[] = '_transient_timeout_bfag_resp_' . $i;
 		}
 		$this->wpdb->queue( 'get_col', $full );
-		$this->wpdb->queue( 'get_col', [ '_transient_timeout_bfag_resp_abc', '_transient_timeout_bfag_resp_def' ] );
+		$this->wpdb->queue( 'get_col', [ '_transient_timeout_bfag_resp_abc', '_transient_timeout_bfagp_replay_def' ] );
 		$this->wpdb->queue( 'get_col', [ '_transient_timeout_bfag_resp_never' ] );
 
+		$this->assertSame( 1000, CacheStore::PRUNE_BATCH );
 		$this->assertSame( CacheStore::PRUNE_BATCH + 2, $store->prune_expired() );
 
 		$selects = $this->wpdb->calls_to( 'get_col' );
 		$this->assertCount( 2, $selects, 'a short slice ends the loop; the third queued answer is never asked for' );
-		$this->assertSame( 1, preg_match( "/^SELECT option_name FROM bfw_options WHERE option_name LIKE '\\\\\\\\_transient\\\\\\\\_timeout\\\\\\\\_bfag\\\\\\\\_resp\\\\\\\\_%' AND option_value < (\d+) LIMIT 5000$/", $selects[0]['sql'], $m ), $selects[0]['sql'] );
+		$this->assertSame( 1, preg_match( "/^SELECT option_name FROM bfw_options WHERE option_name LIKE '\\\\\\\\_transient\\\\\\\\_timeout\\\\\\\\_bfag%' AND option_value < (\d+) LIMIT 1000$/", $selects[0]['sql'], $m ), $selects[0]['sql'] );
+		$this->assertStringNotContainsString( 'resp', $selects[0]['sql'], 'PN11: not narrowed to the responses' );
 		$this->assertEqualsWithDelta( time(), (int) $m[1], 5, 'expired = timeout before now (the real clock, as core writes it)' );
 
 		$deletes = $this->wpdb->queries_matching( 'DELETE FROM bfw_options' );
 		$this->assertCount( 2, $deletes );
-		$this->assertSame( "DELETE FROM bfw_options WHERE option_name IN ('_transient_timeout_bfag_resp_abc','_transient_bfag_resp_abc','_transient_timeout_bfag_resp_def','_transient_bfag_resp_def')", $deletes[1], 'both rows of each pair' );
+		$this->assertSame( "DELETE FROM bfw_options WHERE option_name IN ('_transient_timeout_bfag_resp_abc','_transient_bfag_resp_abc','_transient_timeout_bfagp_replay_def','_transient_bfagp_replay_def')", $deletes[1], 'both rows of each pair, a Pro transient included' );
 		$this->assertSame( 2 * CacheStore::PRUNE_BATCH, substr_count( $deletes[0], '_transient_' ) );
 	}
 
@@ -210,18 +213,36 @@ final class CacheStoreTest extends TestCase {
 		$this->assertNotNull( $store->get( 'good' ) );
 	}
 
-	public function test_delete_removes_from_the_active_backend(): void {
-		$store = new CacheStore();
-		$store->set( 'k6', self::ENTRY, 60 );
-		$this->assertNotNull( $store->get( 'k6' ) );
-		$store->delete( 'k6' );
-		$this->assertNull( $store->get( 'k6' ) );
+	/**
+	 * N-12: delete() had no caller outside its own test (entries are
+	 * orphaned by generation, never deleted one by one) and is gone.
+	 */
+	public function test_delete_is_no_longer_part_of_the_api(): void {
+		$this->assertFalse( method_exists( CacheStore::class, 'delete' ) );
+		$this->assertTrue( method_exists( CacheStore::class, 'flush_all' ), 'control' );
+		$this->assertSame( [], array_filter( glob( BFAG_DIR . 'includes/*/*.php' ) ?: [], static fn( string $f ): bool => 1 === preg_match( '/store->delete\(/', (string) file_get_contents( $f ) ) ), 'no caller in the plugin' );
+	}
 
+	/**
+	 * TF6: without `flush_group` support, flush_all() still orphans every
+	 * entry by bumping the generation and leaves the group alone.
+	 */
+	public function test_flush_all_without_flush_group_support_bumps_the_generation_and_leaves_the_group(): void {
 		wp_using_ext_object_cache( true );
-		$store->set( 'k7', self::ENTRY, 60 );
-		$this->assertNotNull( $store->get( 'k7' ) );
-		$store->delete( 'k7' );
-		$this->assertNull( $store->get( 'k7' ) );
+		$store = new CacheStore();
+		$store->set( 'k8', self::ENTRY, 60 );
+		$GLOBALS['bfag_test_cache_supports'] = [];
+		$this->assertFalse( wp_cache_supports( 'flush_group' ), 'precondition: the harness reports no group flushing' );
+
+		$store->flush_all();
+
+		$this->assertSame( 2, (int) get_option( CacheStore::GENERATION_OPTION ), 'the generation is bumped regardless' );
+		$this->assertNotNull( $store->get( 'k8' ), 'the entry stays in the group (orphaned by its key, which embeds the old generation)' );
+
+		$GLOBALS['bfag_test_cache_supports'] = [ 'flush_group' ];
+		$store->flush_all();
+		$this->assertNull( $store->get( 'k8' ), 'control: with support the group is flushed' );
+		$this->assertSame( 3, (int) get_option( CacheStore::GENERATION_OPTION ) );
 	}
 
 	public function test_generation_defaults_to_one_reads_the_option_and_memoises_in_the_bfag_group(): void {

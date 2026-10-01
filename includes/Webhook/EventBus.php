@@ -42,6 +42,20 @@ final class EventBus {
 	public const FLUSH_LIMIT = 20;
 
 	/**
+	 * Wall-clock seconds the shutdown flush may spend sending before it
+	 * queues the rest for the cron (PN5): twenty sends at the five-second
+	 * timeout against a dead endpoint held a PHP-FPM worker for 100 s.
+	 */
+	public const SHUTDOWN_BUDGET_SECONDS = 15;
+
+	/**
+	 * Wall-clock seconds one cron run of flush_pending() may spend draining
+	 * the queue, batch after batch, before it re-arms itself (PN4): one
+	 * batch per cron spawn drained about twenty rows a minute.
+	 */
+	public const FLUSH_BUDGET_SECONDS = 20;
+
+	/**
 	 * The single cron event that sends queued deliveries.
 	 */
 	public const HOOK = 'bfag_cron_flush_pending';
@@ -60,12 +74,14 @@ final class EventBus {
 	 * @param WebhookDispatcher  $dispatcher Sender.
 	 * @param EventRegistry      $registry   Event catalogue.
 	 * @param DeliveryRepository $deliveries Delivery log, for the rows queued past the flush limit.
+	 * @param \Closure|null      $clock      Returns the current Unix time; null uses time(). A test seam for the budgets.
 	 */
 	public function __construct(
 		private readonly WebhookRepository $webhooks,
 		private readonly WebhookDispatcher $dispatcher,
 		private readonly EventRegistry $registry,
-		private readonly DeliveryRepository $deliveries
+		private readonly DeliveryRepository $deliveries,
+		private readonly ?\Closure $clock = null
 	) {}
 
 	/**
@@ -116,7 +132,8 @@ final class EventBus {
 
 	/**
 	 * Deliver everything queued, under the re-entrancy guard: the first
-	 * FLUSH_LIMIT deliveries now, the rest as pending rows for the cron.
+	 * FLUSH_LIMIT deliveries now — while SHUTDOWN_BUDGET_SECONDS of wall
+	 * clock remain — and the rest as pending rows for the cron.
 	 */
 	public function flush(): void {
 		if ( [] === $this->pending ) {
@@ -129,9 +146,10 @@ final class EventBus {
 			$this->pending = [];
 			$sent          = 0;
 			$queued        = 0;
+			$deadline      = $this->now() + self::SHUTDOWN_BUDGET_SECONDS;
 			foreach ( $items as [ $event, $payload ] ) {
 				foreach ( $this->webhooks->for_event( $event ) as $webhook ) {
-					if ( $sent < self::FLUSH_LIMIT ) {
+					if ( $sent < self::FLUSH_LIMIT && $this->now() < $deadline ) {
 						$this->dispatcher->dispatch( $webhook, $event, $payload );
 						++$sent;
 						continue;
@@ -157,25 +175,46 @@ final class EventBus {
 	}
 
 	/**
-	 * Cron handler: send up to FLUSH_LIMIT queued deliveries; when the batch
-	 * was full, schedule another run for whatever is left.
+	 * Cron handler: drain the queue in batches of FLUSH_LIMIT for up to
+	 * FLUSH_BUDGET_SECONDS, then schedule another run only when rows are
+	 * still waiting (a full batch sent with the budget spent). A row is
+	 * selectable until dispatch_pending() clears its due time, so stopping
+	 * mid-batch leaves the rest for the next run.
 	 */
 	public function flush_pending(): void {
-		$rows = $this->deliveries->pending( self::FLUSH_LIMIT );
-		if ( [] === $rows ) {
-			return;
-		}
-		Plugin::$dispatching = true;
-		try {
-			foreach ( $rows as $row ) {
-				$this->dispatcher->dispatch_pending( $row );
+		$deadline = $this->now() + self::FLUSH_BUDGET_SECONDS;
+		while ( true ) {
+			$rows = $this->deliveries->pending( self::FLUSH_LIMIT );
+			if ( [] === $rows ) {
+				return;
 			}
-		} finally {
-			Plugin::$dispatching = false;
+			Plugin::$dispatching = true;
+			try {
+				foreach ( $rows as $i => $row ) {
+					if ( $i > 0 && $this->now() >= $deadline ) {
+						$this->schedule_flush();
+						return;
+					}
+					$this->dispatcher->dispatch_pending( $row );
+				}
+			} finally {
+				Plugin::$dispatching = false;
+			}
+			if ( count( $rows ) < self::FLUSH_LIMIT ) {
+				return;
+			}
+			if ( $this->now() >= $deadline ) {
+				$this->schedule_flush();
+				return;
+			}
 		}
-		if ( count( $rows ) >= self::FLUSH_LIMIT ) {
-			$this->schedule_flush();
-		}
+	}
+
+	/**
+	 * The current Unix time, from the injected clock or time().
+	 */
+	private function now(): int {
+		return null === $this->clock ? time() : (int) ( $this->clock )();
 	}
 
 	/**

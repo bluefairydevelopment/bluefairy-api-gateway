@@ -147,7 +147,7 @@ final class WebhookPage extends Page {
 		// The secret never reaches the view, even when editing.
 		unset( $webhook['secret'] );
 		// A failed save re-fills the form once with what was typed (U-11).
-		$remembered = self::take_form();
+		$remembered = $this->take_form();
 		if ( null !== $remembered ) {
 			unset( $remembered['secret'], $remembered['regenerate_secret'] );
 			$webhook = array_merge( $webhook, $remembered );
@@ -340,7 +340,7 @@ final class WebhookPage extends Page {
 	 */
 	private function fail( string $notice, int $id, array $fields ): never {
 		unset( $fields['id'], $fields['secret'], $fields['regenerate_secret'] );
-		self::remember_form( $fields );
+		$this->remember_form( $fields );
 		$this->redirect(
 			$notice,
 			$id > 0 ? [

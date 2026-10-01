@@ -44,7 +44,6 @@ $bfag_option_keys = [
 	'bfag_version',
 	'bfag_cache_generation',
 	'bfag_tag_generations',
-	'bfag_kpis',
 	'bfag_install_error',
 ];
 
@@ -86,8 +85,10 @@ $bfag_uninstall_site = static function () use ( $bfag_tables, $bfag_option_keys,
 		delete_option( $key );
 	}
 
-	// Transients: the dashboard KPI cache. (Tag generations are an option,
-	// deleted above; a transient in an external object cache could not be).
+	// Transients: the dashboard KPI cache (`bfag_kpis` is a transient, not an
+	// option), the limited markers, parked forms and one-time secrets. (Tag
+	// generations are an option, deleted above; a transient in an external
+	// object cache could not be).
 	// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
 	$wpdb->query(
 		$wpdb->prepare(
@@ -108,6 +109,9 @@ $bfag_uninstall_site = static function () use ( $bfag_tables, $bfag_option_keys,
 	if ( $role instanceof WP_Role ) {
 		$role->remove_cap( 'bfag_manage_gateway' );
 	}
+
+	// The per-user dismissal of the proxy notice (AdminMenu::PROXY_NOTICE_META), on every user.
+	delete_metadata( 'user', 0, 'bfag_proxy_notice_dismissed', '', true );
 
 	if ( function_exists( 'wp_cache_flush_group' ) ) {
 		wp_cache_flush_group( 'bfag' );

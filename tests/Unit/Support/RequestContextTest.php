@@ -107,6 +107,27 @@ final class RequestContextTest extends TestCase {
 		$this->assertSame( [ 'HTTP_X_FORWARDED_FOR', 'HTTP_CF_CONNECTING_IP', 'HTTP_TRUE_CLIENT_IP', 'HTTP_X_REAL_IP' ], RequestContext::FORWARDED_SERVER_KEYS );
 	}
 
+	/**
+	 * TF13 (the twin of the security file's case): a `forwarded_header`
+	 * value that never went through Settings::sanitize() — a direct option
+	 * write — is read as the default, X-Forwarded-For, never as a header
+	 * name of its own.
+	 */
+	public function test_an_invalid_stored_forwarded_header_is_read_as_x_forwarded_for(): void {
+		$_SERVER['REMOTE_ADDR']           = '10.0.0.1';
+		$_SERVER['HTTP_X_FORWARDED_FOR']  = '203.0.113.5';
+		$_SERVER['HTTP_CF_CONNECTING_IP'] = '198.51.100.9';
+		$_SERVER['HTTP_X_EVIL']           = '192.0.2.77';
+		update_option( 'bfag_settings', [ 'trusted_proxies' => [ '10.0.0.1' ], 'forwarded_header' => 'X-Evil' ] );
+		$this->assertSame( '203.0.113.5', ( new RequestContext( new Settings() ) )->client_ip(), 'the default header, not the stored name' );
+
+		update_option( 'bfag_settings', [ 'trusted_proxies' => [ '10.0.0.1' ], 'forwarded_header' => 'CF-Connecting-IP' ] );
+		$context = new RequestContext( new Settings() );
+		$context->reset();
+		$this->assertSame( '198.51.100.9', $context->client_ip(), 'control: a valid choice is honoured' );
+		unset( $_SERVER['HTTP_X_EVIL'] );
+	}
+
 	public function test_normalize_route_strips_leading_slash(): void {
 		$this->assertSame( 'wp/v2/posts', RequestContext::normalize_route( ' /wp/v2/posts ' ) );
 		$this->assertSame( '', RequestContext::normalize_route( '/' ) );

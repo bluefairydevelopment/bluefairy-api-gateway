@@ -28,10 +28,34 @@ final class EventBusTest extends TestCase {
 		$this->wpdb = $GLOBALS['wpdb'];
 	}
 
+	/**
+	 * The stepped clock the budget tests read; null means the real clock.
+	 *
+	 * @var int|null
+	 */
+	private ?int $clock_now = null;
+
 	private function bus(): EventBus {
-		$settings = new Settings();
+		$settings   = new Settings();
 		$deliveries = new DeliveryRepository( $settings );
-		return new EventBus( new WebhookRepository(), new WebhookDispatcher( $deliveries, $settings ), new EventRegistry(), $deliveries );
+		$clock      = null === $this->clock_now ? null : fn(): int => (int) $this->clock_now;
+		return new EventBus( new WebhookRepository(), new WebhookDispatcher( $deliveries, $settings ), new EventRegistry(), $deliveries, $clock );
+	}
+
+	/**
+	 * Start the stepped clock at $start and advance it $step seconds for
+	 * every delivery sent (through the request-args filter, which runs once
+	 * per send).
+	 */
+	private function stepped_clock( int $start, int $step ): void {
+		$this->clock_now = $start;
+		add_filter(
+			'bfag_webhook_request_args',
+			function ( array $args ) use ( $step ): array {
+				$this->clock_now += $step;
+				return $args;
+			}
+		);
 	}
 
 	/**
@@ -299,12 +323,12 @@ final class EventBusTest extends TestCase {
 			$rows[] = [ 'id' => $id, 'webhook_id' => 1, 'direction' => 'out', 'event' => 'post.published', 'payload' => '{"object":{"id":' . $id . '}}', 'truncated' => '0', 'status' => 'pending', 'attempt' => '1', 'next_retry_at' => '2026-01-01 00:00:00' ];
 		}
 		$this->wpdb->queue( 'get_results', $rows );
-		$this->wpdb->always( 'get_row', $this->seeded_row() );
 		$this->wpdb->always( 'update', 1 );
 
 		do_action( EventBus::HOOK );
 
 		$this->assertCount( 5, $GLOBALS['bfag_test_http_calls'] );
+		$this->assertSame( [], $this->wpdb->calls_to( 'get_row' ), 'PN4: the webhook comes from the cached enabled list, not a find() per row' );
 		$this->assertSame( '{"object":{"id":103}}', $GLOBALS['bfag_test_http_calls'][2]['args']['body'], 'the stored bytes' );
 		$this->assertSame( '103', $GLOBALS['bfag_test_http_calls'][2]['args']['headers']['X-BF-Delivery'] );
 		$select = $this->wpdb->calls_to( 'get_results' )[0]['sql'];
@@ -314,23 +338,110 @@ final class EventBusTest extends TestCase {
 		$this->assertSame( [], $GLOBALS['bfag_test_single_events'], 'five of twenty: nothing left, no re-arm' );
 		$this->assertFalse( Plugin::$dispatching );
 
-		// A full batch re-arms the event for the remainder.
+		// PN4: a full batch is followed by the next batch in the same run — the queue is drained, nothing re-armed.
 		$this->reset();
 		$this->seed( [ [ 'event' => 'post.published' ] ] );
-		$full = [];
-		for ( $id = 1; $id <= 20; $id++ ) {
-			$full[] = [ 'id' => $id, 'webhook_id' => 1, 'direction' => 'out', 'event' => 'post.published', 'payload' => '{}', 'truncated' => '0', 'status' => 'pending', 'attempt' => '1' ];
-		}
-		$this->wpdb->queue( 'get_results', $full );
-		$this->wpdb->always( 'get_row', $this->seeded_row() );
+		$this->wpdb->queue( 'get_results', $this->pending_rows( 1, 20 ) );
+		$this->wpdb->queue( 'get_results', $this->pending_rows( 21, 23 ) );
 		$this->bus()->flush_pending();
-		$this->assertCount( 20, $GLOBALS['bfag_test_http_calls'] );
-		$this->assertCount( 1, $GLOBALS['bfag_test_single_events'], 're-armed' );
+		$this->assertCount( 23, $GLOBALS['bfag_test_http_calls'], 'two batches in one run' );
+		$this->assertCount( 2, $this->wpdb->calls_to( 'get_results' ), 'the short second batch ends the run' );
+		$this->assertSame( [], $GLOBALS['bfag_test_single_events'], 'drained: no re-arm' );
 
 		// Nothing pending: no dispatch, no re-arm.
 		$this->reset();
 		$this->bus()->flush_pending();
 		$this->assertSame( [], $GLOBALS['bfag_test_http_calls'] );
+		$this->assertSame( [], $GLOBALS['bfag_test_single_events'] );
+	}
+
+	/**
+	 * @return list<array<string, mixed>>
+	 */
+	private function pending_rows( int $from, int $to ): array {
+		$rows = [];
+		for ( $id = $from; $id <= $to; $id++ ) {
+			$rows[] = [ 'id' => $id, 'webhook_id' => 1, 'direction' => 'out', 'event' => 'post.published', 'payload' => '{"object":{"id":' . $id . '}}', 'truncated' => '0', 'status' => 'pending', 'attempt' => '1', 'next_retry_at' => '2026-01-01 00:00:00' ];
+		}
+		return $rows;
+	}
+
+	/**
+	 * PN4: one cron run drains batch after batch until FLUSH_BUDGET_SECONDS
+	 * of wall clock are spent, then re-arms for what is left. A slow
+	 * endpoint (six seconds a send here) stops the run mid-batch; the rows
+	 * not yet sent keep their due time and are selected by the next run.
+	 */
+	public function test_the_cron_handler_stops_at_the_time_budget_and_rearms_for_the_rows_left(): void {
+		$this->assertSame( 20, EventBus::FLUSH_BUDGET_SECONDS );
+		$this->seed( [ [ 'event' => 'post.published' ] ] );
+		$this->stepped_clock( 1_000, 6 );
+		$this->wpdb->queue( 'get_results', $this->pending_rows( 1, 20 ) );
+		$this->wpdb->always( 'update', 1 );
+
+		$this->bus()->flush_pending();
+
+		// Sends at t=0, 6, 12, 18; the fifth row finds the budget spent (24 ≥ 20).
+		$this->assertCount( 4, $GLOBALS['bfag_test_http_calls'] );
+		$this->assertSame( [ '1', '2', '3', '4' ], array_map( static fn( array $c ): string => $c['args']['headers']['X-BF-Delivery'], $GLOBALS['bfag_test_http_calls'] ) );
+		$this->assertCount( 1, $GLOBALS['bfag_test_single_events'], 're-armed for the sixteen rows left' );
+		$this->assertSame( EventBus::HOOK, $GLOBALS['bfag_test_single_events'][0]['hook'] );
+		$this->assertCount( 1, $this->wpdb->calls_to( 'get_results' ), 'no second batch fetched once the budget is spent' );
+		$updates = $this->wpdb->calls_to( 'update' );
+		$this->assertSame( [ 1, 2, 3, 4 ], array_values( array_unique( array_map( static fn( array $u ): int => (int) $u['where']['id'], $updates ) ) ), 'only the sent rows were touched; the rest keep their due time' );
+		$this->assertFalse( Plugin::$dispatching );
+
+		// A full batch that ends exactly as the budget runs out re-arms rather than fetching again.
+		$this->reset();
+		$this->seed( [ [ 'event' => 'post.published' ] ] );
+		$this->stepped_clock( 1_000, 1 );
+		$this->wpdb->queue( 'get_results', $this->pending_rows( 1, 20 ) );
+		$this->wpdb->queue( 'get_results', $this->pending_rows( 21, 25 ) );
+		$this->bus()->flush_pending();
+		$this->assertCount( 20, $GLOBALS['bfag_test_http_calls'], 'the full batch is sent (the 20th row starts at t=19)' );
+		$this->assertCount( 1, $this->wpdb->calls_to( 'get_results' ), 'at t=20 the budget is spent: no next batch' );
+		$this->assertCount( 1, $GLOBALS['bfag_test_single_events'], 're-armed' );
+	}
+
+	/**
+	 * PN5: the shutdown flush sends for at most SHUTDOWN_BUDGET_SECONDS of
+	 * wall clock, then queues the rest for the cron — a dead endpoint at the
+	 * five-second timeout no longer holds a PHP-FPM worker for 100 s.
+	 */
+	public function test_the_shutdown_flush_queues_the_rest_once_its_time_budget_is_spent(): void {
+		$this->assertSame( 15, EventBus::SHUTDOWN_BUDGET_SECONDS );
+		$this->seed( [ [ 'event' => 'post.published' ] ] );
+		$this->stepped_clock( 5_000, 6 );
+		$bus = $this->bus();
+		$bus->register_hooks();
+		for ( $id = 1; $id <= 10; $id++ ) {
+			$this->publish( $id );
+		}
+
+		$bus->flush();
+
+		// Sends at t=0, 6, 12; at t=18 the budget (15) is spent and the seven left are queued.
+		$this->assertCount( 3, $GLOBALS['bfag_test_http_calls'], 'three sent within the budget' );
+		$inserts = $this->wpdb->calls_to( 'insert' );
+		$this->assertCount( 10, $inserts );
+		$this->assertSame( [ null, null, null ], array_column( array_column( array_slice( $inserts, 0, 3 ), 'data' ), 'next_retry_at' ), 'in-flight rows' );
+		foreach ( array_slice( $inserts, 3 ) as $insert ) {
+			$this->assertSame( 'pending', $insert['data']['status'] );
+			$this->assertNotNull( $insert['data']['next_retry_at'], 'queued, due now' );
+		}
+		$this->assertCount( 1, $GLOBALS['bfag_test_single_events'], 'the cron will send the rest' );
+
+		// Control: with the clock standing still the same ten all go out now.
+		$this->reset();
+		$this->seed( [ [ 'event' => 'post.published' ] ] );
+		$this->clock_now = 5_000;
+		$bus             = $this->bus();
+		$bus->register_hooks();
+		for ( $id = 1; $id <= 10; $id++ ) {
+			$this->publish( $id );
+		}
+		$bus->flush();
+		$this->assertCount( 10, $GLOBALS['bfag_test_http_calls'] );
 		$this->assertSame( [], $GLOBALS['bfag_test_single_events'] );
 	}
 
