@@ -52,7 +52,7 @@ final class SettingsPage extends Page {
 	 * Field definitions, grouped. Every key of Settings::DEFAULTS appears
 	 * exactly once; the test asserts it.
 	 *
-	 * @return array<string, array{label:string, fields:array<string, array{label:string, type:string, description:string, min?:int, max?:int}>}>
+	 * @return array<string, array{label:string, fields:array<string, array{label:string, type:string, description:string, min?:int, max?:int, options?:array<string, string>}>}>
 	 */
 	public function groups(): array {
 		return [
@@ -101,7 +101,13 @@ final class SettingsPage extends Page {
 					'trusted_proxies'    => [
 						'label'       => __( 'Trusted proxies', 'bluefairy-api-gateway' ),
 						'type'        => 'textarea',
-						'description' => __( 'One IP or CIDR per line. Forwarded-for headers are honoured only from these addresses.', 'bluefairy-api-gateway' ),
+						'description' => __( 'One IP or CIDR per line. The client address header below is honoured only from these addresses.', 'bluefairy-api-gateway' ),
+					],
+					'forwarded_header'   => [
+						'label'       => __( 'Client address header', 'bluefairy-api-gateway' ),
+						'type'        => 'select',
+						'options'     => array_combine( Settings::FORWARDED_HEADERS, Settings::FORWARDED_HEADERS ),
+						'description' => __( 'The header your proxy writes the real client address into. Cloudflare: CF-Connecting-IP. Only this header is read, and only when the request comes from a trusted proxy — so a visitor cannot pick their own address.', 'bluefairy-api-gateway' ),
 					],
 				],
 			],

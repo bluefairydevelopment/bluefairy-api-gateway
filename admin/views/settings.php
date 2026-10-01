@@ -2,7 +2,7 @@
 /**
  * The Settings form.
  *
- * @var array<string, array{label:string, fields:array<string, array{label:string, type:string, description:string, min?:int, max?:int}>}> $groups Field groups.
+ * @var array<string, array{label:string, fields:array<string, array{label:string, type:string, description:string, min?:int, max?:int, options?:array<string, string>}>}> $groups Field groups.
  * @var array<string, mixed>                $values   Current settings.
  * @var \BlueFairy\ApiGateway\Settings      $settings The Settings instance, for `bfag_settings_fields`.
  * @var string                              $form_url Where the form posts.
@@ -32,6 +32,13 @@ defined( 'ABSPATH' ) || exit;
 							<label><input type="checkbox" id="<?php echo esc_attr( $bfag_id ); ?>" name="bfag[<?php echo esc_attr( $bfag_key ); ?>]" value="1" <?php checked( true, \BlueFairy\ApiGateway\Settings::to_bool( $bfag_value ) ); ?> /> <?php echo esc_html( $bfag_field['description'] ); ?></label>
 						<?php elseif ( 'textarea' === $bfag_field['type'] ) : ?>
 							<textarea id="<?php echo esc_attr( $bfag_id ); ?>" name="bfag[<?php echo esc_attr( $bfag_key ); ?>]" class="large-text code" rows="4"><?php echo esc_textarea( is_array( $bfag_value ) ? implode( "\n", $bfag_value ) : (string) $bfag_value ); ?></textarea>
+							<p class="description"><?php echo esc_html( $bfag_field['description'] ); ?></p>
+						<?php elseif ( 'select' === $bfag_field['type'] ) : ?>
+							<select id="<?php echo esc_attr( $bfag_id ); ?>" name="bfag[<?php echo esc_attr( $bfag_key ); ?>]">
+								<?php foreach ( $bfag_field['options'] ?? [] as $bfag_option => $bfag_option_label ) : ?>
+									<option value="<?php echo esc_attr( $bfag_option ); ?>" <?php selected( $bfag_option, is_scalar( $bfag_value ) ? (string) $bfag_value : '' ); ?>><?php echo esc_html( $bfag_option_label ); ?></option>
+								<?php endforeach; ?>
+							</select>
 							<p class="description"><?php echo esc_html( $bfag_field['description'] ); ?></p>
 						<?php elseif ( 'number' === $bfag_field['type'] ) : ?>
 							<input type="number" id="<?php echo esc_attr( $bfag_id ); ?>" name="bfag[<?php echo esc_attr( $bfag_key ); ?>]" class="regular-text" value="<?php echo esc_attr( (string) (int) $bfag_value ); ?>" min="<?php echo esc_attr( (string) ( $bfag_field['min'] ?? 0 ) ); ?>" max="<?php echo esc_attr( (string) ( $bfag_field['max'] ?? PHP_INT_MAX ) ); ?>" />

@@ -108,7 +108,8 @@ final class RateLimitMiddlewareTest extends TestCase {
 		$inserts = $this->wpdb->calls_to( 'insert' );
 		$this->assertCount( 1, $inserts );
 		$this->assertSame( '203.0.113.10', $inserts[0]['data']['subject'] );
-		$this->assertSame( '/wp/v2/posts', $inserts[0]['data']['route'] );
+		$this->assertSame( 'wp/v2/posts', $inserts[0]['data']['route'], 'the log shows the normalised real route' );
+		$this->assertSame( HitCounter::route_hash( 'rule:1' ), $inserts[0]['data']['route_hash'], 'but the bucket is the rule' );
 		$this->assertSame( [], $this->breaches );
 	}
 
@@ -287,7 +288,7 @@ final class RateLimitMiddlewareTest extends TestCase {
 		ini_set( 'error_log', '/dev/null' );
 		$this->check( $middleware );
 		$this->assertCount( 1, Logger::lines() );
-		$this->assertStringContainsString( 'rate limit breached {"subject":"203.0.113.10","rule":1,"route":"\/wp\/v2\/posts","max":60,"window":60}', Logger::lines()[0] );
+		$this->assertStringContainsString( 'rate limit breached {"subject":"203.0.113.10","rule":1,"route":"wp\/v2\/posts","max":60,"window":60}', Logger::lines()[0] );
 	}
 
 	// ------------------------------------------------------------------

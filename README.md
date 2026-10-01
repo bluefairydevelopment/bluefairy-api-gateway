@@ -16,7 +16,7 @@ For the customer-facing feature guide, including the Pro/free comparison table, 
 ## What it does
 
 - **Response cache** — anonymous `GET`/`HEAD` requests to the REST API are stored and served back with an `X-BF-Cache: HIT` header. Every REST response passing through is labelled `HIT`, `MISS` or `BYPASS`, so you can see the decision from `curl`. One cache rule in the free plugin (seeded as `**`, "All routes", 60 s). Purged automatically when a post, term or comment changes; purged by hand from the Cache tab or `POST /bfag/v1/cache/purge`.
-- **Rate limiting** — a sliding-window counter per client IP and route. The breaching request gets `429` with `Retry-After`, `X-BF-RateLimit-Limit` and `X-BF-RateLimit-Window`. One rule in the free plugin (seeded as 60 requests per 60 s on `**`). Forwarded-IP headers are honoured only from the proxies you list.
+- **Rate limiting** — a sliding-window counter per client IP and rule. The breaching request gets `429` with `Retry-After`, `X-BF-RateLimit-Limit` and `X-BF-RateLimit-Window`. One rule in the free plugin (seeded as 60 requests per 60 s on `**`). One forwarded-IP header of your choosing is honoured, only from the proxies you list.
 - **Outbound webhooks** — up to three webhooks subscribing to six WordPress events (ten with WooCommerce). Each delivery is a JSON `POST` signed with `X-BF-Signature: sha256=HMAC-SHA256(timestamp.body, secret)`, logged with its HTTP status and response, and can be resent from the delivery log.
 - **Dashboard** — cache hit rate, webhook success rate and the rate-limit log size over the last 24 hours, the ten most recent failed deliveries with a Retry button, and the same figures at `GET /bfag/v1/status` for a monitor.
 
@@ -56,7 +56,7 @@ X-BF-RateLimit-Window: 60
 
 `GET /bfag/v1/status` is never rate-limited, so a monitor polling it cannot lock itself out.
 
-**Send a webhook.** On the **Webhooks** tab add a webhook: a label, an `https://` URL, an event (for example *Post published*) and, optionally, a signing secret — leave it blank and a random 64-character secret is generated. Click **Send test** on the new row; the receiver gets a `test` event and the outcome appears in the delivery log. The receiver verifies `X-BF-Signature` with the shared secret; PHP and Node examples are in `FEATURES.md`.
+**Send a webhook.** On the **Webhooks** tab add a webhook: a label, an `https://` URL, an event (for example *Post published*) and, optionally, a signing secret — leave it blank and a random 64-character secret is generated and shown to you once after saving — copy it into the receiver then. Click **Send test** on the new row; the receiver gets a `test` event, the notice reports the HTTP status, and the response appears in the delivery log. The receiver verifies `X-BF-Signature` with the shared secret; PHP and Node examples are in `FEATURES.md`.
 
 ## Settings reference
 
@@ -69,7 +69,8 @@ All settings live in the single option `bfag_settings` and are edited on **Setti
 | Enable response cache | `cache_enabled` | `true` | checkbox | Off: nothing is served from or stored in the cache; every response is `BYPASS`. |
 | Default TTL (seconds) | `default_cache_ttl` | `60` | 1–86400 | Used when the matching rule's own TTL is below 1. Every rule saved through the admin form carries a TTL of its own, so in practice the rule wins. |
 | Enable rate limiting | `rate_limit_enabled` | `true` | checkbox | Off: no rule is counted and no `429` is ever returned. |
-| Trusted proxies | `trusted_proxies` | `[]` | IPs or CIDRs, one per line; invalid entries discarded | When `REMOTE_ADDR` is one of these, the client IP is taken from `CF-Connecting-IP`, then `X-Real-IP`, then `X-Forwarded-For` (right-most address that is not itself a trusted proxy). |
+| Trusted proxies | `trusted_proxies` | `[]` | IPs or CIDRs, one per line; invalid entries discarded | When `REMOTE_ADDR` is one of these, the client IP is taken from the *Client address header* below. |
+| Client address header | `forwarded_header` | `X-Forwarded-For` | `X-Forwarded-For`, `CF-Connecting-IP`, `X-Real-IP` or `True-Client-IP`; anything else saves as the default | The one header read from a trusted proxy (`X-Forwarded-For`: right-most address that is not itself a trusted proxy). Every other header is ignored, so a visitor cannot pick their own address. |
 | Max stored payload (bytes) | `max_payload_bytes` | `65535` | 1024–16777215 | A delivery whose JSON body is longer is still sent in full, but the stored copy is cut here and flagged *truncated*, and cannot be retried. |
 | Delivery log retention (days) | `retention_days` | `30` | 1–365 | Finished (`success`/`failed`) deliveries older than this are deleted by the daily prune. |
 | Debug logging | `debug_logging` | `false` | checkbox | Writes gateway decisions (rejected headers, breached rules, refused saves, prune counts) to the PHP error log, prefixed `[bfag]`. |

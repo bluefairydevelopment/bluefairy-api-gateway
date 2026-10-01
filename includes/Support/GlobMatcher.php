@@ -78,7 +78,8 @@ final class GlobMatcher {
 				$pattern .= preg_quote( $char, '~' );
 			}
 		}
-		self::$compiled[ $key ] = '~^' . $pattern . $suffix . '$~';
+		// `i`: WP_REST_Server matches routes case-insensitively, so a glob must too.
+		self::$compiled[ $key ] = '~^' . $pattern . $suffix . '$~i';
 		return self::$compiled[ $key ];
 	}
 

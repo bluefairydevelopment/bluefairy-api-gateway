@@ -309,8 +309,9 @@ final class AdminMenu {
 			'webhook_deleted'       => [ 'success', __( 'Webhook and its delivery log deleted.', 'bluefairy-api-gateway' ) ],
 			'webhook_not_found'     => [ 'error', __( 'That webhook no longer exists.', 'bluefairy-api-gateway' ) ],
 			'webhook_toggled'       => [ 'success', __( 'Webhook updated.', 'bluefairy-api-gateway' ) ],
-			'webhook_test_ok'       => [ 'success', __( 'Test delivery succeeded. See the delivery log for the response.', 'bluefairy-api-gateway' ) ],
-			'webhook_test_failed'   => [ 'error', __( 'Test delivery failed. See the delivery log for the response.', 'bluefairy-api-gateway' ) ],
+			'webhook_secret_shown'  => [ 'success', __( 'Webhook saved. Its signing secret is shown below — copy it into your receiver now; it is not shown again.', 'bluefairy-api-gateway' ) ],
+			'webhook_test_ok'       => [ 'success', __( 'Test delivery succeeded. The receiver\'s response is in the delivery log.', 'bluefairy-api-gateway' ) ],
+			'webhook_test_failed'   => [ 'error', __( 'Test delivery failed. The receiver\'s response is in the delivery log.', 'bluefairy-api-gateway' ) ],
 			'settings_saved'        => [ 'success', __( 'Settings saved.', 'bluefairy-api-gateway' ) ],
 		];
 
@@ -342,7 +343,18 @@ final class AdminMenu {
 			return;
 		}
 		$type = in_array( $notice[0], [ 'success', 'error', 'warning', 'info' ], true ) ? $notice[0] : 'info';
-		echo '<div class="notice notice-' . esc_attr( $type ) . ' is-dismissible"><p>' . esc_html( (string) $notice[1] ) . '</p></div>';
+		$text = (string) $notice[1];
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- display-only: the HTTP status the test send got, digits or `none`.
+		$http = 'webhook_test_failed' === $code && isset( $_GET['bfag_http'] ) ? sanitize_key( wp_unslash( $_GET['bfag_http'] ) ) : '';
+		if ( '' !== $http ) {
+			$detail = ctype_digit( $http )
+				/* translators: %s: HTTP status code */
+				? sprintf( __( 'HTTP %s', 'bluefairy-api-gateway' ), $http )
+				: __( 'no HTTP response: transport error', 'bluefairy-api-gateway' );
+			/* translators: %s: "HTTP 500" or "no HTTP response: transport error" */
+			$text = sprintf( __( 'Test delivery failed (%s). The receiver\'s response is in the delivery log.', 'bluefairy-api-gateway' ), $detail );
+		}
+		echo '<div class="notice notice-' . esc_attr( $type ) . ' is-dismissible"><p>' . esc_html( $text ) . '</p></div>';
 	}
 
 	/**

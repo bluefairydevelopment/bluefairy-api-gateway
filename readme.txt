@@ -14,11 +14,11 @@ REST response caching, per-IP rate limiting and signed outbound webhooks — a h
 
 BlueFairy API Gateway sits in front of the WordPress REST API and does three things, each managed from one screen at **Settings → API Gateway**.
 
-**Response cache.** Anonymous `GET` responses are stored and served back with an `X-BF-Cache: HIT` header; every REST response is labelled `HIT`, `MISS` or `BYPASS` so you can see the decision from `curl`. Requests from logged-in users, or carrying an `Authorization`, `X-WP-Nonce` or `X-BF-API-Key` header, are never cached. Responses that are not 2xx, that stream, that set a cookie or that ask for `no-store` are never stored. One cache rule, matched by route glob (`wp/v2/posts/**` — a trailing `/**` or `/*` matches the collection route too), seeded on activation as "all routes, 60 seconds". The cache is purged automatically when a post, term or comment changes, and by hand from the Cache tab or `POST /bfag/v1/cache/purge`. Responses live in your persistent object cache (Redis, Memcached) when you have one, otherwise in transients.
+**Response cache.** Anonymous `GET` responses are stored and served back with an `X-BF-Cache: HIT` header; every REST response is labelled `HIT`, `MISS` or `BYPASS` so you can see the decision from `curl`. Requests from logged-in users, or carrying an `Authorization`, `X-WP-Nonce` or `X-BF-API-Key` header, are never cached. Responses that are not 2xx, that stream, that set a cookie or whose `Cache-Control` says `no-store`, `private`, `no-cache` or `max-age=0` are never stored. One cache rule, matched by route glob (`wp/v2/posts/**` — a trailing `/**` or `/*` matches the collection route too), seeded on activation as "all routes, 60 seconds". The cache is purged automatically when a post, term or comment changes, and by hand from the Cache tab or `POST /bfag/v1/cache/purge`. Responses live in your persistent object cache (Redis, Memcached) when you have one, otherwise in transients.
 
-**Rate limiting.** A sliding-window counter per client IP and route. The breaching request gets `429 Too Many Requests` with `Retry-After`, `X-BF-RateLimit-Limit` and `X-BF-RateLimit-Window`. One rule, seeded as 60 requests per 60 seconds on every route. Forwarded-IP headers (`CF-Connecting-IP`, `X-Real-IP`, `X-Forwarded-For`) are honoured only from the proxy ranges you list, so a visitor cannot pick their own bucket. The hit log is pruned every five minutes.
+**Rate limiting.** A sliding-window counter per client IP and rule. The breaching request gets `429 Too Many Requests` with `Retry-After`, `X-BF-RateLimit-Limit` and `X-BF-RateLimit-Window`. One rule, seeded as 60 requests per 60 seconds across every route. One forwarded-IP header of your choosing (`X-Forwarded-For` by default; `CF-Connecting-IP`, `X-Real-IP` or `True-Client-IP`) is honoured, and only from the proxy ranges you list, so a visitor cannot pick their own bucket. The hit log is pruned every five minutes.
 
-**Signed outbound webhooks.** Up to three webhooks, each subscribing to one event: post published, updated or deleted; user registered or updated; comment created; and, with WooCommerce, order created, order status changed, order completed, product updated. Each delivery is a JSON `POST` carrying `X-BF-Event`, `X-BF-Delivery`, `X-BF-Timestamp` and `X-BF-Signature: sha256=HMAC-SHA256(timestamp.body, secret)`, so the receiver can verify both origin and freshness. Deliveries are collected during the request and sent once after the response, logged with their HTTP status and response body, and any failed delivery can be resent from the log. Targets must be `https://`; secrets are generated for you and never displayed again.
+**Signed outbound webhooks.** Up to three webhooks, each subscribing to one event: post published, updated or deleted; user registered or updated; comment created; and, with WooCommerce, order created, order status changed, order completed, product updated. Each delivery is a JSON `POST` carrying `X-BF-Event`, `X-BF-Delivery`, `X-BF-Timestamp` and `X-BF-Signature: sha256=HMAC-SHA256(timestamp.body, secret)`, so the receiver can verify both origin and freshness. Deliveries are collected during the request and sent once after the response, logged with their HTTP status and response body, and any failed delivery can be resent from the log. Targets must be `https://`; a secret is generated for you and shown once, right after saving, for you to copy into the receiver.
 
 **Dashboard.** Cache hit rate, webhook success rate and the hit-log size over the last 24 hours, the ten most recent failed deliveries with a Retry button, and the same figures at `GET /bfag/v1/status` for a monitor — a route that is never rate-limited.
 
@@ -42,7 +42,7 @@ Everything lives under **Settings → API Gateway**, in five tabs.
 
 **Rate limit** — the rules table and a form with a label, *Count by* (IP address), a route glob, and *Requests per seconds*. Values outside 1–65535 requests or 1–86400 seconds are refused rather than silently changed.
 
-**Webhooks** — the webhooks table with **Edit**, **Send test** and **Delete**, the **Delivery log** button, and the add/edit form: label, `https://` URL, event, signing secret (blank generates one), extra headers as `Name: value` lines, and an Enabled box. Press **Send test** on a new webhook and check the delivery log for the receiver's response.
+**Webhooks** — the webhooks table with **Edit**, **Send test** and **Delete**, the **Delivery log** button, and the add/edit form: label, `https://` URL, event, signing secret (blank generates one and shows it once after saving), extra headers as `Name: value` lines, and an Enabled box. Press **Send test** on a new webhook: the notice reports the HTTP status, and the delivery log shows the receiver's response under each row.
 
 **Settings** — notification email and failure threshold (used by the Pro add-on's alerts), the cache switch and default TTL, the rate-limiting switch and trusted proxies, the stored-payload cap and delivery-log retention, debug logging, the WP-Cron notice switch and *Delete data on uninstall*.
 
@@ -52,7 +52,7 @@ To confirm the cache from the command line, request a public route twice and rea
 
 = Why am I seeing X-BF-Cache: BYPASS? =
 
-`BYPASS` means the request or the response was not cacheable. On the request side: the cache is switched off; the method is not GET or HEAD; you are logged in (a browser with a WordPress cookie, including the admin's own browser); the request carries an `Authorization`, `X-WP-Nonce` or `X-BF-API-Key` header; the route is under `/bfag/v1`; or no enabled cache rule matches the route. On the response side: the status is not 2xx; the response streams (`text/event-stream`); it sets a cookie; or its `Cache-Control` says `no-store` or `private`. Test with `curl` from a fresh shell, not from a logged-in browser tab.
+`BYPASS` means the request or the response was not cacheable. On the request side: the cache is switched off; the method is not GET or HEAD; you are logged in (a browser with a WordPress cookie, including the admin's own browser); the request carries an `Authorization`, `X-WP-Nonce` or `X-BF-API-Key` header; the route is under `/bfag/v1`; or no enabled cache rule matches the route. On the response side: the status is not 2xx; the response streams (`text/event-stream`); it sets a cookie; or its `Cache-Control` says `no-store`, `private`, `no-cache` or `max-age=0`. Test with `curl` from a fresh shell, not from a logged-in browser tab.
 
 = Does it work without Redis or Memcached? =
 
@@ -60,7 +60,7 @@ Yes. With a persistent object cache responses are stored in the object-cache gro
 
 = What happens behind Cloudflare, a load balancer or a reverse proxy? =
 
-By default the client IP is `REMOTE_ADDR`, which behind a proxy is the proxy's own address — so every visitor would share one rate-limit bucket. List the proxy's addresses or CIDR ranges under **Settings → Rate limit → Trusted proxies** (for Cloudflare, its published IP ranges). Only when `REMOTE_ADDR` is inside one of those ranges are `CF-Connecting-IP`, `X-Real-IP` and `X-Forwarded-For` read, in that order, taking the right-most address that is not itself a trusted proxy. Headers from anywhere else are ignored, so a visitor cannot forge their way into a different bucket.
+By default the client IP is `REMOTE_ADDR`, which behind a proxy is the proxy's own address — so every visitor would share one rate-limit bucket. List the proxy's addresses or CIDR ranges under **Settings → Rate limit → Trusted proxies** (for Cloudflare, its published IP ranges) and pick the **Client address header** your proxy writes (`X-Forwarded-For` by default; for Cloudflare, `CF-Connecting-IP`). Only when `REMOTE_ADDR` is inside one of those ranges is that one header read — for `X-Forwarded-For`, taking the right-most address that is not itself a trusted proxy. Every other header, and headers from anywhere else, are ignored, so a visitor cannot forge their way into a different bucket, not even by adding an `X-Real-IP` of their own in front of a proxy that only manages `X-Forwarded-For`.
 
 = Does uninstalling delete my data? =
 
@@ -90,9 +90,9 @@ One cache rule, one rate-limit rule and three webhooks. Rate limiting counts by 
 
 The URL must start with `https://` and must pass WordPress's own `wp_http_validate_url()` check, which refuses loopback and private addresses such as `localhost`, `127.0.0.1` or `10.x.x.x`. For local development a developer can allow `http://` with the `bfag_webhook_allow_http` filter. The event must be one offered in the dropdown — a WooCommerce event disappears from the list when WooCommerce is deactivated.
 
-= I let the plugin generate the signing secret and never saw it. Where is it? =
+= I let the plugin generate the signing secret and did not copy it. Where is it? =
 
-It is never displayed. Edit the webhook, tick **Generate a new secret** and, before saving, decide how you will share it: either type your own secret into the field so you know it, or generate one and copy it from the receiver after you have configured verification there. The stored secret cannot be read back from the admin page.
+A generated secret is shown exactly once, on the Webhooks tab right after you save, with a **Copy** button; after that the stored secret cannot be read back from the admin page. If you missed it, edit the webhook and either type your own secret into the field, or tick **Generate a new secret** and save — the new one is shown once in the same way. Either way, update the receiver: deliveries fail there until it has the new secret.
 
 = Does it need WP-Cron? =
 
@@ -119,7 +119,7 @@ The plugin contains no network-specific features. Each site keeps its own rules,
 = 1.0.0 =
 * Initial release.
 * REST response cache with `X-BF-Cache: HIT` / `MISS` / `BYPASS`, one route-glob rule, object-cache or transient storage, generation-based purging on post, term and comment changes, Purge all, and `POST /bfag/v1/cache/purge`.
-* Sliding-window rate limiting per IP and route with `429`, `Retry-After` and `X-BF-RateLimit-*` headers, one rule, trusted-proxy IP resolution, five-minute hit-log pruning with a ten-million-row cap.
+* Sliding-window rate limiting per IP and rule with `429`, `Retry-After` and `X-BF-RateLimit-*` headers, one rule, trusted-proxy IP resolution from one chosen header, five-minute hit-log pruning with a ten-million-row cap.
 * Up to three signed outbound webhooks on six WordPress events and four WooCommerce events, HMAC-SHA256 `X-BF-Signature` over `timestamp.body`, delivery on shutdown with per-request deduplication, a delivery log with Send test and Retry, payload truncation and retention pruning.
 * Dashboard KPIs recomputed every five minutes, `GET /bfag/v1/status` for monitors, and the `bfag_manage_gateway` capability.
 * Thirty-three `bfag_*` actions and filters as the add-on contract.

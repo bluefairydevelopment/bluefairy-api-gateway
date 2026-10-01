@@ -236,3 +236,20 @@ a.bfag-badge:focus {
 [data-bfag-preset-config].is-active {
 	display: table-row;
 }
+
+.bfag-row-detail td {
+	border-top: 0;
+	padding-top: 0;
+}
+
+.bfag-response {
+	margin: 4px 0 0;
+	max-height: 12em;
+	overflow: auto;
+	white-space: pre-wrap;
+	word-break: break-all;
+}
+
+.bfag-secret-box {
+	margin: 0 0 12px;
+}

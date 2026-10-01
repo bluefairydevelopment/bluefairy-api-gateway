@@ -63,11 +63,12 @@ foreach ( $events as $bfag_key => $bfag_spec ) {
 					<?php if ( $bfag_editing ) : ?>
 						<?php esc_html_e( 'Leave blank to keep the current secret. The stored secret is never shown.', 'bluefairy-api-gateway' ); ?>
 					<?php else : ?>
-						<?php esc_html_e( 'Leave blank to generate a random 64-character secret. It is never shown again, so copy it from the receiver side.', 'bluefairy-api-gateway' ); ?>
+						<?php esc_html_e( 'Leave blank and a secret is generated and shown to you once after saving.', 'bluefairy-api-gateway' ); ?>
 					<?php endif; ?>
 				</p>
 				<?php if ( $bfag_editing ) : ?>
 					<label><input type="checkbox" name="bfag[regenerate_secret]" value="1" /> <?php esc_html_e( 'Generate a new secret', 'bluefairy-api-gateway' ); ?></label>
+					<p class="description"><?php esc_html_e( 'Replaces the secret — deliveries fail at the receiver until it is updated. The new secret is shown once after saving.', 'bluefairy-api-gateway' ); ?></p>
 				<?php endif; ?>
 			</td>
 		</tr>

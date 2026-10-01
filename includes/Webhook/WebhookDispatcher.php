@@ -146,7 +146,10 @@ final class WebhookDispatcher {
 
 	/**
 	 * Resend a stored delivery's exact bytes as the next attempt. A truncated
-	 * payload is refused: its bytes are no longer the signed document.
+	 * payload is refused: its bytes are no longer the signed document. An
+	 * inbound row (`direction` other than `out`) is refused too: it was
+	 * written by whoever called the receiving endpoint, and signing it with
+	 * the site's secret would launder an unverified sender's payload.
 	 *
 	 * @param int                  $delivery_id Delivery row id.
 	 * @param array<string, mixed> $webhook     The webhook row.
@@ -161,6 +164,16 @@ final class WebhookDispatcher {
 		$row     = $this->deliveries->find( $delivery_id );
 		if ( null === $row ) {
 			Logger::log( 'redeliver: delivery not found', [ 'delivery_id' => $delivery_id ] );
+			return $failure;
+		}
+		if ( 'out' !== (string) ( $row['direction'] ?? '' ) ) {
+			Logger::log(
+				'redeliver: only outgoing deliveries can be resent',
+				[
+					'delivery_id' => $delivery_id,
+					'direction'   => (string) ( $row['direction'] ?? '' ),
+				]
+			);
 			return $failure;
 		}
 		if ( 1 === (int) $row['truncated'] ) {

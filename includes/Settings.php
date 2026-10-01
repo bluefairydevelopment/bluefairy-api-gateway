@@ -36,6 +36,7 @@ final class Settings {
 		'default_cache_ttl'        => 60,
 		'rate_limit_enabled'       => true,
 		'trusted_proxies'          => [],
+		'forwarded_header'         => 'X-Forwarded-For',
 		'max_payload_bytes'        => 65535,
 		'retention_days'           => 30,
 		'failure_threshold'        => 5,
@@ -44,6 +45,15 @@ final class Settings {
 		'disable_cron_notice'      => false,
 		'delete_data_on_uninstall' => false,
 	];
+
+	/**
+	 * The headers `forwarded_header` may name — the ONE header a trusted
+	 * proxy is believed to write the client address into. The first is the
+	 * default; `sanitize()` rejects anything else.
+	 *
+	 * @var list<string>
+	 */
+	public const FORWARDED_HEADERS = [ 'X-Forwarded-For', 'CF-Connecting-IP', 'X-Real-IP', 'True-Client-IP' ];
 
 	/**
 	 * Bounds for the integer settings. Values are clamped, not rejected, so a
@@ -135,6 +145,8 @@ final class Settings {
 				$clean[ $key ] = max( $min, min( $max, (int) $value ) );
 			} elseif ( 'trusted_proxies' === $key ) {
 				$clean[ $key ] = self::sanitize_cidr_list( $value );
+			} elseif ( 'forwarded_header' === $key ) {
+				$clean[ $key ] = self::sanitize_forwarded_header( $value );
 			} elseif ( 'notification_email' === $key ) {
 				$email         = sanitize_email( is_string( $value ) ? $value : '' );
 				$clean[ $key ] = is_email( $email ) ? $email : '';
@@ -161,6 +173,23 @@ final class Settings {
 			return in_array( strtolower( trim( $value ) ), [ '1', 'on', 'true', 'yes' ], true );
 		}
 		return false;
+	}
+
+	/**
+	 * One of FORWARDED_HEADERS, in its canonical spelling; anything else is
+	 * the default. A header the admin did not choose is never read.
+	 *
+	 * @param mixed $value Raw value.
+	 */
+	public static function sanitize_forwarded_header( mixed $value ): string {
+		if ( is_string( $value ) ) {
+			foreach ( self::FORWARDED_HEADERS as $header ) {
+				if ( 0 === strcasecmp( trim( $value ), $header ) ) {
+					return $header;
+				}
+			}
+		}
+		return self::FORWARDED_HEADERS[0];
 	}
 
 	/**

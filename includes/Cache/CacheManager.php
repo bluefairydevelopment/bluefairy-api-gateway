@@ -46,6 +46,13 @@ final class CacheManager {
 	private const OWN_NAMESPACE = '/bfag/v1';
 
 	/**
+	 * Cache-Control directives that forbid storing the response.
+	 *
+	 * @var list<string>
+	 */
+	private const UNCACHEABLE_DIRECTIVES = [ 'no-store', 'private', 'no-cache' ];
+
+	/**
 	 * Constructor.
 	 *
 	 * @param CacheStore           $store    Response storage.
@@ -171,7 +178,8 @@ final class CacheManager {
 				return false;
 			}
 		}
-		if ( str_starts_with( '/' . ltrim( $request->get_route(), '/' ), self::OWN_NAMESPACE ) ) {
+		// Lower-cased because WP_REST_Server matches routes case-insensitively: `/Bfag/v1/status` is our status route.
+		if ( str_starts_with( strtolower( '/' . ltrim( $request->get_route(), '/' ) ), self::OWN_NAMESPACE ) ) {
 			return false;
 		}
 		/**
@@ -202,11 +210,28 @@ final class CacheManager {
 		if ( null !== $this->header_value( $headers, 'Set-Cookie' ) ) {
 			return false;
 		}
-		$cache_control = strtolower( (string) $this->header_value( $headers, 'Cache-Control' ) );
-		if ( str_contains( $cache_control, 'no-store' ) || str_contains( $cache_control, 'private' ) ) {
-			return false;
+		return ! $this->cache_control_forbids( (string) $this->header_value( $headers, 'Cache-Control' ) );
+	}
+
+	/**
+	 * Does a Cache-Control value say the response must not be stored and
+	 * served as is? `no-store`, `private` and `no-cache` (we cannot
+	 * revalidate), or a `max-age` / `s-maxage` of zero.
+	 *
+	 * @param string $value The header value.
+	 */
+	private function cache_control_forbids( string $value ): bool {
+		foreach ( explode( ',', strtolower( $value ) ) as $directive ) {
+			[ $name, $arg ] = array_pad( explode( '=', trim( $directive ), 2 ), 2, null );
+			$name           = trim( $name );
+			if ( in_array( $name, self::UNCACHEABLE_DIRECTIVES, true ) ) {
+				return true;
+			}
+			if ( in_array( $name, [ 'max-age', 's-maxage' ], true ) && null !== $arg && (int) trim( $arg, " \t\"" ) <= 0 ) {
+				return true;
+			}
 		}
-		return true;
+		return false;
 	}
 
 	/**

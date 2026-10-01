@@ -35,6 +35,9 @@ final class GlobMatcherTest extends TestCase {
 			'mid star one segment'    => [ 'wp/v2/*/1', '/wp/v2/posts/1', true ],
 			'mid dstar not optional'  => [ 'wp/**/1', '/wp/1', false ],
 			'mid dstar crosses'       => [ 'wp/**/1', '/wp/v2/posts/1', true ],
+			'route case ignored like core' => [ 'wp/v2/posts/**', '/WP/v2/Posts/1', true ],
+			'glob case ignored too'   => [ 'WP/v2/posts', '/wp/v2/posts', true ],
+			'case-insensitive is not sloppy' => [ 'wp/v2/posts', '/wp/v2/post', false ],
 			'double star alone deep'  => [ '**', '/wp/v2/posts/1/revisions', true ],
 			'double star alone empty' => [ '**', '', true ],
 			'double star alone'       => [ '**', '/anything/at/all', true ],
@@ -56,11 +59,11 @@ final class GlobMatcherTest extends TestCase {
 		$first  = GlobMatcher::compile( 'a/*' );
 		$second = GlobMatcher::compile( 'a/*' );
 		$this->assertSame( $first, $second );
-		$this->assertSame( '~^a(?:/[^/]*)?$~', $first, 'a trailing /* is optional' );
-		$this->assertSame( '~^a(?:/.*)?$~', GlobMatcher::compile( 'a/**' ), 'a trailing /** is optional' );
-		$this->assertSame( '~^a/[^/]*/b$~', GlobMatcher::compile( 'a/*/b' ), 'a mid-pattern * is not' );
-		$this->assertSame( '~^.*$~', GlobMatcher::compile( '**' ), '** alone is everything, not an optional suffix' );
-		$this->assertSame( '~^[^/]*$~', GlobMatcher::compile( '/*' ), '/* alone is one segment, not an optional suffix' );
+		$this->assertSame( '~^a(?:/[^/]*)?$~i', $first, 'a trailing /* is optional' );
+		$this->assertSame( '~^a(?:/.*)?$~i', GlobMatcher::compile( 'a/**' ), 'a trailing /** is optional' );
+		$this->assertSame( '~^a/[^/]*/b$~i', GlobMatcher::compile( 'a/*/b' ), 'a mid-pattern * is not' );
+		$this->assertSame( '~^.*$~i', GlobMatcher::compile( '**' ), '** alone is everything, not an optional suffix' );
+		$this->assertSame( '~^[^/]*$~i', GlobMatcher::compile( '/*' ), '/* alone is one segment, not an optional suffix' );
 	}
 
 	public function test_specificity_counts_literal_characters_only(): void {
@@ -77,7 +80,7 @@ final class GlobMatcherTest extends TestCase {
 	public function test_compile_never_produces_nested_quantifiers(): void {
 		$pattern = GlobMatcher::compile( '(a+)+$' );
 		$this->assertStringNotContainsString( '+)+', $pattern );
-		$this->assertSame( '~^\(a\+\)\+\$$~', $pattern );
+		$this->assertSame( '~^\(a\+\)\+\$$~i', $pattern );
 		// And a pathological input cannot blow up the matcher.
 		$this->assertFalse( GlobMatcher::matches( '(a+)+$', str_repeat( 'a', 5000 ) . '!' ) );
 	}

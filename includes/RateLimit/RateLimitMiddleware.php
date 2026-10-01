@@ -37,6 +37,11 @@ final class RateLimitMiddleware {
 	private const EXEMPT_ROUTE = 'bfag/v1/status';
 
 	/**
+	 * Prefix of the hit-log bucket key a rule counts against.
+	 */
+	public const BUCKET_PREFIX = 'rule:';
+
+	/**
 	 * Constructor.
 	 *
 	 * @param RateLimitRuleRepository $rules    Rule source.
@@ -73,7 +78,10 @@ final class RateLimitMiddleware {
 		if ( ! Settings::to_bool( $this->settings->get( 'rate_limit_enabled' ) ) ) {
 			return $result;
 		}
-		$route = $request->get_route();
+		// Normalised once: no leading slash, lower-cased. WP_REST_Server matches
+		// routes case-insensitively, so `/wp/v2/Posts` is the same endpoint as
+		// `/wp/v2/posts` and must not get its own budget or dodge the exemption.
+		$route = strtolower( RequestContext::normalize_route( $request->get_route() ) );
 		if ( $this->is_exempt( $route ) ) {
 			return $result;
 		}
@@ -117,7 +125,10 @@ final class RateLimitMiddleware {
 
 			$window = (int) $rule['window_seconds'];
 			$max    = (int) $rule['max_requests'];
-			if ( $this->hits->consume( $subject, $route, $window, $max ) ) {
+			// Counted against the rule, not the path: one rule = one budget per
+			// subject, so neither a case variant nor a crawl of 10,000 distinct
+			// URLs under a `**` rule gets a fresh allowance.
+			if ( $this->hits->consume( $subject, self::bucket( (int) $rule['id'] ), $window, $max, $route ) ) {
 				Logger::log(
 					'rate limit breached',
 					[
@@ -185,12 +196,20 @@ final class RateLimitMiddleware {
 	}
 
 	/**
+	 * The hit-log bucket key for a rule: `rule:<id>`.
+	 *
+	 * @param int $rule_id The rule's id.
+	 */
+	public static function bucket( int $rule_id ): string {
+		return self::BUCKET_PREFIX . $rule_id;
+	}
+
+	/**
 	 * Is the route the status endpoint, or beneath it?
 	 *
-	 * @param string $route Raw REST route.
+	 * @param string $route Normalised, lower-cased REST route.
 	 */
 	private function is_exempt( string $route ): bool {
-		$normalized = RequestContext::normalize_route( $route );
-		return self::EXEMPT_ROUTE === $normalized || str_starts_with( $normalized, self::EXEMPT_ROUTE . '/' );
+		return self::EXEMPT_ROUTE === $route || str_starts_with( $route, self::EXEMPT_ROUTE . '/' );
 	}
 }

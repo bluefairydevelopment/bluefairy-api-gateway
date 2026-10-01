@@ -88,7 +88,8 @@ final class Capabilities {
 	 *                            X-HTTP-Method-Override is honoured.
 	 */
 	public static function required_scope( string $route, ?string $method = null ): string {
-		$route = '/' . ltrim( $route, '/' );
+		// Lower-cased because WP_REST_Server matches routes case-insensitively: `/BFAG/v1/webhooks` reaches the webhooks controller.
+		$route = '/' . ltrim( strtolower( $route ), '/' );
 		return match ( true ) {
 			str_starts_with( $route, '/bfag/v1/cache/purge' ) => 'cache:purge',
 			str_starts_with( $route, '/bfag/v1/webhooks' )    => self::is_read_method( $method ) ? 'webhook:read' : 'webhook:write',

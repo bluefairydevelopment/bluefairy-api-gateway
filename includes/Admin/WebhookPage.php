@@ -22,16 +22,31 @@ use BlueFairy\ApiGateway\Webhook\WebhookRepository;
  * Webhook list, add/edit form, Send test, and the delivery log sub-view
  * (`?tab=webhooks&view=deliveries[&webhook_id=]`).
  *
- * The secret is never rendered: the form field is blank and blank means
- * "keep". The event must exist in the registry — the repository stores any
- * sanitised key, so the check belongs here, in front of the only form that
- * can create one.
+ * The stored secret is never rendered: the form field is blank and blank
+ * means "keep". A secret the plugin generates (blank on create, or
+ * "Generate a new secret") is shown exactly once, on the next render of the
+ * tab, from a user-scoped transient that is deleted on display — otherwise
+ * the admin has no way to configure the receiver. The event must exist in
+ * the registry — the repository stores any sanitised key, so the check
+ * belongs here, in front of the only form that can create one.
  */
 final class WebhookPage extends Page {
 
 	public const TAB = 'webhooks';
 
 	public const DELIVERY_LIMIT = 50;
+
+	/**
+	 * Seconds a generated secret waits to be shown once.
+	 */
+	public const NEW_SECRET_TTL = 120;
+
+	/**
+	 * Header names that may be shown in, and read from, the Extra headers
+	 * textarea. Anything else in the row's headers JSON (the Pro add-on's
+	 * `preset_config`, which holds API keys) is neither rendered nor editable.
+	 */
+	private const HEADER_NAME = '/^[A-Za-z0-9-]+$/';
 
 	/**
 	 * Constructor.
@@ -99,6 +114,7 @@ final class WebhookPage extends Page {
 				'events'         => $this->registry->all(),
 				'page'           => $this,
 				'deliveries_url' => $this->url( [ 'view' => 'deliveries' ] ),
+				'new_secret'     => $this->take_new_secret(),
 			]
 		);
 
@@ -228,13 +244,24 @@ final class WebhookPage extends Page {
 			$data['max_retries'] = (int) $fields['max_retries'];
 		}
 
+		if ( $id > 0 ) {
+			$existing = $this->webhooks->find( $id );
+			if ( null === $existing ) {
+				$this->redirect( 'webhook_not_found' );
+			}
+			// Keys that are not header names never reached the textarea, so the form cannot carry them back: keep them from the row.
+			$data['headers'] = $this->preserve_hidden_headers( $data['headers'], $this->webhooks->headers_of( $existing ) );
+		}
+
 		$secret = trim( (string) ( $fields['secret'] ?? '' ) );
+		$shown  = null;
 		if ( self::flag( $fields, 'regenerate_secret' ) ) {
-			$data['secret'] = bin2hex( random_bytes( 32 ) );
+			$shown          = self::generate_secret();
+			$data['secret'] = $shown;
 		} elseif ( '' !== $secret ) {
 			$data['secret'] = $secret;
 		}
-		// Blank and not regenerating: no `secret` key, so update() keeps the stored one and create() generates one.
+		// Blank and not regenerating: no `secret` key, so update() keeps the stored one; create() gets one generated below.
 
 		/**
 		 * Sanitise add-on fields before a webhook is stored.
@@ -248,17 +275,83 @@ final class WebhookPage extends Page {
 		$data     = is_array( $filtered ) ? $filtered : $data;
 
 		if ( $id > 0 ) {
-			if ( null === $this->webhooks->find( $id ) ) {
-				$this->redirect( 'webhook_not_found' );
+			if ( ! $this->webhooks->update( $id, $data ) ) {
+				$this->redirect( 'webhook_invalid' );
 			}
-			$this->redirect( $this->webhooks->update( $id, $data ) ? 'webhook_saved' : 'webhook_invalid' );
+			$this->redirect( $this->saved( $shown ) );
 		}
 
 		if ( $this->webhooks->count() >= $this->webhooks->limit() ) {
 			$this->redirect( 'webhook_limit' );
 		}
-		$created = $this->webhooks->create( $data );
-		$this->redirect( false === $created ? 'webhook_invalid' : 'webhook_saved' );
+		if ( ! is_string( $data['secret'] ?? null ) || '' === trim( $data['secret'] ) ) {
+			// Generated here rather than left to the repository so it can be shown once.
+			$shown          = self::generate_secret();
+			$data['secret'] = $shown;
+		}
+		if ( false === $this->webhooks->create( $data ) ) {
+			$this->redirect( 'webhook_invalid' );
+		}
+		$this->redirect( $this->saved( $shown ) );
+	}
+
+	/**
+	 * The notice for a successful save. A generated secret is parked in a
+	 * user-scoped transient for the tab to show once.
+	 *
+	 * @param string|null $shown The secret the plugin generated, if any.
+	 */
+	private function saved( ?string $shown ): string {
+		if ( null === $shown ) {
+			return 'webhook_saved';
+		}
+		set_transient( self::new_secret_transient(), $shown, self::NEW_SECRET_TTL );
+		return 'webhook_secret_shown';
+	}
+
+	/**
+	 * The secret parked by the current user's last save, deleted on read.
+	 */
+	private function take_new_secret(): ?string {
+		$transient = self::new_secret_transient();
+		$secret    = get_transient( $transient );
+		if ( ! is_string( $secret ) || '' === $secret ) {
+			return null;
+		}
+		delete_transient( $transient );
+		return $secret;
+	}
+
+	/**
+	 * Transient carrying the one-time secret for the current user.
+	 */
+	private static function new_secret_transient(): string {
+		return 'bfag_new_secret_' . get_current_user_id();
+	}
+
+	/**
+	 * A fresh 64-character hexadecimal secret.
+	 */
+	private static function generate_secret(): string {
+		return bin2hex( random_bytes( 32 ) );
+	}
+
+	/**
+	 * Add back every key of the stored headers that is not a header name:
+	 * such keys are never rendered or editable, so an edit of the visible
+	 * headers must not drop them. Visible headers come from the form alone.
+	 *
+	 * @param array<string, string> $submitted Headers parsed from the textarea.
+	 * @param array<string, string> $stored    Headers on the row being edited.
+	 * @return array<string, string>
+	 */
+	private function preserve_hidden_headers( array $submitted, array $stored ): array {
+		foreach ( $stored as $name => $value ) {
+			if ( 1 !== preg_match( self::HEADER_NAME, $name ) ) {
+				$submitted[ $name ] = $value;
+			}
+		}
+		return $submitted;
 	}
 
 	/**
@@ -284,7 +377,11 @@ final class WebhookPage extends Page {
 				],
 			]
 		);
-		$this->redirect( $result['success'] ? 'webhook_test_ok' : 'webhook_test_failed' );
+		if ( $result['success'] ) {
+			$this->redirect( 'webhook_test_ok' );
+		}
+		// The status travels with the notice; `none` is a transport error (no response at all).
+		$this->redirect( 'webhook_test_failed', [ 'bfag_http' => null === $result['http_status'] ? 'none' : (string) $result['http_status'] ] );
 	}
 
 	/**
@@ -305,7 +402,7 @@ final class WebhookPage extends Page {
 			[ $name, $value ] = explode( ':', $line, 2 );
 			$name             = trim( $name );
 			$value            = trim( $value );
-			if ( '' === $name || 1 !== preg_match( '/^[A-Za-z0-9-]+$/', $name ) ) {
+			if ( '' === $name || 1 !== preg_match( self::HEADER_NAME, $name ) ) {
 				continue;
 			}
 			$headers[ $name ] = $value;
@@ -314,13 +411,18 @@ final class WebhookPage extends Page {
 	}
 
 	/**
-	 * Header map → `Name: value` lines for the textarea.
+	 * Header map → `Name: value` lines for the textarea. Keys that are not
+	 * header names are skipped: the dispatcher would never send them, and
+	 * the Pro add-on keeps its preset credentials under such a key.
 	 *
 	 * @param array<string, string> $headers Header map.
 	 */
 	public function headers_to_lines( array $headers ): string {
 		$lines = [];
 		foreach ( $headers as $name => $value ) {
+			if ( 1 !== preg_match( self::HEADER_NAME, (string) $name ) ) {
+				continue;
+			}
 			$lines[] = $name . ': ' . $value;
 		}
 		return implode( "\n", $lines );

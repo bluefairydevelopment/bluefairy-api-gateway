@@ -369,7 +369,7 @@ final class WebhookDispatcherTest extends TestCase {
 
 	public function test_redeliver_resends_the_stored_bytes_as_the_next_attempt(): void {
 		$stored = '{"object":{"id":5},"note":"exact bytes \u00e9"}';
-		$this->wpdb->queue( 'get_row', [ 'id' => 11, 'webhook_id' => 7, 'event' => 'post.updated', 'payload' => $stored, 'truncated' => '0', 'status' => 'failed', 'attempt' => '2', 'http_status' => '500' ] );
+		$this->wpdb->queue( 'get_row', [ 'id' => 11, 'webhook_id' => 7, 'direction' => 'out', 'event' => 'post.updated', 'payload' => $stored, 'truncated' => '0', 'status' => 'failed', 'attempt' => '2', 'http_status' => '500' ] );
 		bfag_test_queue_http( 200 );
 
 		$result = $this->dispatcher()->redeliver( 11, $this->webhook() );
@@ -392,7 +392,7 @@ final class WebhookDispatcherTest extends TestCase {
 		$this->assertSame( [ 'delivery_id' => 99, 'success' => false, 'http_status' => null ], $result );
 		$this->assertCount( 0, $GLOBALS['bfag_test_http_calls'] );
 
-		$this->wpdb->queue( 'get_row', [ 'id' => 12, 'webhook_id' => 7, 'event' => 'e', 'payload' => '{"cut', 'truncated' => '1', 'status' => 'failed', 'attempt' => '1' ] );
+		$this->wpdb->queue( 'get_row', [ 'id' => 12, 'webhook_id' => 7, 'direction' => 'out', 'event' => 'e', 'payload' => '{"cut', 'truncated' => '1', 'status' => 'failed', 'attempt' => '1' ] );
 		$result = $this->dispatcher()->redeliver( 12, $this->webhook() );
 		$this->assertFalse( $result['success'] );
 		$this->assertCount( 0, $GLOBALS['bfag_test_http_calls'], 'truncated bytes are not the signed document' );

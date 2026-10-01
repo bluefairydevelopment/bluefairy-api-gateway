@@ -48,6 +48,13 @@ defined( 'ABSPATH' ) || exit;
 			$bfag_id        = (int) $bfag_row['id'];
 			$bfag_status    = (string) $bfag_row['status'];
 			$bfag_truncated = 1 === (int) $bfag_row['truncated'];
+			$bfag_finished  = in_array( $bfag_status, [ 'success', 'failed' ], true );
+			$bfag_body      = substr( is_scalar( $bfag_row['response_body'] ?? null ) ? (string) $bfag_row['response_body'] : '', 0, 2000 );
+			$bfag_response  = null === $bfag_row['http_status']
+				/* translators: %s: the transport error message */
+				? sprintf( __( 'Transport error: %s', 'bluefairy-api-gateway' ), $bfag_body )
+				/* translators: 1: HTTP status code, 2: response body (empty or preceded by a line break) */
+				: sprintf( __( 'HTTP %1$s%2$s', 'bluefairy-api-gateway' ), (string) $bfag_row['http_status'], '' === $bfag_body ? '' : "\n" . $bfag_body );
 			?>
 			<tr data-bfag-delivery="<?php echo esc_attr( (string) $bfag_id ); ?>">
 				<td><?php echo esc_html( (string) $bfag_id ); ?></td>
@@ -69,6 +76,16 @@ defined( 'ABSPATH' ) || exit;
 					<?php endif; ?>
 				</td>
 			</tr>
+			<?php if ( $bfag_finished ) : ?>
+				<tr class="bfag-row-detail">
+					<td colspan="9">
+						<details>
+							<summary><?php esc_html_e( 'Response', 'bluefairy-api-gateway' ); ?></summary>
+							<pre class="bfag-response"><?php echo esc_html( $bfag_response ); ?></pre>
+						</details>
+					</td>
+				</tr>
+			<?php endif; ?>
 		<?php endforeach; ?>
 	</tbody>
 </table>

@@ -31,11 +31,20 @@ final class RequestContextTest extends TestCase {
 		$this->assertSame( '10.0.0.5', $this->context( [ '172.16.0.0/12' ] )->client_ip() );
 	}
 
-	public function test_cf_connecting_ip_wins_over_xff(): void {
+	public function test_only_the_chosen_header_is_read_cf_connecting_ip_is_ignored_by_default(): void {
 		$_SERVER['REMOTE_ADDR']           = '10.0.0.5';
 		$_SERVER['HTTP_CF_CONNECTING_IP'] = '198.51.100.1';
 		$_SERVER['HTTP_X_FORWARDED_FOR']  = '198.51.100.2';
-		$this->assertSame( '198.51.100.1', $this->context( [ '10.0.0.5' ] )->client_ip() );
+		$this->assertSame( '198.51.100.2', $this->context( [ '10.0.0.5' ] )->client_ip(), 'default: X-Forwarded-For; a visitor-supplied CF header cannot outrank it' );
+
+		update_option(
+			'bfag_settings',
+			[
+				'trusted_proxies'  => [ '10.0.0.5' ],
+				'forwarded_header' => 'CF-Connecting-IP',
+			]
+		);
+		$this->assertSame( '198.51.100.1', ( new RequestContext( new Settings() ) )->client_ip(), 'chosen: CF-Connecting-IP, and then XFF is the one ignored' );
 	}
 
 	public function test_walks_xff_from_the_right_skipping_trusted_proxies(): void {

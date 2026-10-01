@@ -113,7 +113,7 @@ these makes it `BYPASS` rather than stored:
 - the status is not 2xx;
 - `Content-Type` contains `text/event-stream`;
 - the response sets a cookie (`Set-Cookie`);
-- `Cache-Control` contains `no-store` or `private`.
+- `Cache-Control` carries `no-store`, `private` or `no-cache`, or a `max-age=0` / `s-maxage=0` (the plugin cannot revalidate, so a response that must be revalidated is simply not stored).
 
 Everything else is stored for the rule's TTL and labelled `X-BF-Cache: MISS`,
 and a miss is counted. The next identical request is a `HIT`.
@@ -190,10 +190,10 @@ The limiter runs on `rest_pre_dispatch` at priority 5 — ahead of the cache at
 priority 10 — so a limited client is refused before it can be served from
 cache, and cached hits count towards the limit like any other request.
 
-1. If *Enable rate limiting* is off, or the route is `/bfag/v1/status`, nothing is counted.
+1. The route is normalised: leading slash removed, lower-cased. WordPress matches REST routes case-insensitively, so `/wp/v2/Posts` is the same endpoint as `/wp/v2/posts` and is treated as such everywhere below. If *Enable rate limiting* is off, or the route is `/bfag/v1/status` (in any case), nothing is counted.
 2. The client IP is resolved (see *Trusted proxies* below).
 3. `bfag_rate_limit_is_blocked` is asked; the free plugin has no ban list, so this is always `false`. (Pro answers `true` for a banned IP and the request gets `403 bfag_blocked` before any rule is counted.)
-4. **Every** enabled rule whose glob matches the route is applied, in id order. For each, one row is **inserted** into `bfag_rate_limit_hits` (subject, route, a 16-hex-character SHA-256 prefix of the route, GMT timestamp) and **then** the rows for that subject and route newer than `now − window` are counted. Insert-then-count means every request's own row is in the count it reads, so a hundred concurrent requests cannot all read "59" and all pass.
+4. **Every** enabled rule whose glob matches the route is applied, in id order. For each, one row is **inserted** into `bfag_rate_limit_hits` (subject, the normalised route, a 16-hex-character SHA-256 prefix of the **rule key** `rule:<id>`, GMT timestamp) and **then** the rows for that subject and rule newer than `now − window` are counted. Insert-then-count means every request's own row is in the count it reads, so a hundred concurrent requests cannot all read "59" and all pass.
 5. The first rule whose count exceeds its limit answers the request:
 
 ```
@@ -207,10 +207,13 @@ X-BF-RateLimit-Window: <window seconds>
 
 It is a sliding window: a client allowed 60 per 60 s who sends 60 requests in
 the first second is refused for the next 59 seconds, and admitted again one
-request at a time as the oldest rows age out. The hit log is **per subject
-and per route**, so two different routes under one `**` rule are counted
-separately; the `**` seeded rule means "60 per minute on each route", not "60
-per minute in total".
+request at a time as the oldest rows age out. The budget is **per subject and
+per rule**, not per path: every route a rule matches draws on the same
+allowance, so the `**` seeded rule means "60 per minute in total", and neither
+a crawl of 10,000 distinct URLs nor `/wp/v2/Posts` spelled ten different ways
+gets a fresh budget. Give a route its own allowance with its own rule (Pro;
+the free plugin has one rule). The `route` column of the hit log still shows
+the real route each hit came from.
 
 If the insert fails (a database fault) the limiter fails open — a database
 problem must not turn into a site-wide 429 — and logs it when debug logging is
@@ -220,15 +223,24 @@ on. Timestamps are written and compared in GMT from PHP's clock, never MySQL's.
 
 The client IP is `REMOTE_ADDR` — unless `REMOTE_ADDR` is inside one of the
 addresses or CIDR ranges listed under **Settings → Rate limit → Trusted
-proxies**. Only then are forwarding headers read, in this order:
-`CF-Connecting-IP`, `X-Real-IP`, `X-Forwarded-For`. In a comma-separated list
-the address taken is the right-most one that is not itself a trusted proxy; if
-any entry is not a valid IP the header is ignored and the next is tried.
+proxies**. Only then is **one** forwarding header read: the one chosen under
+**Client address header** (`X-Forwarded-For` by default; `CF-Connecting-IP`,
+`X-Real-IP` or `True-Client-IP`). For `X-Forwarded-For` the address taken is
+the right-most one in the comma-separated list that is not itself a trusted
+proxy; if any entry is not a valid IP the header is ignored. For the
+single-value headers the value is taken when it is a valid IP. Any header not
+chosen is ignored whatever it says, and an invalid value falls back to
+`REMOTE_ADDR`.
 
 Trusting the headers unconditionally would let any visitor pick their own
 rate-limit bucket by sending a forged `X-Forwarded-For`, so behind Cloudflare
 or a load balancer you must list the proxy ranges — otherwise every visitor
-shares the proxy's address and one bucket.
+shares the proxy's address and one bucket. Reading several headers in a fixed
+order would be the same hole one step back: a proxy that only manages
+`X-Forwarded-For` passes a visitor's own `X-Real-IP` straight through, and a
+higher-ranked header would outrank the address the proxy actually wrote. So
+pick the header your proxy writes (Cloudflare: `CF-Connecting-IP`) and only
+that one is believed.
 
 ### Keeping the hits table small
 
@@ -260,8 +272,8 @@ Deleting a webhook deletes its delivery log with it, inside one transaction.
 | **Label** | Required, 1–200 characters. |
 | **URL** | Required. `https://` only, and it must pass WordPress's `wp_http_validate_url()` — a loopback, private or otherwise unsafe address is refused. Redirects are not followed when delivering. (A filter, `bfag_webhook_allow_http`, permits plain `http://` for local development.) |
 | **Event** | Required; one of the events below, grouped as *Content*, *Users* and — when WooCommerce is active — *WooCommerce*. |
-| **Signing secret** | Leave blank on creation and a random 64-character hexadecimal secret is generated. The stored secret is **never shown again**, so if you let the plugin generate one, copy it from the receiver's side after the first delivery is verified — or set your own. On edit, blank keeps the current secret; **Generate a new secret** replaces it. Up to 255 characters. |
-| **Extra headers** | One per line as `Name: value`. Sent with every delivery after sanitising: names must be `[A-Za-z0-9-]`; `Host`, `Content-Length`, `Transfer-Encoding`, `Connection`, `Cookie`, `Authorization`, `Proxy-Authorization` and anything beginning `X-Forwarded-` are dropped, as is any value containing a line break, and any name the plugin sets itself (`Content-Type`, `User-Agent`, `X-BF-*`). Each rejection is logged when debug logging is on. |
+| **Signing secret** | Leave blank on creation and a random 64-character hexadecimal secret is generated and **shown to you once**, on the Webhooks tab right after saving, in a box with a **Copy** button — copy it into your receiver then, because the stored secret is never displayed again. Or set your own (up to 255 characters). On edit, blank keeps the current secret; **Generate a new secret** replaces it — deliveries fail at the receiver until it is updated there — and the new secret is shown once after saving in the same way. |
+| **Extra headers** | One per line as `Name: value`. Only entries whose name is `[A-Za-z0-9-]` are shown here or read from here; anything else stored on the webhook (a Pro preset's configuration, which holds its credentials) is neither displayed nor touched by an edit. Sent with every delivery after sanitising: names must be `[A-Za-z0-9-]`; `Host`, `Content-Length`, `Transfer-Encoding`, `Connection`, `Cookie`, `Authorization`, `Proxy-Authorization` and anything beginning `X-Forwarded-` are dropped, as is any value containing a line break, and any name the plugin sets itself (`Content-Type`, `User-Agent`, `X-BF-*`). Each rejection is logged when debug logging is on. |
 | **Preset** | Appears only with the Pro add-on. |
 | **Max retries** | Appears only with the Pro add-on (stored as 3 otherwise). |
 | **Enabled** | *Deliver this webhook.* |
@@ -428,12 +440,14 @@ no answer within ten seconds, marks it `failed`.
 
 Columns: id, webhook, event, status badge (`pending`, `success`, `failed`;
 `retrying` with Pro), HTTP status, attempt, created, delivered, and a
-**Retry** button on outgoing deliveries that were not truncated. Fifty rows,
-newest first; filtered to one webhook when you arrive from its row.
+**Retry** button on outgoing deliveries that were not truncated. Under every
+finished row a **Response** disclosure opens the HTTP status and the response
+body. Fifty rows, newest first; filtered to one webhook when you arrive from
+its row.
 
-- **Response body** — the first 2,000 characters of what the receiver returned, or the transport error message.
+- **Response** — the first 2,000 characters of what the receiver returned (`HTTP 500` then the body), or `Transport error: <message>` when there was no HTTP response at all (DNS, connection refused, timeout). *Send test* reports the same status in its notice: *Test delivery failed (HTTP 503)* or *(no HTTP response: transport error)*.
 - **Truncated** — the stored payload was cut at *Max stored payload (bytes)*. The receiver got the full body; the log did not keep it, so the delivery cannot be resent as signed.
-- **Retry** resends the stored bytes as attempt + 1 with a new timestamp and signature. It is the only retry in the free plugin; automatic retries with back-off are a Pro feature.
+- **Retry** resends the stored bytes as attempt + 1 with a new timestamp and signature. It is the only retry in the free plugin; automatic retries with back-off are a Pro feature. Only outgoing rows can be resent: an inbound row (Pro's receiving endpoint) was written by whoever called it, and the plugin will not sign someone else's payload with the site's secret.
 - **Retention** — `bfag_cron_prune_deliveries` removes `success` and `failed` rows older than *Delivery log retention* once a day, 5,000 at a time. Pending rows are kept.
 
 ---
@@ -460,6 +474,7 @@ newest first; filtered to one webhook when you arrive from its row.
 |---|---|
 | **Enable rate limiting** | Return 429 when a subject exceeds a matching rule. Off: nothing is counted. |
 | **Trusted proxies** | One IP or CIDR per line (IPv4 or IPv6). Invalid lines are discarded on save. See *Trusted proxies* above. |
+| **Client address header** | `X-Forwarded-For` (default), `CF-Connecting-IP`, `X-Real-IP` or `True-Client-IP`: the header your proxy writes the real client address into. Only this header is read, and only when the request comes from a trusted proxy — so a visitor cannot pick their own address. Anything else submitted is stored as the default. |
 
 ### Webhooks
 

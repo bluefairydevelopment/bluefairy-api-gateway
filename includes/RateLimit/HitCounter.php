@@ -40,13 +40,21 @@ final class HitCounter {
 	/**
 	 * Record a hit and report whether the subject is now over the limit.
 	 *
-	 * @param string $subject Who is being counted (an IP in the free plugin).
-	 * @param string $route   REST route.
-	 * @param int    $window  Window length in seconds.
-	 * @param int    $max     Hits allowed within the window.
+	 * `$route` is the bucket key: whatever is counted together. The
+	 * middleware passes the matched rule's key (`rule:<id>`, see
+	 * RateLimitMiddleware::bucket()) so one rule is one budget per subject
+	 * however the path is spelled; `route_hash` is derived from it. The
+	 * `route` column shows `$display_route` when given — the real route, for
+	 * the admin reading the log — and the bucket key otherwise.
+	 *
+	 * @param string      $subject       Who is being counted (an IP in the free plugin).
+	 * @param string      $route         Bucket key (hashed into route_hash).
+	 * @param int         $window        Window length in seconds.
+	 * @param int         $max           Hits allowed within the window.
+	 * @param string|null $display_route What to write in the `route` column; null writes the bucket key.
 	 * @return bool True when the subject has exceeded $max in the window.
 	 */
-	public function consume( string $subject, string $route, int $window, int $max ): bool {
+	public function consume( string $subject, string $route, int $window, int $max, ?string $display_route = null ): bool {
 		global $wpdb;
 
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- plugin table; every hit must be recorded.
@@ -54,7 +62,7 @@ final class HitCounter {
 			$wpdb->prefix . 'bfag_rate_limit_hits',
 			[
 				'subject'    => substr( $subject, 0, 200 ),
-				'route'      => substr( $route, 0, 500 ),
+				'route'      => substr( $display_route ?? $route, 0, 500 ),
 				'route_hash' => self::route_hash( $route ),
 				'hit_at'     => gmdate( 'Y-m-d H:i:s', time() ),
 			],
@@ -69,10 +77,10 @@ final class HitCounter {
 	}
 
 	/**
-	 * Hits by $subject on $route within the last $window seconds.
+	 * Hits by $subject in the $route bucket within the last $window seconds.
 	 *
 	 * @param string $subject Who is being counted.
-	 * @param string $route   REST route.
+	 * @param string $route   Bucket key, as passed to consume().
 	 * @param int    $window  Window length in seconds.
 	 */
 	public function count( string $subject, string $route, int $window ): int {
@@ -146,9 +154,9 @@ final class HitCounter {
 	}
 
 	/**
-	 * The indexed form of a route: first 16 hex characters of its SHA-256.
+	 * The indexed form of a bucket key: first 16 hex characters of its SHA-256.
 	 *
-	 * @param string $route REST route.
+	 * @param string $route Bucket key (`rule:<id>` from the middleware).
 	 */
 	public static function route_hash( string $route ): string {
 		return substr( hash( 'sha256', $route ), 0, 16 );

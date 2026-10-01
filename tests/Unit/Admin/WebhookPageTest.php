@@ -233,7 +233,7 @@ final class WebhookPageTest extends TestCase {
 
 		$location = $this->redirect_of( [ $this->page(), 'handle_actions' ] );
 
-		$this->assertSame( 'https://example.com/wp-admin/options-general.php?page=bfag-gateway&tab=webhooks&bfag_notice=webhook_saved', $location );
+		$this->assertSame( 'https://example.com/wp-admin/options-general.php?page=bfag-gateway&tab=webhooks&bfag_notice=webhook_secret_shown', $location, 'a generated secret is announced so the tab can show it once' );
 		$insert = $this->wpdb->calls_to( 'insert' )[0];
 		$this->assertSame( 'bfw_bfag_webhooks', $insert['table'] );
 		$this->assertSame( 'CRM', $insert['data']['label'] );
@@ -289,7 +289,7 @@ final class WebhookPageTest extends TestCase {
 			]
 		);
 		$location = $this->redirect_of( [ $this->page(), 'handle_actions' ] );
-		$this->assertStringEndsWith( '&bfag_notice=webhook_saved', $location, 'an event an add-on registered is accepted' );
+		$this->assertStringEndsWith( '&bfag_notice=webhook_secret_shown', $location, 'an event an add-on registered is accepted (blank secret: generated and announced)' );
 	}
 
 	public function test_an_http_url_is_a_notice_not_a_row(): void {
@@ -457,7 +457,7 @@ final class WebhookPageTest extends TestCase {
 		$this->wpdb->queue( 'get_row', $this->webhook( 1 ) );
 		bfag_test_queue_http_error();
 		$location = $this->redirect_of( [ $this->page(), 'handle_actions' ] );
-		$this->assertStringEndsWith( '&bfag_notice=webhook_test_failed', $location );
+		$this->assertStringEndsWith( '&bfag_notice=webhook_test_failed&bfag_http=none', $location, 'the notice carries the status: none for a transport error' );
 
 		bfag_test_admin_request( 'test_webhook', [], [ 'id' => '5' ] );
 		$location = $this->redirect_of( [ $this->page(), 'handle_actions' ] );

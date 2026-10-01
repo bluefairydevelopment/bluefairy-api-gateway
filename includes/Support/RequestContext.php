@@ -19,17 +19,22 @@ use BlueFairy\ApiGateway\Settings;
  * Client IP resolution and request classification.
  *
  * The client IP is REMOTE_ADDR unless REMOTE_ADDR is one of the admin's
- * trusted proxies (Settings `trusted_proxies`), in which case the first
- * forwarded address that is NOT itself a trusted proxy is used. Trusting
+ * trusted proxies (Settings `trusted_proxies`), in which case ONE header —
+ * the one the admin chose in Settings `forwarded_header` — is read. Trusting
  * X-Forwarded-For unconditionally would let any visitor pick their own
  * rate-limit bucket — and, with the Pro add-on, get someone else banned.
+ * Reading several headers in a fixed order is the same hole one step back: a
+ * proxy that only manages X-Forwarded-For passes a visitor's own X-Real-IP
+ * or CF-Connecting-IP straight through, and a higher-ranked header would
+ * outrank the address the proxy actually wrote. So only the chosen header
+ * counts; the others are ignored however they are set.
  */
 final class RequestContext {
 
 	/**
-	 * Headers consulted, in order, when REMOTE_ADDR is a trusted proxy.
+	 * The one header that is a comma-separated chain rather than a single address.
 	 */
-	private const FORWARD_HEADERS = [ 'HTTP_CF_CONNECTING_IP', 'HTTP_X_REAL_IP', 'HTTP_X_FORWARDED_FOR' ];
+	private const CHAIN_HEADER = 'X-Forwarded-For';
 
 	/**
 	 * Resolved once per request.
@@ -41,7 +46,7 @@ final class RequestContext {
 	/**
 	 * Constructor.
 	 *
-	 * @param Settings $settings Plugin settings (trusted_proxies).
+	 * @param Settings $settings Plugin settings (trusted_proxies, forwarded_header).
 	 */
 	public function __construct( private readonly Settings $settings ) {}
 
@@ -58,12 +63,13 @@ final class RequestContext {
 		$proxies = $this->settings->get( 'trusted_proxies' );
 		$proxies = is_array( $proxies ) ? $proxies : [];
 		if ( '' !== $ip && [] !== $proxies && IpUtils::in_any_range( $ip, $proxies ) ) {
-			foreach ( self::FORWARD_HEADERS as $header ) {
-				$candidate = $this->first_untrusted( $this->server( $header ), $proxies );
-				if ( null !== $candidate ) {
-					$ip = $candidate;
-					break;
-				}
+			$header    = $this->forwarded_header();
+			$value     = $this->server( 'HTTP_' . strtoupper( str_replace( '-', '_', $header ) ) );
+			$candidate = self::CHAIN_HEADER === $header
+				? $this->first_untrusted( $value, $proxies )
+				: ( IpUtils::is_valid_ip( $value ) ? $value : null );
+			if ( null !== $candidate ) {
+				$ip = $candidate;
 			}
 		}
 		$this->client_ip = $ip;
@@ -84,6 +90,17 @@ final class RequestContext {
 	 */
 	public static function normalize_route( string $route ): string {
 		return ltrim( trim( $route ), '/' );
+	}
+
+	/**
+	 * The header the admin chose. A stored value outside the allowed list
+	 * (one that bypassed Settings::sanitize()) reads as the default.
+	 */
+	private function forwarded_header(): string {
+		$configured = $this->settings->get( 'forwarded_header' );
+		return is_string( $configured ) && in_array( $configured, Settings::FORWARDED_HEADERS, true )
+			? $configured
+			: Settings::FORWARDED_HEADERS[0];
 	}
 
 	/**
