@@ -9,6 +9,10 @@ declare(strict_types=1);
 
 namespace BlueFairy\ApiGateway\Cache;
 
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
+
 use BlueFairy\ApiGateway\Logger;
 use BlueFairy\ApiGateway\Settings;
 use BlueFairy\ApiGateway\Support\GlobMatcher;
@@ -207,19 +211,48 @@ final class CacheRuleRepository {
 	}
 
 	/**
-	 * The first enabled rule whose glob matches the route, or null.
+	 * The most specific enabled rule whose glob matches the route, or null.
+	 *
+	 * Specificity is GlobMatcher::specificity() — the count of literal
+	 * characters in the glob — so a `wp/v2/posts/**` rule beats the seeded
+	 * `**` whatever order they were created in. A tie goes to the lowest id.
 	 *
 	 * @param string $route REST route, with or without the leading slash.
 	 * @return array<string, mixed>|null
 	 */
 	public function match( string $route ): ?array {
+		$best       = null;
+		$best_score = -1;
 		foreach ( $this->all_enabled() as $rule ) {
 			$glob = (string) ( $rule['route_glob'] ?? '' );
-			if ( '' !== $glob && GlobMatcher::matches( $glob, $route ) ) {
-				return $rule;
+			if ( '' === $glob || 1 !== (int) ( $rule['enabled'] ?? 1 ) || ! GlobMatcher::matches( $glob, $route ) ) {
+				continue;
+			}
+			$score = GlobMatcher::specificity( $glob );
+			if ( $score > $best_score || ( $score === $best_score && (int) ( $rule['id'] ?? 0 ) < (int) ( $best['id'] ?? 0 ) ) ) {
+				$best       = $rule;
+				$best_score = $score;
 			}
 		}
-		return null;
+		return $best;
+	}
+
+	/**
+	 * Rules in match order — most specific first, ties by lowest id — for
+	 * the admin table, so the order shown is the order match() applies.
+	 *
+	 * @param list<array<string, mixed>> $rules Rule rows.
+	 * @return list<array<string, mixed>>
+	 */
+	public function sort_by_specificity( array $rules ): array {
+		usort(
+			$rules,
+			static function ( array $a, array $b ): int {
+				$score = GlobMatcher::specificity( (string) ( $b['route_glob'] ?? '' ) ) <=> GlobMatcher::specificity( (string) ( $a['route_glob'] ?? '' ) );
+				return 0 !== $score ? $score : ( (int) ( $a['id'] ?? 0 ) <=> (int) ( $b['id'] ?? 0 ) );
+			}
+		);
+		return $rules;
 	}
 
 	/**

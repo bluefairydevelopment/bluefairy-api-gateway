@@ -391,8 +391,8 @@ final class AdminMenuTest extends TestCase {
 		);
 		$this->assertSame( 2, $this->store->tag_generation( 'post:42' ) );
 		$this->assertSame( 1, $this->store->tag_generation( 'post42' ), 'post42 is not post:42' );
-		$this->assertArrayHasKey( CacheStore::TAG_PREFIX . 'post:42', $GLOBALS['bfag_test_transients'] );
-		$this->assertArrayNotHasKey( CacheStore::TAG_PREFIX . 'post42', $GLOBALS['bfag_test_transients'] );
+		$this->assertArrayHasKey( 'post:42', get_option( CacheStore::TAG_GENERATIONS_OPTION ) );
+		$this->assertArrayNotHasKey( 'post42', get_option( CacheStore::TAG_GENERATIONS_OPTION ) );
 	}
 
 	public function test_ajax_refresh_recomputes_stores_and_returns_the_kpis(): void {

@@ -9,6 +9,10 @@ declare(strict_types=1);
 
 namespace BlueFairy\ApiGateway\Cache;
 
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
+
 /**
  * Writes to `bfag_cache_stats`, one row per five-minute bucket, with
  * `INSERT … ON DUPLICATE KEY UPDATE` so a counter is a single statement and

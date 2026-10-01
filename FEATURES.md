@@ -52,7 +52,11 @@ figures there; that route is never rate-limited.
 
 **Cache rules** shows every rule with its label, route glob, TTL, tags, an
 **Enabled** / **Disabled** badge that toggles the rule when clicked, and
-**Edit** | **Delete** links. The counter beside the heading reads `1 of 1` in
+**Edit** | **Delete** links. The table is in match order: **most specific
+rule wins** — when several enabled rules match a route, the one with the most
+literal (non-wildcard) characters in its glob applies, a tie going to the
+older rule — so a `wp/v2/posts/**` rule added beside the seeded `**` rule
+takes the posts routes and `**` keeps the rest. The counter beside the heading reads `1 of 1` in
 the free plugin: the seeded rule *All routes* (`**`, 60 s) is the one rule
 allowed, and the add form gives way to a one-line notice once it exists. Edit
 the seeded rule freely — narrow its glob, lengthen its TTL, disable it.
@@ -68,9 +72,9 @@ matches its route. Disable the only rule and nothing is cached.
 | Field | What it does |
 |---|---|
 | **Label** | Up to 100 characters, for your own reference. |
-| **Route glob** | Required. Matched against the REST route with its leading slash removed, so write `wp/v2/posts/**`, not `/wp-json/wp/v2/posts/**`. `*` matches one path segment, `**` matches anything including `/`, `?` matches one character. Everything else is literal; letters, digits and `/ * ? . - _ % : @ = & + ~` are allowed. `wc/v3/products/*` matches `/wc/v3/products/12` but not `/wc/v3/products/12/variations`. |
+| **Route glob** | Required. Matched against the REST route with its leading slash removed, so write `wp/v2/posts/**`, not `/wp-json/wp/v2/posts/**`. `*` matches one path segment, `**` matches anything including `/`, `?` matches one character. Everything else is literal; letters, digits and `/ * ? . - _ % : @ = & + ~` are allowed. A trailing `/*` or `/**` also matches the collection itself: `wc/v3/products/*` matches `/wc/v3/products` and `/wc/v3/products/12` but not `/wc/v3/products/12/variations`; `wp/v2/posts/**` matches `/wp/v2/posts`, `/wp/v2/posts/1` and `/wp/v2/posts/1/revisions`. A wildcard in the middle is never optional (`wp/v2/*/1` does not match `/wp/v2/1`). |
 | **TTL (seconds)** | 1–86400. A value outside the range is clamped to it. |
-| **Tags** | Comma-separated. Lower-cased and reduced to `[a-z0-9_:-]`, at most 50 characters each, at most 20 per rule. Purging a tag orphans every response cached under it. In the free plugin tags matter only for a manual purge by tag (`POST /bfag/v1/cache/purge` with `tags`); the Pro add-on uses them to narrow the automatic purge on content change. |
+| **Tags** | Comma-separated. Lower-cased and reduced to `[a-z0-9_:-]`, at most 50 characters each, at most 20 per rule. Purging a tag orphans every response cached under it. **A rule with no tags is purged on every content change; add tags to narrow purging to those tags** (an untagged rule is keyed on the implicit tag `all`). In the free plugin tags matter only for a manual purge by tag (`POST /bfag/v1/cache/purge` with `tags`); the Pro add-on uses them to narrow the automatic purge on content change. |
 | **Enabled** | *Apply this rule.* |
 
 A rejected save (an invalid glob) comes back as *Cache rule not saved: check
@@ -92,13 +96,14 @@ built (store).
 - a plugin returned `true` from the `bfag_cache_bypass` filter.
 
 **2. Does an enabled rule match the route?** Rules are tried in id order and
-the first match wins. No match: `BYPASS`.
+the most specific match wins (see *The rules table*). No match: `BYPASS`.
 
 **3. Is there a stored entry for this key?** The key is an `md5` of the method,
 the route, the query parameters sorted by name at every depth (with `_wpnonce`
 and `_locale` removed, because they vary per visitor without changing the
 response), the lower-cased `Accept` header, the global cache generation and
-the generation of every tag the rule carries. Found: the stored status,
+the generation of every tag the rule carries (a rule with no tags counts as
+carrying the one tag `all`). Found: the stored status,
 headers and body are served with `X-BF-Cache: HIT`, and a hit is counted. The
 request never reaches the REST controller.
 
@@ -128,7 +133,7 @@ table. Either way an entry expires by its TTL.
 
 No entry is ever enumerated or deleted one by one. Each key embeds the
 **global generation** (option `bfag_cache_generation`) and the generation of
-each tag (transient `bfag_tag_gen_<tag>`). A purge bumps a generation, every
+each tag (all of them in the one option `bfag_tag_generations`). A purge bumps a generation, every
 future key is different, and the old entries are never looked up again. On an
 object cache that supports it the `bfag_responses` group is flushed as well.
 
@@ -144,7 +149,9 @@ object cache that supports it the `bfag_responses` group is flushed as well.
 In the free plugin every content change flushes everything, because there is
 one rule and nothing finer to do. The `bfag_cache_purge_tags` filter lets an
 add-on answer with the tags a change touches instead; the Pro add-on does
-exactly that.
+exactly that, and its answer always includes `all`, the implicit tag of every
+untagged rule. So with Pro a rule with no tags is still purged on every
+content change; add tags to narrow purging to those tags.
 
 ### Statistics
 
@@ -551,7 +558,7 @@ shared instances (`settings`, `request`, `cache.store`, `cache.rules`,
 | Hook | Type | Signature | Purpose |
 |---|---|---|---|
 | `bfag_cache_rule_limit` | filter | `( int $limit = 1 )` | Maximum number of cache rules. |
-| `bfag_cache_purge_tags` | filter | `( string[]\|null $tags = null, string $type, int $id )` | `$type` is `'post'`, `'term'` or `'comment'`. Return the tags the change touches to bump only those; return `null` to flush everything. |
+| `bfag_cache_purge_tags` | filter | `( string[]\|null $tags = null, string $type, int $id )` | `$type` is `'post'`, `'term'` or `'comment'`. Return the tags the change touches to bump only those; return `null` to flush everything. Include `all`: a rule with no tags is keyed on it and is purged on every content change; only tagged rules are narrower. |
 | `bfag_cache_bypass` | filter | `( bool $bypass = false, WP_REST_Request $request )` | Return `true` to force a request past the cache (`BYPASS`). |
 | `bfag_cache_purged` | action | `( string $scope, string[] $tags )` | `$scope` is `'all'` or `'tags'`. Fired by every purge path: content hooks, the Cache tab, AJAX and the REST endpoint. |
 

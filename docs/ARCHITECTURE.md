@@ -37,7 +37,7 @@ Plan: `~/Sites/blueSites/plans/bluefairy-api-gateway.plan.md` (read "Revision v3
 | `Capabilities` | `MANAGE`, `SCOPES` (`read`, `write`, `cache:purge`, `webhook:read`, `webhook:write`), `SCOPE_LABELS` (scope → one-line description, same keys and order), `add_caps()`, `remove_caps()`, `current_user_can_manage()`, `required_scope( string $route, ?string $method = null ): string` — `cache:purge` for `/bfag/v1/cache/purge`; `webhook:read`/`webhook:write` for `/bfag/v1/webhooks…` by method; `read` for anything else under `/bfag/v1/`; outside `/bfag/v1` `read` for GET/HEAD/OPTIONS and `write` for every other method (a key acts as its user, so a read-only key must not be able to `POST /wp/v2/posts`), `scope_satisfied( string $permissions, string $required ): bool` — `webhook:write` implies `webhook:read`; nothing else implies anything (`write` does not imply `read`) |
 | `Installer` | `TABLES`, `OPTIONS`, `CRON`, `activate()`, `deactivate()`, `maybe_upgrade()`, `schema( $prefix, $charset ): array`, `create_tables()`, `seed_default_rules()`, `schedule_cron()`, `cron_schedules( array ): array` (adds `bfag_five_minutes`) |
 | `Logger` | `use_settings( ?Settings )`, `enabled()`, `log( string, array = [] )`, `lines()`, `clear()` |
-| `Support\GlobMatcher` | `compile( string $glob ): string`, `matches( string $glob, string $route ): bool`, `is_valid( string $glob ): bool` — `*` = one segment, `**` = anything, `?` = one char; routes compared with the leading `/` stripped |
+| `Support\GlobMatcher` | `compile( string $glob ): string`, `matches( string $glob, string $route ): bool`, `is_valid( string $glob ): bool`, `specificity( string $glob ): int` — `*` = one segment, `**` = anything, `?` = one char; a TRAILING `/*` or `/**` is optional, so `wp/v2/posts/**` matches the collection `wp/v2/posts` as well as everything beneath it and `wc/v3/products/*` matches `wc/v3/products` and its direct children (mid-pattern wildcards are never optional); routes compared with the leading `/` stripped. `specificity()` = count of characters that are not `*` or `?` (leading slash excluded) |
 | `Support\RequestContext` | `__construct( Settings )`, `client_ip(): string`, `reset()`, `RequestContext::normalize_route( string ): string` |
 | `Support\IpUtils` | `is_valid_ip`, `is_valid_cidr_or_ip`, `in_range( $ip, $cidr )`, `in_any_range( $ip, array $ranges )` |
 | `Plugin` | `boot()`, `service( string $id ): ?object`, `set( string $id, object )`, `reset()`, `public static bool $dispatching` |
@@ -50,7 +50,7 @@ Tables (see `Installer::schema()` for columns): `bfag_cache_rules`, `bfag_rate_l
 `bfag_rate_limit_hits` (route_hash CHAR(16) = first 16 hex chars of sha256(route), computed in
 PHP), `bfag_cache_stats` (5-minute buckets), `bfag_webhooks`, `bfag_webhook_deliveries`.
 
-Options: `bfag_settings`, `bfag_db_version`, `bfag_version`, `bfag_cache_generation`, `bfag_kpis`.
+Options: `bfag_settings`, `bfag_db_version`, `bfag_version`, `bfag_cache_generation`, `bfag_tag_generations`, `bfag_kpis`.
 
 ## Module contracts
 
@@ -70,14 +70,15 @@ generation orphans the old entries (transients expire by TTL; object-cache entri
 - `delete( string $key ): void`
 - `generation(): int` — option `bfag_cache_generation` (object-cached in group `bfag`, key `generation`)
 - `flush_all(): void` — increments `bfag_cache_generation`, clears the `bfag_responses` group when supported
-- `tag_generation( string $tag ): int` — transient/option `bfag_tag_gen_<sanitized tag>` (default 1)
-- `bump_tags( string[] $tags ): void`
+- `tag_generation( string $tag ): int` — read from option `bfag_tag_generations` (array `tag => int`, autoload false; default 1), through a per-request memo and object-cache group `bfag` key `tag_generations`. One option so uninstall can delete it by name: a transient per tag lived in an external object cache's `transient` group, which `uninstall.php` cannot enumerate
+- `bump_tags( string[] $tags ): void` — increments each entry, writes the option once, deletes the object-cache key and the memo
 - `CacheStore::sanitize_tag( string $tag ): string` — static; the one tag sanitiser (`[a-z0-9_:-]`, lower-cased, max 50). Every purge path (REST, AJAX, rule tags) uses it; `sanitize_key()` must not be used on a tag because it strips the `:` of `post:42`.
 
 **`CacheKeyGenerator`** — `__construct( CacheStore )`.
 - `for_request( \WP_REST_Request $request, string[] $tags = [] ): string` — `md5()` of
   method + route + ksorted query params + lowercase `Accept` header + global generation +
   each tag's generation. Params `_wpnonce`, `_locale` excluded.
+- `CacheKeyGenerator::IMPLICIT_TAG` = `'all'`. **An empty `$tags` is keyed as `[ 'all' ]`**: a rule with no tags is purged on every content change (the Pro purge-tag answer always includes `all`); add tags to narrow purging to those tags. Tagged rules do NOT get `all` added — that is what makes them narrower. `purge_all()` still bumps the global generation (flushes everything, tagged or not).
 
 **`CacheRuleRepository`** — `__construct()`. Rows are associative arrays with the table's
 columns, `enabled`/`id`/`ttl_seconds` cast to int, `tags` as a comma-separated string.
@@ -86,7 +87,8 @@ columns, `enabled`/`id`/`ttl_seconds` cast to int, `tags` as a comma-separated s
 - `create( array $data ): int|false` — returns false (and logs) when `count() >= limit()` or the glob fails `GlobMatcher::is_valid`; the TTL is **clamped** to 1–86400 (never refused), and `update()` clamps it the same way; tags sanitised through `CacheStore::sanitize_tag()` (`[a-z0-9_:-]`, lower-cased, max 50 chars, max 20 tags; `post:7`, `type:product` are the Pro purge-tag shapes)
 - `update( int $id, array $data ): bool`, `delete( int $id ): bool`, `set_enabled( int $id, bool ): bool`
 - `limit(): int` — `(int) apply_filters( 'bfag_cache_rule_limit', 1 )`
-- `match( string $route ): ?array` — first enabled rule whose glob matches (via `GlobMatcher`), null when none
+- `match( string $route ): ?array` — among enabled rules whose glob matches (via `GlobMatcher`) the most specific one: highest `GlobMatcher::specificity()`, tie → lowest id; null when none. So a `wp/v2/posts/**` rule added after the seeded `**` rule wins for posts
+- `sort_by_specificity( array $rules ): array` — the same order, for the Cache tab ("Most specific rule wins")
 - `tags_of( array $rule ): string[]`
 
 **`CacheStatsRepository`** — `__construct()`.
@@ -108,7 +110,7 @@ columns, `enabled`/`id`/`ttl_seconds` cast to int, `tags` as a comma-separated s
 - `register_hooks(): void` — `save_post` (10, 3), `delete_post`, `trashed_post`, `edited_term` (10, 3), `created_term` (10, 3), `delete_term` (10, 3), `transition_comment_status`, `wp_insert_comment`
 - `on_post_change( int $post_id ): void` — skips revisions/autosaves; `$tags = apply_filters( 'bfag_cache_purge_tags', null, 'post', $post_id )`; array → `purge_tags()`, null → `purge_all()`. Same for `on_term_change( int $term_id, string $taxonomy )` with type `'term'` and for the comment hooks with type `'comment'`.
 - `purge_all(): void` — `flush_all()` + `do_action( 'bfag_cache_purged', 'all', [] )`
-- `purge_tags( string[] $tags ): void` — `bump_tags()` + `do_action( 'bfag_cache_purged', 'tags', $tags )`
+- `purge_tags( string[] $tags ): void` — `bump_tags()` + `do_action( 'bfag_cache_purged', 'tags', $tags )`; `all` counts as a known tag (every untagged rule is keyed on it)
 
 ### Rate limiting (`includes/RateLimit/`)
 
@@ -210,7 +212,7 @@ strings or one comma-separated string, each sanitised by `CacheStore::sanitize_t
 | `bfag_booted` | action | — | fired after; `Plugin::service()` available |
 | `bfag_is_pro` | filter | `false` | hides the upsell, reported by `/status` |
 | `bfag_cache_rule_limit` | filter | `1` | max cache rules |
-| `bfag_cache_purge_tags` | filter | `null` | `( null, 'post'|'term'|'comment', $id )` → string[] of tags to bump instead of flushing all |
+| `bfag_cache_purge_tags` | filter | `null` | `( null, 'post'|'term'|'comment', $id )` → string[] of tags to bump instead of flushing all. Include `all` in every answer: untagged rules are keyed on it, so a rule with no tags is purged on every content change and only tagged rules are narrower |
 | `bfag_cache_bypass` | filter | `false` | `( false, $request )` |
 | `bfag_cache_purged` | action | — | `( 'all'|'tags', string[] )` |
 | `bfag_rate_limit_rule_limit` | filter | `1` | |

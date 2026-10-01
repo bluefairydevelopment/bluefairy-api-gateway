@@ -9,6 +9,10 @@ declare(strict_types=1);
 
 namespace BlueFairy\ApiGateway\Cache;
 
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
+
 use BlueFairy\ApiGateway\Logger;
 
 /**
@@ -17,7 +21,9 @@ use BlueFairy\ApiGateway\Logger;
  * By default a change flushes everything: the free plugin has one rule and
  * no tags, so there is nothing finer to do. The `bfag_cache_purge_tags`
  * filter lets an add-on return the tags that a given change touches, and
- * then only those generations are bumped.
+ * then only those generations are bumped. An untagged rule is keyed on the
+ * implicit tag `all` (CacheKeyGenerator), so an answer that includes `all`
+ * still purges it on every change; only tagged rules are narrower.
  */
 final class CachePurger {
 
@@ -166,12 +172,13 @@ final class CachePurger {
 	}
 
 	/**
-	 * Every tag carried by an enabled rule.
+	 * Every tag carried by an enabled rule, plus the implicit `all` every
+	 * untagged rule is keyed on.
 	 *
 	 * @return string[]
 	 */
 	private function known_tags(): array {
-		$known = [];
+		$known = [ CacheKeyGenerator::IMPLICIT_TAG => true ];
 		foreach ( $this->rules->all_enabled() as $rule ) {
 			foreach ( $this->rules->tags_of( $rule ) as $tag ) {
 				$known[ $tag ] = true;

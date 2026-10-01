@@ -8,6 +8,7 @@ declare(strict_types=1);
 namespace BlueFairy\ApiGateway\Tests\Unit\Cache;
 
 use BlueFairy\ApiGateway\Cache\CacheStore;
+use BlueFairy\ApiGateway\Installer;
 use BlueFairy\ApiGateway\Tests\TestCase;
 
 final class CacheStoreTest extends TestCase {
@@ -177,11 +178,49 @@ final class CacheStoreTest extends TestCase {
 		$this->assertSame( 2, $store->tag_generation( 'products' ) );
 		$this->assertSame( 1, $store->tag_generation( 'posts' ), 'unrelated tag untouched' );
 		$this->assertSame( 1, $store->generation(), 'global generation untouched' );
-		$this->assertArrayHasKey( 'bfag_tag_gen_products', $GLOBALS['bfag_test_transients'] );
+		$this->assertSame( [ 'products' => 2 ], get_option( CacheStore::TAG_GENERATIONS_OPTION ), 'the option holds exactly the bumped tags' );
+		$this->assertSame( 'bfag_tag_generations', CacheStore::TAG_GENERATIONS_OPTION );
 
 		$store->bump_tags( [ 'products', 'products', 'posts' ] );
 		$this->assertSame( 3, $store->tag_generation( 'products' ), 'a duplicate in one call bumps once' );
 		$this->assertSame( 2, $store->tag_generation( 'posts' ) );
+		$this->assertSame(
+			[
+				'products' => 3,
+				'posts'    => 2,
+			],
+			get_option( CacheStore::TAG_GENERATIONS_OPTION )
+		);
+	}
+
+	public function test_tag_generations_live_in_one_option_never_in_transients_and_the_object_cache_copy_is_dropped_on_bump(): void {
+		$store = new CacheStore();
+		$store->bump_tags( [ 'products' ] );
+		$store->bump_tags( [ 'type:post', 'all' ] );
+
+		$this->assertSame( [], $GLOBALS['bfag_test_transients'], 'no transient is written for a tag generation' );
+		$this->assertSame( [ 'bfag_tag_generations' ], array_keys( $GLOBALS['bfag_test_options'] ), 'one option, and the only option written' );
+		$this->assertCount( 3, get_option( CacheStore::TAG_GENERATIONS_OPTION ) );
+		$this->assertContains( 'bfag_tag_generations', Installer::OPTIONS, 'so uninstall deletes it by name' );
+
+		// A read populates the object-cache copy; a bump drops it.
+		$this->assertSame( 2, $store->tag_generation( 'all' ) );
+		$this->assertArrayHasKey( 'tag_generations', $GLOBALS['bfag_test_cache']['bfag'] ?? [] );
+		$this->assertSame( get_option( CacheStore::TAG_GENERATIONS_OPTION ), wp_cache_get( 'tag_generations', 'bfag' ) );
+		$store->bump_tags( [ 'all' ] );
+		$this->assertArrayNotHasKey( 'tag_generations', $GLOBALS['bfag_test_cache']['bfag'] ?? [], 'the object-cache entry is deleted on bump' );
+		$this->assertSame( 3, $store->tag_generation( 'all' ) );
+
+		// A copy left in the object cache by a previous request is honoured over the option.
+		$fresh = new CacheStore();
+		wp_cache_set( 'tag_generations', [ 'all' => 9 ], 'bfag' );
+		$this->assertSame( 9, $fresh->tag_generation( 'all' ) );
+		$this->assertSame( 1, $fresh->tag_generation( 'products' ), 'and only that copy is consulted' );
+
+		// Garbage in the option is ignored, not fatal.
+		wp_cache_delete( 'tag_generations', 'bfag' );
+		update_option( CacheStore::TAG_GENERATIONS_OPTION, 'garbage' );
+		$this->assertSame( 1, ( new CacheStore() )->tag_generation( 'all' ) );
 	}
 
 	public function test_tags_are_sanitised_and_empty_tags_ignored(): void {
@@ -190,7 +229,9 @@ final class CacheStoreTest extends TestCase {
 		$this->assertSame( 2, $store->tag_generation( 'products' ) );
 		$this->assertSame( 2, $store->tag_generation( 'PRODUCTS' ), 'lookup is sanitised the same way' );
 		$this->assertSame( 1, $store->tag_generation( '' ) );
-		$this->assertCount( 1, array_filter( array_keys( $GLOBALS['bfag_test_transients'] ), static fn( string $k ): bool => str_starts_with( $k, 'bfag_tag_gen_' ) ) );
+		$this->assertSame( [ 'products' => 2 ], get_option( CacheStore::TAG_GENERATIONS_OPTION ), 'only the one real tag is stored' );
+		$store->bump_tags( [ '', '!!' ] );
+		$this->assertSame( [ 'products' => 2 ], get_option( CacheStore::TAG_GENERATIONS_OPTION ), 'nothing to bump: nothing written' );
 		$store->bump_tags( [ 'post:7' ] );
 		$this->assertSame( 2, $store->tag_generation( 'post:7' ), 'colons survive so post:7 is a distinct tag' );
 		$this->assertSame( 1, $store->tag_generation( 'post7' ), 'post7 is not post:7' );

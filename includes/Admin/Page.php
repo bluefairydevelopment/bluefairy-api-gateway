@@ -9,6 +9,10 @@ declare(strict_types=1);
 
 namespace BlueFairy\ApiGateway\Admin;
 
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
+
 use BlueFairy\ApiGateway\Capabilities;
 
 /**

@@ -9,17 +9,27 @@ declare(strict_types=1);
 
 namespace BlueFairy\ApiGateway\Support;
 
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
+
 /**
  * Rules match REST routes by glob, never by raw regex (review finding SEC4:
  * an admin-supplied regex is a ReDoS vector evaluated on every request).
  *
- *   `*`  matches any run of characters EXCEPT `/`
- *   `**` matches anything, including `/`
- *   `?`  matches one character except `/`
+ *   `*`   matches any run of characters EXCEPT `/`
+ *   `**`  matches anything, including `/`
+ *   `?`   matches one character except `/`
+ *   `/*`  at the END of a glob is optional: the glob also matches the
+ *         collection itself, e.g. `wc/v3/products/*` matches
+ *         `/wc/v3/products` and `/wc/v3/products/12`, but not
+ *         `/wc/v3/products/12/variations`
+ *   `/**` at the END of a glob is optional too: `wp/v2/posts/**` matches
+ *         `/wp/v2/posts`, `/wp/v2/posts/1` and `/wp/v2/posts/1/revisions`
  *
- * Globs are matched against the REST route with its leading slash removed,
- * e.g. `wc/v3/products/*` matches `/wc/v3/products/12` but not
- * `/wc/v3/products/12/variations`. Every other character is literal.
+ * Mid-pattern wildcards are never optional: `wp/v2/*\/1` does not match
+ * `/wp/v2/1`. Globs are matched against the REST route with its leading
+ * slash removed. Every other character is literal.
  */
 final class GlobMatcher {
 
@@ -36,10 +46,21 @@ final class GlobMatcher {
 	 * @param string $glob Route glob.
 	 */
 	public static function compile( string $glob ): string {
-		if ( isset( self::$compiled[ $glob ] ) ) {
-			return self::$compiled[ $glob ];
+		$key = $glob;
+		if ( isset( self::$compiled[ $key ] ) ) {
+			return self::$compiled[ $key ];
 		}
-		$glob    = ltrim( trim( $glob ), '/' );
+		$glob   = ltrim( trim( $glob ), '/' );
+		$suffix = '';
+		if ( strlen( $glob ) > 3 && str_ends_with( $glob, '/**' ) ) {
+			// A trailing `/**` also matches the collection itself.
+			$suffix = '(?:/.*)?';
+			$glob   = substr( $glob, 0, -3 );
+		} elseif ( strlen( $glob ) > 2 && str_ends_with( $glob, '/*' ) ) {
+			// A trailing `/*` matches the collection and its direct children.
+			$suffix = '(?:/[^/]*)?';
+			$glob   = substr( $glob, 0, -2 );
+		}
 		$pattern = '';
 		$length  = strlen( $glob );
 		for ( $i = 0; $i < $length; $i++ ) {
@@ -57,8 +78,20 @@ final class GlobMatcher {
 				$pattern .= preg_quote( $char, '~' );
 			}
 		}
-		self::$compiled[ $glob ] = '~^' . $pattern . '$~';
-		return self::$compiled[ $glob ];
+		self::$compiled[ $key ] = '~^' . $pattern . $suffix . '$~';
+		return self::$compiled[ $key ];
+	}
+
+	/**
+	 * How specific a glob is: the number of literal characters it carries,
+	 * i.e. everything that is not `*` or `?` (the leading slash, which the
+	 * matcher ignores, is not counted). `wp/v2/posts/**` scores 12, `**`
+	 * scores 0. When several rules match a route the highest score wins.
+	 *
+	 * @param string $glob Route glob.
+	 */
+	public static function specificity( string $glob ): int {
+		return strlen( str_replace( [ '*', '?' ], '', ltrim( trim( $glob ), '/' ) ) );
 	}
 
 	/**

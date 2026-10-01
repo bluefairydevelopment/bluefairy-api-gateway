@@ -9,6 +9,10 @@ declare(strict_types=1);
 
 namespace BlueFairy\ApiGateway\Support;
 
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
+
 /**
  * Pure functions over IPv4/IPv6 addresses and CIDR ranges. No WordPress calls.
  */

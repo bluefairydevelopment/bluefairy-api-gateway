@@ -132,6 +132,18 @@ final class CachePageTest extends TestCase {
 		$this->assertStringNotContainsString( 'Pro removes the limit', $html );
 	}
 
+	public function test_the_table_lists_rules_in_match_order_and_says_the_most_specific_wins(): void {
+		$this->prime_render( [ $this->rule( 1, 'All routes', '**' ), $this->rule( 2, 'Posts only', 'wp/v2/posts/**' ) ] );
+		$html = bfag_test_render( [ $this->page(), 'render' ] );
+
+		$this->assertStringContainsString( 'Most specific rule wins', $html );
+		$specific = strpos( $html, 'data-bfag-id="2"' );
+		$generic  = strpos( $html, 'data-bfag-id="1"' );
+		$this->assertNotFalse( $specific );
+		$this->assertNotFalse( $generic );
+		$this->assertLessThan( $generic, $specific, 'the specific rule is listed above the seeded ** rule although its id is higher' );
+	}
+
 	public function test_an_empty_table_says_so(): void {
 		$this->prime_render( [] );
 		$html = bfag_test_render( [ $this->page(), 'render' ] );

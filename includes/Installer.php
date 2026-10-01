@@ -9,6 +9,10 @@ declare(strict_types=1);
 
 namespace BlueFairy\ApiGateway;
 
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
+
 /**
  * Creates the six tables with dbDelta, seeds the one cache rule and the one
  * rate-limit rule the free plugin allows, grants the capability and schedules
@@ -46,6 +50,7 @@ final class Installer {
 		'bfag_db_version',
 		'bfag_version',
 		'bfag_cache_generation',
+		'bfag_tag_generations',
 		'bfag_kpis',
 	];
 

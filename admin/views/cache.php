@@ -30,9 +30,10 @@ defined( 'ABSPATH' ) || exit;
 	<a href="<?php echo esc_url( $purge_url ); ?>" class="button" data-bfag-purge><?php esc_html_e( 'Purge all', 'bluefairy-api-gateway' ); ?></a>
 	<span class="bfag-status" data-bfag-status aria-live="polite"></span>
 </div>
-<p class="description"><?php esc_html_e( 'Anonymous GET responses are cached when a rule matches the route. Rules are the allow-list: with none enabled nothing is cached. Globs: * one segment, ** anything, ? one character.', 'bluefairy-api-gateway' ); ?></p>
+<p class="description"><?php esc_html_e( 'Anonymous GET responses are cached when a rule matches the route. Rules are the allow-list: with none enabled nothing is cached. Globs: * one segment, ** anything, ? one character. Most specific rule wins: when several enabled rules match a route the one with the most literal characters applies, and the table is listed in that order.', 'bluefairy-api-gateway' ); ?></p>
 
 <table class="widefat striped bfag-table">
+	<caption class="screen-reader-text"><?php esc_html_e( 'Cache rules in match order — most specific rule wins', 'bluefairy-api-gateway' ); ?></caption>
 	<thead>
 		<tr>
 			<th><?php esc_html_e( 'Label', 'bluefairy-api-gateway' ); ?></th>

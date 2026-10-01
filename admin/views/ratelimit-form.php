@@ -73,7 +73,7 @@ $bfag_labels  = [
 		</tr>
 	</table>
 	<p class="submit">
-		<?php submit_button( $bfag_editing ? __( 'Save rule', 'bluefairy-api-gateway' ) : __( 'Add rule', 'bluefairy-api-gateway' ), 'primary', 'submit', false ); ?>
+		<?php submit_button( $bfag_editing ? __( 'Save rule', 'bluefairy-api-gateway' ) : __( 'Add rule', 'bluefairy-api-gateway' ), 'primary', 'bfag_save', false, [ 'id' => 'bfag-ratelimit-save' ] ); ?>
 		<?php if ( $bfag_editing ) : ?>
 			<a href="<?php echo esc_url( $cancel_url ); ?>" class="button"><?php esc_html_e( 'Cancel', 'bluefairy-api-gateway' ); ?></a>
 		<?php endif; ?>

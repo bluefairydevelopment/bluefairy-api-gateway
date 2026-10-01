@@ -951,7 +951,12 @@ function get_settings_errors( string $setting = '', bool $sanitize = false ): ar
 }
 function settings_errors( string $setting = '', bool $sanitize = false, bool $hide_on_update = false ): void {}
 function submit_button( ?string $text = null, string $type = 'primary', string $name = 'submit', bool $wrap = true, mixed $other_attributes = null ): void {
-	bfag_test_echo( '<button type="submit" name="' . esc_attr( $name ) . '">' . esc_html( $text ?? 'Save Changes' ) . '</button>' );
+	// As core: the id is the name unless $other_attributes['id'] overrides it.
+	$id = $name;
+	if ( is_array( $other_attributes ) && isset( $other_attributes['id'] ) ) {
+		$id = (string) $other_attributes['id'];
+	}
+	bfag_test_echo( '<button type="submit" name="' . esc_attr( $name ) . '" id="' . esc_attr( $id ) . '">' . esc_html( $text ?? 'Save Changes' ) . '</button>' );
 }
 function selected( mixed $selected, mixed $current = true, bool $display = true ): string {
 	$out = (string) $selected === (string) $current ? ' selected="selected"' : '';

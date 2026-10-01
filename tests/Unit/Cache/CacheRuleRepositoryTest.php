@@ -272,13 +272,45 @@ final class CacheRuleRepositoryTest extends TestCase {
 		$this->assertSame( [ 'id' => 2 ], $updates[1]['where'] );
 	}
 
-	public function test_match_returns_the_first_enabled_rule_whose_glob_matches(): void {
+	public function test_match_returns_the_enabled_rule_whose_glob_matches(): void {
 		$this->wpdb->queue( 'get_results', [ $this->row( 1, 'wc/v3/products/*' ), $this->row( 2, 'wc/v3/**' ) ] );
 
 		$this->assertSame( 1, $this->repo->match( '/wc/v3/products/12' )['id'] ?? null );
 		$this->assertSame( 2, $this->repo->match( '/wc/v3/products/12/variations' )['id'] ?? null, 'single * does not cross a slash' );
 		$this->assertNull( $this->repo->match( '/wp/v2/posts' ) );
 		$this->assertNull( $this->repo->match( '' ) );
+	}
+
+	public function test_match_prefers_the_most_specific_rule_not_the_lowest_id(): void {
+		// The seeded `**` rule has id 1; a narrower rule added later has id 2.
+		$this->wpdb->queue( 'get_results', [ $this->row( 1, '**', 'everything' ), $this->row( 2, 'wp/v2/posts/**', 'type:post' ) ] );
+
+		$this->assertSame( 2, $this->repo->match( '/wp/v2/posts/3' )['id'] ?? null, 'the specific rule wins although it comes second' );
+		$this->assertSame( 2, $this->repo->match( '/wp/v2/posts' )['id'] ?? null, 'and it covers the collection route' );
+		$this->assertSame( 1, $this->repo->match( '/wp/v2/pages' )['id'] ?? null, 'only ** matches pages' );
+	}
+
+	public function test_match_skips_a_disabled_specific_rule(): void {
+		$this->wpdb->queue( 'get_results', [ $this->row( 1, '**' ), $this->row( 2, 'wp/v2/posts/**', '', 0 ) ] );
+
+		$this->assertSame( 1, $this->repo->match( '/wp/v2/posts/3' )['id'] ?? null, 'a disabled rule never matches, however specific' );
+
+		wp_cache_delete( CacheRuleRepository::CACHE_KEY, 'bfag' );
+		$this->wpdb->queue( 'get_results', [ $this->row( 1, '**' ), $this->row( 2, 'wp/v2/posts/**', '', 1 ) ] );
+		$this->assertSame( 2, $this->repo->match( '/wp/v2/posts/3' )['id'] ?? null, 'the same rule enabled wins' );
+	}
+
+	public function test_match_breaks_a_specificity_tie_by_lowest_id(): void {
+		$this->wpdb->queue( 'get_results', [ $this->row( 7, 'wp/v2/*' ), $this->row( 3, 'wp/v?/*' ), $this->row( 5, 'wp/v2/*' ) ] );
+
+		$this->assertSame( 5, $this->repo->match( '/wp/v2/posts' )['id'] ?? null, 'ids 5 and 7 tie at 6 literals; 5 wins; id 3 has only 5 literals' );
+	}
+
+	public function test_sort_by_specificity_orders_most_specific_first_then_lowest_id(): void {
+		$rules  = [ $this->row( 1, '**' ), $this->row( 2, 'wp/v2/posts/**' ), $this->row( 4, 'wc/v3/*' ), $this->row( 3, 'wc/v3/*' ) ];
+		$sorted = $this->repo->sort_by_specificity( $rules );
+		$this->assertSame( [ '2', '3', '4', '1' ], array_column( $sorted, 'id' ) );
+		$this->assertSame( [], $this->repo->sort_by_specificity( [] ) );
 	}
 
 	public function test_match_ignores_rules_with_an_empty_glob(): void {

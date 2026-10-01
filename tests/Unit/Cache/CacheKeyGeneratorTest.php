@@ -106,4 +106,19 @@ final class CacheKeyGeneratorTest extends TestCase {
 		$this->assertNotSame( $tagged, $this->keys->for_request( $request, [ 'products' ] ), 'bumping the tag changes the key' );
 		$this->assertSame( $plain, $this->keys->for_request( $request ), 'the untagged key is unaffected by a tag bump' );
 	}
+
+	public function test_an_untagged_request_is_keyed_on_the_implicit_tag_all(): void {
+		$request  = $this->request( 'GET', '/wp/v2/posts' );
+		$untagged = $this->keys->for_request( $request );
+		$this->assertSame( 'all', CacheKeyGenerator::IMPLICIT_TAG );
+		$this->assertSame( $untagged, $this->keys->for_request( $request, [ 'all' ] ), 'no tags means the tag all' );
+		$this->assertSame( $untagged, $this->keys->for_request( $request, [ '' ] ), 'an empty tag is no tag' );
+		$this->assertNotSame( $untagged, $this->keys->for_request( $request, [ 'type:product' ] ), 'a tagged rule is not keyed on all' );
+		$this->assertNotSame( $this->keys->for_request( $request, [ 'all', 'type:product' ] ), $this->keys->for_request( $request, [ 'type:product' ] ), 'and all is not added to it' );
+
+		$product = $this->keys->for_request( $request, [ 'type:product' ] );
+		$this->store->bump_tags( [ 'all' ] );
+		$this->assertNotSame( $untagged, $this->keys->for_request( $request ), 'bumping all changes the untagged key' );
+		$this->assertSame( $product, $this->keys->for_request( $request, [ 'type:product' ] ), 'and leaves a tagged request alone' );
+	}
 }

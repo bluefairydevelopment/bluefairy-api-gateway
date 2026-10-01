@@ -43,6 +43,7 @@ $bfag_option_keys = [
 	'bfag_db_version',
 	'bfag_version',
 	'bfag_cache_generation',
+	'bfag_tag_generations',
 	'bfag_kpis',
 ];
 
@@ -66,8 +67,8 @@ $bfag_uninstall_site = static function () use ( $bfag_tables, $bfag_option_keys,
 
 	if ( $delete_data ) {
 		foreach ( $bfag_tables as $table ) {
-			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.DirectDatabaseQuery.SchemaChange, WordPress.DB.PreparedSQL.NotPrepared -- table names are plugin constants, not user input.
-			$wpdb->query( 'DROP TABLE IF EXISTS `' . $wpdb->prefix . $table . '`' );
+			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.DirectDatabaseQuery.SchemaChange -- dropping the plugin's own tables on an opted-in uninstall.
+			$wpdb->query( $wpdb->prepare( 'DROP TABLE IF EXISTS %i', $wpdb->prefix . $table ) );
 		}
 	}
 
@@ -75,7 +76,8 @@ $bfag_uninstall_site = static function () use ( $bfag_tables, $bfag_option_keys,
 		delete_option( $key );
 	}
 
-	// Transients: the dashboard KPI cache and the per-tag cache generations.
+	// Transients: the dashboard KPI cache. (Tag generations are an option,
+	// deleted above; a transient in an external object cache could not be).
 	// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
 	$wpdb->query(
 		$wpdb->prepare(

@@ -9,6 +9,10 @@ declare(strict_types=1);
 
 namespace BlueFairy\ApiGateway\Admin;
 
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
+
 /**
  * Enqueues `assets/css/admin.css` and `assets/js/admin.js` on the plugin's
  * own screen only, and localises `bfagAdmin` with the AJAX URL, one nonce per

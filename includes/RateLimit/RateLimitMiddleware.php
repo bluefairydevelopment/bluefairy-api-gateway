@@ -9,6 +9,10 @@ declare(strict_types=1);
 
 namespace BlueFairy\ApiGateway\RateLimit;
 
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
+
 use BlueFairy\ApiGateway\Logger;
 use BlueFairy\ApiGateway\Settings;
 use BlueFairy\ApiGateway\Support\RequestContext;

@@ -9,6 +9,10 @@ declare(strict_types=1);
 
 namespace BlueFairy\ApiGateway\Webhook;
 
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
+
 use BlueFairy\ApiGateway\Logger;
 use BlueFairy\ApiGateway\Plugin;
 use BlueFairy\ApiGateway\Settings;

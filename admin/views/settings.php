@@ -55,5 +55,5 @@ defined( 'ABSPATH' ) || exit;
 		do_action( 'bfag_settings_fields', $settings );
 		?>
 	</table>
-	<?php submit_button( __( 'Save settings', 'bluefairy-api-gateway' ) ); ?>
+	<?php submit_button( __( 'Save settings', 'bluefairy-api-gateway' ), 'primary', 'bfag_save', true, [ 'id' => 'bfag-settings-save' ] ); ?>
 </form>

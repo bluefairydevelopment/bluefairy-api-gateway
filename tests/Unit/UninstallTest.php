@@ -48,6 +48,19 @@ final class UninstallTest extends TestCase {
 		$this->assertCount( 1, $this->wpdb->queries_matching( 'DELETE FROM bfw_options WHERE option_name LIKE' ), 'transients are swept' );
 	}
 
+	public function test_tag_generations_option_is_deleted_whether_or_not_data_is_deleted(): void {
+		$this->seed();
+		update_option( 'bfag_settings', [ 'delete_data_on_uninstall' => false ] );
+		update_option( 'bfag_tag_generations', [ 'all' => 4, 'type:post' => 2 ] );
+		update_option( 'bfagp_keep_me', 'pro' );
+		$this->assertSame( [ 'all' => 4, 'type:post' => 2 ], get_option( 'bfag_tag_generations' ) );
+
+		$this->run_uninstall();
+
+		$this->assertFalse( get_option( 'bfag_tag_generations' ), 'tag generations no longer survive uninstall' );
+		$this->assertSame( 'pro', get_option( 'bfagp_keep_me' ), 'only the listed options go' );
+	}
+
 	public function test_opt_in_drops_exactly_the_six_tables(): void {
 		$this->seed();
 		update_option( 'bfag_settings', [ 'delete_data_on_uninstall' => true ] );

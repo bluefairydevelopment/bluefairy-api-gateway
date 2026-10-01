@@ -29,7 +29,7 @@ $bfag_editing = (int) $rule['id'] > 0;
 			<th scope="row"><label for="bfag-cache-glob"><?php esc_html_e( 'Route glob', 'bluefairy-api-gateway' ); ?></label></th>
 			<td>
 				<input type="text" id="bfag-cache-glob" name="bfag[route_glob]" class="regular-text code" required value="<?php echo esc_attr( (string) $rule['route_glob'] ); ?>" placeholder="wp/v2/posts/**" />
-				<p class="description"><?php esc_html_e( 'Matched against the REST route without its leading slash, e.g. wc/v3/products/*.', 'bluefairy-api-gateway' ); ?></p>
+				<p class="description"><?php esc_html_e( 'Matched against the REST route without its leading slash. A trailing /* or /** also matches the collection itself: wc/v3/products/* matches wc/v3/products and wc/v3/products/12; wp/v2/posts/** matches wp/v2/posts and everything beneath it.', 'bluefairy-api-gateway' ); ?></p>
 			</td>
 		</tr>
 		<tr>
@@ -40,7 +40,7 @@ $bfag_editing = (int) $rule['id'] > 0;
 			<th scope="row"><label for="bfag-cache-tags"><?php esc_html_e( 'Tags', 'bluefairy-api-gateway' ); ?></label></th>
 			<td>
 				<input type="text" id="bfag-cache-tags" name="bfag[tags]" class="regular-text code" value="<?php echo esc_attr( (string) $rule['tags'] ); ?>" placeholder="products, posts" />
-				<p class="description"><?php esc_html_e( 'Comma-separated. Purging a tag orphans every response cached under it.', 'bluefairy-api-gateway' ); ?></p>
+				<p class="description"><?php esc_html_e( 'Comma-separated. Purging a tag orphans every response cached under it. A rule with no tags is purged on every content change; add tags to narrow purging to those tags.', 'bluefairy-api-gateway' ); ?></p>
 			</td>
 		</tr>
 		<tr>
@@ -49,7 +49,7 @@ $bfag_editing = (int) $rule['id'] > 0;
 		</tr>
 	</table>
 	<p class="submit">
-		<?php submit_button( $bfag_editing ? __( 'Save rule', 'bluefairy-api-gateway' ) : __( 'Add rule', 'bluefairy-api-gateway' ), 'primary', 'submit', false ); ?>
+		<?php submit_button( $bfag_editing ? __( 'Save rule', 'bluefairy-api-gateway' ) : __( 'Add rule', 'bluefairy-api-gateway' ), 'primary', 'bfag_save', false, [ 'id' => 'bfag-cache-save' ] ); ?>
 		<?php if ( $bfag_editing ) : ?>
 			<a href="<?php echo esc_url( $cancel_url ); ?>" class="button"><?php esc_html_e( 'Cancel', 'bluefairy-api-gateway' ); ?></a>
 		<?php endif; ?>

@@ -9,6 +9,10 @@ declare(strict_types=1);
 
 namespace BlueFairy\ApiGateway\Webhook;
 
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
+
 /**
  * Maps an event key (`post.published`) to the WordPress hook that signals it
  * and builds the normalised payload a subscriber receives.

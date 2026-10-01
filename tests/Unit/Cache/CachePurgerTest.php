@@ -189,6 +189,8 @@ final class CachePurgerTest extends TestCase {
 
 		$this->purger->purge_tags( [ 'products' ] );
 		$this->assertSame( [], Logger::lines(), 'a known tag is not logged' );
+		$this->purger->purge_tags( [ 'all' ] );
+		$this->assertSame( [], Logger::lines(), 'all is the implicit tag of every untagged rule, never unknown' );
 
 		$this->purger->purge_tags( [ 'posts', 'ghost' ] );
 		$this->assertCount( 1, Logger::lines() );

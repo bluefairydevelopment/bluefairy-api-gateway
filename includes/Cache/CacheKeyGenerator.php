@@ -9,6 +9,10 @@ declare(strict_types=1);
 
 namespace BlueFairy\ApiGateway\Cache;
 
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
+
 /**
  * One request, one key: md5 of the method, the route, the sorted query
  * parameters, the lower-cased Accept header, the global generation and the
@@ -22,6 +26,12 @@ namespace BlueFairy\ApiGateway\Cache;
  * Because the generations are part of the key, a purge never has to find
  * the old entries: it only has to change the key every future request
  * computes.
+ *
+ * A rule with no tags is keyed on the implicit tag `all`, so a purge that
+ * bumps `all` (the Pro add-on's purge-tag answer always includes it) orphans
+ * every untagged entry: a rule with no tags is purged on every content
+ * change, and adding tags narrows the purge to those tags. Tagged rules do
+ * NOT get `all` added — that is what makes them narrower.
  */
 final class CacheKeyGenerator {
 
@@ -31,6 +41,11 @@ final class CacheKeyGenerator {
 	private const IGNORED_PARAMS = [ '_wpnonce', '_locale' ];
 
 	/**
+	 * The tag an untagged rule is keyed on.
+	 */
+	public const IMPLICIT_TAG = 'all';
+
+	/**
 	 * Constructor.
 	 *
 	 * @param CacheStore $store Source of the generations.
@@ -38,7 +53,8 @@ final class CacheKeyGenerator {
 	public function __construct( private readonly CacheStore $store ) {}
 
 	/**
-	 * The key for a request under the given rule tags.
+	 * The key for a request under the given rule tags. No tags means the
+	 * implicit tag `all`.
 	 *
 	 * @param \WP_REST_Request $request The request.
 	 * @param string[]         $tags    Tags of the matching rule, if any.
@@ -67,6 +83,9 @@ final class CacheKeyGenerator {
 			}
 		}
 		$clean = array_keys( $clean );
+		if ( [] === $clean ) {
+			$clean = [ self::IMPLICIT_TAG ];
+		}
 		sort( $clean );
 		foreach ( $clean as $tag ) {
 			$parts[] = 't=' . $tag . ':' . $this->store->tag_generation( $tag );

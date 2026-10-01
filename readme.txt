@@ -14,7 +14,7 @@ REST response caching, per-IP rate limiting and signed outbound webhooks — a h
 
 BlueFairy API Gateway sits in front of the WordPress REST API and does three things, each managed from one screen at **Settings → API Gateway**.
 
-**Response cache.** Anonymous `GET` responses are stored and served back with an `X-BF-Cache: HIT` header; every REST response is labelled `HIT`, `MISS` or `BYPASS` so you can see the decision from `curl`. Requests from logged-in users, or carrying an `Authorization`, `X-WP-Nonce` or `X-BF-API-Key` header, are never cached. Responses that are not 2xx, that stream, that set a cookie or that ask for `no-store` are never stored. One cache rule, matched by route glob (`wp/v2/posts/**`), seeded on activation as "all routes, 60 seconds". The cache is purged automatically when a post, term or comment changes, and by hand from the Cache tab or `POST /bfag/v1/cache/purge`. Responses live in your persistent object cache (Redis, Memcached) when you have one, otherwise in transients.
+**Response cache.** Anonymous `GET` responses are stored and served back with an `X-BF-Cache: HIT` header; every REST response is labelled `HIT`, `MISS` or `BYPASS` so you can see the decision from `curl`. Requests from logged-in users, or carrying an `Authorization`, `X-WP-Nonce` or `X-BF-API-Key` header, are never cached. Responses that are not 2xx, that stream, that set a cookie or that ask for `no-store` are never stored. One cache rule, matched by route glob (`wp/v2/posts/**` — a trailing `/**` or `/*` matches the collection route too), seeded on activation as "all routes, 60 seconds". The cache is purged automatically when a post, term or comment changes, and by hand from the Cache tab or `POST /bfag/v1/cache/purge`. Responses live in your persistent object cache (Redis, Memcached) when you have one, otherwise in transients.
 
 **Rate limiting.** A sliding-window counter per client IP and route. The breaching request gets `429 Too Many Requests` with `Retry-After`, `X-BF-RateLimit-Limit` and `X-BF-RateLimit-Window`. One rule, seeded as 60 requests per 60 seconds on every route. Forwarded-IP headers (`CF-Connecting-IP`, `X-Real-IP`, `X-Forwarded-For`) are honoured only from the proxy ranges you list, so a visitor cannot pick their own bucket. The hit log is pruned every five minutes.
 
@@ -38,7 +38,7 @@ Everything lives under **Settings → API Gateway**, in five tabs.
 
 **Dashboard** — three cards (cache hit rate, webhook success rate, blocked today) recomputed every five minutes or when you press **Refresh**; the ten newest failed deliveries with **Retry**; the raw counts; and the status endpoint URL with a **Copy** button.
 
-**Cache** — the rules table with an Enabled/Disabled badge you can click, **Edit** and **Delete**, and **Purge all**. The add/edit form takes a label, a route glob (matched without the leading slash: `wc/v3/products/*`), a TTL in seconds and optional comma-separated tags. Edit the seeded "All routes" rule to narrow it.
+**Cache** — the rules table with an Enabled/Disabled badge you can click, **Edit** and **Delete**, and **Purge all**. The add/edit form takes a label, a route glob (matched without the leading slash: `wc/v3/products/*` matches `wc/v3/products` and `wc/v3/products/12`), a TTL in seconds and optional comma-separated tags. A rule with no tags is purged on every content change; add tags to narrow purging to those tags. Edit the seeded "All routes" rule to narrow it. With more than one rule the most specific one wins, and the table is listed in that order.
 
 **Rate limit** — the rules table and a form with a label, *Count by* (IP address), a route glob, and *Requests per seconds*. Values outside 1–65535 requests or 1–86400 seconds are refused rather than silently changed.
 
@@ -76,7 +76,7 @@ Compute `HMAC-SHA256` with the webhook's secret over the string `X-BF-Timestamp 
 
 = Why does editing a blog post empty the whole cache? =
 
-Because the free plugin has one rule and no way to tell which cached responses a change touches, so any post, term or comment change flushes everything. API Gateway Pro answers the `bfag_cache_purge_tags` filter with the tags each change touches (`post:42`, `type:product`, `term:7`, `tax:category`, `all`), so a rule tagged `type:product` survives a blog post edit.
+Because the free plugin has one rule and no way to tell which cached responses a change touches, so any post, term or comment change flushes everything. API Gateway Pro answers the `bfag_cache_purge_tags` filter with the tags each change touches (`post:42`, `type:product`, `term:7`, `tax:category`, `all`), so a rule tagged `type:product` survives a blog post edit. A rule with no tags is purged on every content change even with Pro; add tags to narrow purging to those tags.
 
 = Will my logged-in users or my app's authenticated API calls be cached? =
 

@@ -9,6 +9,10 @@ declare(strict_types=1);
 
 namespace BlueFairy\ApiGateway\Cache;
 
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
+
 /**
  * Stores serialised REST responses in the WP object cache (group
  * `bfag_responses`) when a persistent object cache is present, otherwise in
@@ -19,6 +23,12 @@ namespace BlueFairy\ApiGateway\Cache;
  * carries (see CacheKeyGenerator), so bumping a generation orphans the old
  * entries. They are never enumerated or deleted one by one — they simply
  * expire by TTL.
+ *
+ * The global generation is option `bfag_cache_generation`; every tag
+ * generation lives in ONE option, `bfag_tag_generations` (tag => int), so
+ * uninstall can delete them by name. Transients were tried first and
+ * rejected: in an external object cache they live in the `transient` group,
+ * which uninstall.php cannot enumerate, so they outlived the plugin.
  */
 final class CacheStore {
 
@@ -38,16 +48,25 @@ final class CacheStore {
 	public const GENERATION_OPTION = 'bfag_cache_generation';
 
 	/**
-	 * Transient name prefix for per-tag generations.
+	 * Option holding every tag generation, as tag => int.
 	 */
-	public const TAG_PREFIX = 'bfag_tag_gen_';
+	public const TAG_GENERATIONS_OPTION = 'bfag_tag_generations';
 
 	/**
-	 * Object-cache group and key for the memoised global generation.
+	 * Object-cache group and keys for the memoised generations.
 	 */
 	private const META_GROUP = 'bfag';
 	private const META_KEY   = 'generation';
+	private const TAGS_KEY   = 'tag_generations';
 	private const META_TTL   = 300;
+
+	/**
+	 * Per-request memo of the tag generations (one store per request), so a
+	 * key with twenty tags costs one option read, not twenty.
+	 *
+	 * @var array<string, int>|null
+	 */
+	private ?array $tag_generations = null;
 
 	/**
 	 * Longest tag name stored in a generation key.
@@ -153,25 +172,62 @@ final class CacheStore {
 		if ( '' === $tag ) {
 			return 1;
 		}
-		$value = get_transient( self::TAG_PREFIX . $tag );
-		return is_numeric( $value ) ? max( 1, (int) $value ) : 1;
+		return $this->tag_generations()[ $tag ] ?? 1;
 	}
 
 	/**
 	 * Bump the generation of each tag, orphaning every entry keyed on it.
+	 * One option write however many tags; the memo and the object-cache
+	 * copy are dropped so the next read sees the new generations.
 	 *
 	 * @param string[] $tags Tag names.
 	 */
 	public function bump_tags( array $tags ): void {
-		$seen = [];
+		$generations = $this->tag_generations();
+		$changed     = false;
+		$seen        = [];
 		foreach ( $tags as $tag ) {
 			$tag = self::sanitize_tag( is_string( $tag ) ? $tag : '' );
 			if ( '' === $tag || isset( $seen[ $tag ] ) ) {
 				continue;
 			}
-			$seen[ $tag ] = true;
-			set_transient( self::TAG_PREFIX . $tag, $this->tag_generation( $tag ) + 1, 0 );
+			$seen[ $tag ]        = true;
+			$generations[ $tag ] = ( $generations[ $tag ] ?? 1 ) + 1;
+			$changed             = true;
 		}
+		if ( ! $changed ) {
+			return;
+		}
+		update_option( self::TAG_GENERATIONS_OPTION, $generations, false );
+		wp_cache_delete( self::TAGS_KEY, self::META_GROUP );
+		$this->tag_generations = null;
+	}
+
+	/**
+	 * Every tag generation: the per-request memo, else object-cache group
+	 * `bfag` key `tag_generations`, else option `bfag_tag_generations`.
+	 *
+	 * @return array<string, int>
+	 */
+	private function tag_generations(): array {
+		if ( null !== $this->tag_generations ) {
+			return $this->tag_generations;
+		}
+		$found  = false;
+		$cached = wp_cache_get( self::TAGS_KEY, self::META_GROUP, false, $found );
+		if ( ! $found || ! is_array( $cached ) ) {
+			$cached = get_option( self::TAG_GENERATIONS_OPTION, [] );
+			$cached = is_array( $cached ) ? $cached : [];
+			wp_cache_set( self::TAGS_KEY, $cached, self::META_GROUP, self::META_TTL );
+		}
+		$clean = [];
+		foreach ( $cached as $tag => $generation ) {
+			if ( is_string( $tag ) && is_numeric( $generation ) ) {
+				$clean[ $tag ] = max( 1, (int) $generation );
+			}
+		}
+		$this->tag_generations = $clean;
+		return $clean;
 	}
 
 	/**

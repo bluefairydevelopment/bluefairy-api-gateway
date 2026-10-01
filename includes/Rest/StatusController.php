@@ -9,6 +9,10 @@ declare(strict_types=1);
 
 namespace BlueFairy\ApiGateway\Rest;
 
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
+
 use BlueFairy\ApiGateway\Admin\KpiCron;
 use BlueFairy\ApiGateway\Cache\CacheStatsRepository;
 use BlueFairy\ApiGateway\Capabilities;

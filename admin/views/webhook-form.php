@@ -113,7 +113,7 @@ foreach ( $events as $bfag_key => $bfag_spec ) {
 		?>
 	</table>
 	<p class="submit">
-		<?php submit_button( $bfag_editing ? __( 'Save webhook', 'bluefairy-api-gateway' ) : __( 'Add webhook', 'bluefairy-api-gateway' ), 'primary', 'submit', false ); ?>
+		<?php submit_button( $bfag_editing ? __( 'Save webhook', 'bluefairy-api-gateway' ) : __( 'Add webhook', 'bluefairy-api-gateway' ), 'primary', 'bfag_save', false, [ 'id' => 'bfag-webhook-save' ] ); ?>
 		<?php if ( $bfag_editing ) : ?>
 			<a href="<?php echo esc_url( $cancel_url ); ?>" class="button"><?php esc_html_e( 'Cancel', 'bluefairy-api-gateway' ); ?></a>
 		<?php endif; ?>

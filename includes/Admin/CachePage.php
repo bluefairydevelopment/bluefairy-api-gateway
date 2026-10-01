@@ -9,6 +9,10 @@ declare(strict_types=1);
 
 namespace BlueFairy\ApiGateway\Admin;
 
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
+
 use BlueFairy\ApiGateway\Cache\CacheRuleRepository;
 use BlueFairy\ApiGateway\Cache\CacheStore;
 
@@ -56,7 +60,7 @@ final class CachePage extends Page {
 	 * Print the tab.
 	 */
 	public function render(): void {
-		$rules    = $this->rules->all();
+		$rules    = $this->rules->sort_by_specificity( $this->rules->all() );
 		$count    = $this->rules->count();
 		$limit    = $this->rules->limit();
 		$at_limit = $count >= $limit;

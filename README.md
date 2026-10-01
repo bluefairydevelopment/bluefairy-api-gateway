@@ -144,7 +144,7 @@ Six tables, all prefixed with `$wpdb->prefix`, created with `dbDelta` on activat
 | `bfag_webhooks` | webhook subscriptions — label, URL, event, secret, headers (JSON), preset, enabled, max retries |
 | `bfag_webhook_deliveries` | the delivery log — payload, status, HTTP status, response body (first 2,000 characters), attempt, timestamps |
 
-Options: `bfag_settings`, `bfag_db_version`, `bfag_version`, `bfag_cache_generation`, `bfag_kpis`. Transients: `bfag_kpis`, `bfag_tag_gen_<tag>`, and `bfag_resp_<key>` when no persistent object cache is present. Object-cache groups: `bfag` (rules and the generation, five-minute TTL) and `bfag_responses` (stored responses, when a persistent object cache is present).
+Options: `bfag_settings`, `bfag_db_version`, `bfag_version`, `bfag_cache_generation`, `bfag_tag_generations` (every tag generation, `tag => int`), `bfag_kpis`. Transients: `bfag_kpis`, and `bfag_resp_<key>` when no persistent object cache is present. Object-cache groups: `bfag` (rules and the generation, five-minute TTL) and `bfag_responses` (stored responses, when a persistent object cache is present).
 
 Cached responses go to the WordPress object cache group `bfag_responses` when `wp_using_ext_object_cache()` is true (Redis, Memcached), otherwise to transients. Purging never enumerates entries: every key embeds a generation number, and a purge bumps the generation so old entries are simply never looked up again and expire by their TTL.
 

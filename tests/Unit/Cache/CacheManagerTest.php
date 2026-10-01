@@ -9,6 +9,7 @@ namespace BlueFairy\ApiGateway\Tests\Unit\Cache;
 
 use BlueFairy\ApiGateway\Cache\CacheKeyGenerator;
 use BlueFairy\ApiGateway\Cache\CacheManager;
+use BlueFairy\ApiGateway\Cache\CachePurger;
 use BlueFairy\ApiGateway\Cache\CacheRuleRepository;
 use BlueFairy\ApiGateway\Cache\CacheStatsRepository;
 use BlueFairy\ApiGateway\Cache\CacheStore;
@@ -334,6 +335,30 @@ final class CacheManagerTest extends TestCase {
 
 		$this->store->bump_tags( [ 'products' ] );
 		$this->assertNull( $manager->maybe_serve( null, $this->server, $request ), 'bumping one of the rule tags orphans the entry' );
+	}
+
+	public function test_with_a_pro_purge_tag_answer_an_untagged_rule_is_purged_on_content_change_and_a_tagged_one_is_not(): void {
+		// Two rules: the seeded untagged `**` (id 1) and a tagged product rule (id 2).
+		$untagged = $this->rule();
+		$tagged   = $this->rule( 'wc/v3/products/**', 120, 'type:product' );
+		$tagged['id'] = 2;
+		$manager  = $this->manager( [], [ $untagged, $tagged ] );
+		$purger   = new CachePurger( $this->store, new CacheRuleRepository() );
+		$posts    = $this->request( 'GET', '/wp/v2/posts' );
+		$products = $this->request( 'GET', '/wc/v3/products' );
+
+		$manager->maybe_store( $this->response(), $this->server, $posts );
+		$manager->maybe_store( $this->response(), $this->server, $products );
+		$this->assertInstanceOf( \WP_REST_Response::class, $manager->maybe_serve( null, $this->server, $posts ), 'untagged entry stored' );
+		$this->assertInstanceOf( \WP_REST_Response::class, $manager->maybe_serve( null, $this->server, $products ), 'tagged entry stored' );
+
+		// The Pro add-on answers with the tags a post edit touches; `all` is always among them.
+		add_filter( 'bfag_cache_purge_tags', static fn(): array => [ 'all', 'type:post' ], 10, 3 );
+		$purger->on_post_change( 7 );
+
+		$this->assertSame( 1, $this->store->generation(), 'nothing was flushed globally' );
+		$this->assertNull( $manager->maybe_serve( null, $this->server, $posts ), 'the untagged rule\'s entry misses after a content change' );
+		$this->assertInstanceOf( \WP_REST_Response::class, $manager->maybe_serve( null, $this->server, $products ), 'the type:product entry is left warm' );
 	}
 
 	public function test_flush_all_makes_an_old_entry_miss(): void {

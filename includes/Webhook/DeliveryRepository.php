@@ -9,6 +9,10 @@ declare(strict_types=1);
 
 namespace BlueFairy\ApiGateway\Webhook;
 
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
+
 use BlueFairy\ApiGateway\Settings;
 
 /**
@@ -151,10 +155,14 @@ final class DeliveryRepository {
 			$args[]  = $filters['direction'];
 		}
 		$args[] = max( 1, min( 500, $limit ) );
+		$where  = implode( ' AND ', $where );
 
-		$sql  = "SELECT * FROM {$wpdb->prefix}bfag_webhook_deliveries WHERE " . implode( ' AND ', $where ) . ' ORDER BY id DESC LIMIT %d';
-		$rows = $wpdb->get_results( $wpdb->prepare( $sql, ...$args ), ARRAY_A ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.NotPrepared -- $sql is built from fixed fragments and placeholders only.
-		$out  = [];
+		$rows = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- $where holds fixed column fragments and placeholders only; every value travels in $args.
+			$wpdb->prepare( "SELECT * FROM {$wpdb->prefix}bfag_webhook_deliveries WHERE {$where} ORDER BY id DESC LIMIT %d", $args ),
+			ARRAY_A
+		);
+		$out = [];
 		foreach ( is_array( $rows ) ? $rows : [] as $row ) {
 			if ( is_array( $row ) ) {
 				$out[] = $this->normalize( $row );

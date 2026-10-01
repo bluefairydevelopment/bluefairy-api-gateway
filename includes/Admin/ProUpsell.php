@@ -9,6 +9,10 @@ declare(strict_types=1);
 
 namespace BlueFairy\ApiGateway\Admin;
 
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
+
 /**
  * A right-column panel on every tab listing what the Pro add-on adds, hidden
  * the moment `bfag_is_pro` says the add-on is running — an advert for
