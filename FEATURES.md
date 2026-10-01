@@ -836,6 +836,8 @@ takes effect at once.
 
 **https://wordpress.bluefairydevelopment.com/product/bluefairy-api-gateway-pro/**
 
-One payment, no subscription. Pro requires this plugin to be installed and
+One payment, no subscription: the licence never expires, and the price includes
+12 months of updates and support — renewing those after the first year is
+optional. Pro requires this plugin to be installed and
 active — it is an add-on, not a replacement — and adding Pro to the cart adds
 the free plugin with it.
