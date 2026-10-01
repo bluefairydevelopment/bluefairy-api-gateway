@@ -53,7 +53,6 @@ final class Plugin {
 		}
 		self::$booted = true;
 
-		add_filter( 'cron_schedules', [ Installer::class, 'cron_schedules' ] ); // phpcs:ignore WordPress.WP.CronInterval.ChangeDetected -- 300 s, declared in Installer::cron_schedules().
 		Installer::maybe_upgrade();
 
 		$settings = new Settings();

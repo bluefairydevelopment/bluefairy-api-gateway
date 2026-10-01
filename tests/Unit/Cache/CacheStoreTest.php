@@ -18,8 +18,27 @@ final class CacheStoreTest extends TestCase {
 		'data'    => [ 'id' => 1 ],
 	];
 
+	public function test_default_install_with_no_drop_in_uses_the_transient_backend(): void {
+		$this->assertNull( wp_using_ext_object_cache(), 'core leaves $_wp_using_ext_object_cache null when there is no object-cache.php drop-in' );
+		$store = new CacheStore();
+
+		// Every backend call must survive a null answer, not raise a TypeError.
+		$this->assertNull( $store->get( 'k0' ) );
+		$store->set( 'k0', self::ENTRY, 60 );
+		$this->assertSame( [ 'id' => 1 ], $store->get( 'k0' )['data'] ?? null, 'round-trips through transients' );
+		$this->assertArrayHasKey( 'bfag_resp_k0', $GLOBALS['bfag_test_transients'] );
+		$this->assertArrayNotHasKey( CacheStore::GROUP, $GLOBALS['bfag_test_cache'], 'a null answer means no persistent object cache' );
+		$store->delete( 'k0' );
+		$this->assertNull( $store->get( 'k0' ) );
+
+		// A real drop-in sets it to true, and only then does the object-cache group take over.
+		wp_using_ext_object_cache( true );
+		$store->set( 'k0', self::ENTRY, 60 );
+		$this->assertArrayHasKey( 'k0', $GLOBALS['bfag_test_cache'][ CacheStore::GROUP ] );
+	}
+
 	public function test_transient_backend_round_trips_without_an_external_object_cache(): void {
-		$this->assertFalse( wp_using_ext_object_cache() );
+		wp_using_ext_object_cache( false );
 		$store = new CacheStore();
 
 		$this->assertNull( $store->get( 'k1' ), 'nothing stored yet' );

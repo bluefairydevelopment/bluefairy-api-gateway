@@ -176,9 +176,13 @@ final class CacheStore {
 
 	/**
 	 * Is a persistent object cache the active backend?
+	 *
+	 * Core's wp_using_ext_object_cache() returns null, not false, on an
+	 * install without an object-cache.php drop-in; only a strict true means
+	 * the object cache is persistent.
 	 */
 	private function use_object_cache(): bool {
-		return wp_using_ext_object_cache();
+		return true === wp_using_ext_object_cache();
 	}
 
 	/**

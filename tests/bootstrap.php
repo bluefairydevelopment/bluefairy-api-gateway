@@ -92,7 +92,7 @@ function bfag_test_reset(): void {
 	$GLOBALS['bfag_test_single_events'] = [];
 	$GLOBALS['bfag_test_user_id']       = 0;
 	$GLOBALS['bfag_test_caps']          = [];
-	$GLOBALS['bfag_test_ext_cache']     = false;
+	$GLOBALS['bfag_test_ext_cache']     = null; // core: null until an object-cache.php drop-in sets it.
 	$GLOBALS['bfag_test_is_admin']      = false;
 	$GLOBALS['bfag_test_nonce_valid']   = true;
 	$GLOBALS['bfag_test_time']          = null;
@@ -197,11 +197,14 @@ function wp_cache_flush(): bool {
 function wp_cache_supports( string $feature ): bool {
 	return 'flush_group' === $feature;
 }
-function wp_using_ext_object_cache( ?bool $using = null ): bool {
+function wp_using_ext_object_cache( ?bool $using = null ): ?bool {
+	// Mirrors core: $_wp_using_ext_object_cache is null on an install without a
+	// drop-in, and the function returns the value as it stood before this call.
+	$current = $GLOBALS['bfag_test_ext_cache'];
 	if ( null !== $using ) {
 		$GLOBALS['bfag_test_ext_cache'] = $using;
 	}
-	return (bool) $GLOBALS['bfag_test_ext_cache'];
+	return $current;
 }
 
 // ------------------------------------------------------------------
@@ -808,6 +811,10 @@ function wp_mail( mixed $to, string $subject, string $message, mixed $headers = 
 	return true;
 }
 function wp_schedule_event( int $timestamp, string $recurrence, string $hook, array $args = [], bool $wp_error = false ): bool {
+	// Mirrors core: an unknown recurrence is WP_Error 'invalid_schedule' and nothing is scheduled.
+	if ( ! isset( wp_get_schedules()[ $recurrence ] ) ) {
+		return false;
+	}
 	$GLOBALS['bfag_test_cron'][ $hook ] = compact( 'timestamp', 'recurrence', 'args' );
 	return true;
 }

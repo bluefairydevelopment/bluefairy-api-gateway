@@ -15,9 +15,13 @@ namespace BlueFairy\ApiGateway\Cache;
  * generation of every tag the matching rule carries.
  *
  * `_wpnonce` and `_locale` are dropped from the parameters — they vary per
- * visitor without changing the response. Because the generations are part
- * of the key, a purge never has to find the old entries: it only has to
- * change the key every future request computes.
+ * visitor without changing the response. Every scalar parameter is cast to
+ * string first: at rest_pre_dispatch the params are the raw query strings,
+ * but by rest_post_dispatch core has sanitised them to their declared types
+ * (`"2"` becomes `2`), and the key stored must equal the key looked up.
+ * Because the generations are part of the key, a purge never has to find
+ * the old entries: it only has to change the key every future request
+ * computes.
  */
 final class CacheKeyGenerator {
 
@@ -44,7 +48,7 @@ final class CacheKeyGenerator {
 		foreach ( self::IGNORED_PARAMS as $ignored ) {
 			unset( $params[ $ignored ] );
 		}
-		$this->ksort_recursive( $params );
+		$this->normalize( $params );
 
 		$accept = strtolower( trim( (string) $request->get_header( 'accept' ) ) );
 
@@ -72,15 +76,22 @@ final class CacheKeyGenerator {
 	}
 
 	/**
-	 * Sort an array by key at every depth so parameter order never changes the key.
+	 * Sort by key at every depth, so parameter order never changes the key,
+	 * and cast every scalar to the string form it had on the query string,
+	 * so core's type coercion between pre- and post-dispatch does not either
+	 * (booleans the way PHP casts them: true is "1", false is "").
 	 *
-	 * @param array<mixed> $value Array to sort in place.
+	 * @param array<mixed> $value Array to normalise in place.
 	 */
-	private function ksort_recursive( array &$value ): void {
+	private function normalize( array &$value ): void {
 		ksort( $value );
 		foreach ( $value as &$child ) {
 			if ( is_array( $child ) ) {
-				$this->ksort_recursive( $child );
+				$this->normalize( $child );
+			} elseif ( is_bool( $child ) ) {
+				$child = $child ? '1' : '';
+			} elseif ( null === $child || is_scalar( $child ) ) {
+				$child = (string) $child;
 			}
 		}
 		unset( $child );

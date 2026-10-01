@@ -53,6 +53,18 @@ final class CacheKeyGeneratorTest extends TestCase {
 		$this->assertNotSame( $base, $this->keys->for_request( $this->request( 'GET', '/wp/v2/posts', [], [ 'page' => 2, 'context' => 'edit' ] ) ) );
 	}
 
+	public function test_a_coerced_param_produces_the_same_key_as_its_string_form(): void {
+		// rest_pre_dispatch sees the raw query strings; by rest_post_dispatch core has
+		// sanitised them to their declared types. Both must hash to one key.
+		$raw     = $this->keys->for_request( $this->request( 'GET', '/wp/v2/posts', [], [ 'per_page' => '2', 'include' => [ '3', '1' ], 'sticky' => '1' ] ) );
+		$coerced = $this->keys->for_request( $this->request( 'GET', '/wp/v2/posts', [], [ 'per_page' => 2, 'include' => [ 3, 1 ], 'sticky' => true ] ) );
+		$this->assertSame( $raw, $coerced );
+
+		$this->assertNotSame( $raw, $this->keys->for_request( $this->request( 'GET', '/wp/v2/posts', [], [ 'per_page' => 3, 'include' => [ 3, 1 ], 'sticky' => true ] ) ), 'a different value is still a different key' );
+		$this->assertNotSame( $raw, $this->keys->for_request( $this->request( 'GET', '/wp/v2/posts', [], [ 'per_page' => 2, 'include' => [ 1, 3 ], 'sticky' => true ] ) ), 'list order is a different value' );
+		$this->assertNotSame( $raw, $this->keys->for_request( $this->request( 'GET', '/wp/v2/posts', [], [ 'per_page' => 2, 'include' => [ 3, 1 ], 'sticky' => false ] ) ), 'false is "", not "1"' );
+	}
+
 	public function test_accept_header_is_case_insensitive_and_missing_equals_empty(): void {
 		$a = $this->keys->for_request( $this->request( 'GET', '/wp/v2/posts', [ 'Accept' => 'Application/JSON' ] ) );
 		$b = $this->keys->for_request( $this->request( 'GET', '/wp/v2/posts', [ 'Accept' => 'application/json' ] ) );

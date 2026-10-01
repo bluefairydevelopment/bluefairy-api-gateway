@@ -112,6 +112,21 @@ final class CacheManagerTest extends TestCase {
 		$this->assertNull( $manager->maybe_serve( null, $this->server, $this->request( 'GET', '/wp/v2/posts', [ 'Accept' => 'application/json' ], [ 'per_page' => 3 ] ) ), 'different params, different key' );
 	}
 
+	public function test_an_entry_stored_under_coerced_params_is_served_for_the_raw_query_string(): void {
+		$manager = $this->manager();
+
+		// rest_post_dispatch: core has already sanitised the params to their declared types.
+		$stored = $manager->maybe_store( $this->response(), $this->server, $this->request( 'GET', '/wp/v2/posts', [], [ 'per_page' => 2, 'include' => [ 3, 1 ] ] ) );
+		$this->assertSame( 'MISS', $stored->get_headers()['X-BF-Cache'] );
+
+		// rest_pre_dispatch of the next request: the same params, still raw strings.
+		$hit = $manager->maybe_serve( null, $this->server, $this->request( 'GET', '/wp/v2/posts', [], [ 'per_page' => '2', 'include' => [ '3', '1' ] ] ) );
+		$this->assertInstanceOf( \WP_REST_Response::class, $hit );
+		$this->assertSame( 'HIT', $hit->get_headers()['X-BF-Cache'] );
+
+		$this->assertNull( $manager->maybe_serve( null, $this->server, $this->request( 'GET', '/wp/v2/posts', [], [ 'per_page' => '3', 'include' => [ '3', '1' ] ] ) ), 'a different value still misses' );
+	}
+
 	public function test_a_served_hit_passing_through_maybe_store_is_not_relabelled_or_stored_again(): void {
 		$manager = $this->manager();
 		$request = $this->request( 'GET', '/wp/v2/posts' );

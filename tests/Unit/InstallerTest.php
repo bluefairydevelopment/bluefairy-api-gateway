@@ -59,6 +59,24 @@ final class InstallerTest extends TestCase {
 		}
 	}
 
+	public function test_activate_schedules_the_five_minute_jobs_without_plugin_boot(): void {
+		// The activation hook fires after plugins_loaded: nothing has registered the schedule yet.
+		$this->assertFalse( has_filter( 'cron_schedules' ) );
+		$this->assertArrayNotHasKey( 'bfag_five_minutes', wp_get_schedules() );
+		$this->assertFalse( wp_schedule_event( time(), 'bfag_five_minutes', 'bfag_probe' ), 'the harness refuses an unregistered recurrence, as core does' );
+		$this->assertArrayNotHasKey( 'bfag_probe', $GLOBALS['bfag_test_cron'] );
+
+		$this->wpdb->always( 'get_var', '0' );
+		Installer::activate();
+
+		$this->assertSame( [ 'bfag_cron_prune_hits', 'bfag_cron_prune_deliveries', 'bfag_cron_recompute_kpis' ], array_keys( $GLOBALS['bfag_test_cron'] ) );
+		$this->assertSame( 'bfag_five_minutes', $GLOBALS['bfag_test_cron']['bfag_cron_prune_hits']['recurrence'] );
+		$this->assertSame( 'daily', $GLOBALS['bfag_test_cron']['bfag_cron_prune_deliveries']['recurrence'] );
+		$this->assertSame( 'bfag_five_minutes', $GLOBALS['bfag_test_cron']['bfag_cron_recompute_kpis']['recurrence'] );
+		$this->assertSame( 10, has_filter( 'cron_schedules', [ Installer::class, 'cron_schedules' ] ), 'activation registered the schedule itself' );
+		$this->assertSame( 300, wp_get_schedules()['bfag_five_minutes']['interval'] );
+	}
+
 	public function test_activate_does_not_reseed_or_overwrite_existing_settings(): void {
 		update_option( 'bfag_settings', [ 'default_cache_ttl' => 120 ] );
 		update_option( 'bfag_cache_generation', 9 );

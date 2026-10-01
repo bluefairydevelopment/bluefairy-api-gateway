@@ -117,8 +117,16 @@ final class Installer {
 
 	/**
 	 * Schedule every recurring job that is not already scheduled.
+	 *
+	 * The activation hook runs after plugins_loaded has already fired, so
+	 * nothing booted may have registered `bfag_five_minutes` yet; without it
+	 * wp_schedule_event() returns WP_Error 'invalid_schedule' and the two
+	 * five-minute jobs are silently never scheduled.
 	 */
 	public static function schedule_cron(): void {
+		if ( false === has_filter( 'cron_schedules', [ self::class, 'cron_schedules' ] ) ) {
+			add_filter( 'cron_schedules', [ self::class, 'cron_schedules' ] ); // phpcs:ignore WordPress.WP.CronInterval.CronSchedulesInterval -- 300 s by design: the hit log and KPIs are five-minute buckets.
+		}
 		foreach ( self::CRON as $hook => $schedule ) {
 			if ( false === wp_next_scheduled( $hook ) ) {
 				wp_schedule_event( time() + 60, $schedule, $hook );

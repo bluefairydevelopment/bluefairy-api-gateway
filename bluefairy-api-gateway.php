@@ -48,6 +48,11 @@ spl_autoload_register(
 register_activation_hook( __FILE__, [ BlueFairy\ApiGateway\Installer::class, 'activate' ] );
 register_deactivation_hook( __FILE__, [ BlueFairy\ApiGateway\Installer::class, 'deactivate' ] );
 
+// The five-minute schedule is registered at file scope, not in Plugin::boot():
+// the activation hook fires after plugins_loaded, so a filter added there is
+// not yet in place when Installer::activate() schedules the crons.
+add_filter( 'cron_schedules', [ BlueFairy\ApiGateway\Installer::class, 'cron_schedules' ] ); // phpcs:ignore WordPress.WP.CronInterval.ChangeDetected -- 300 s, declared in Installer::cron_schedules().
+
 /**
  * Accessor used by the Pro add-on to confirm the base plugin is really loaded.
  *
