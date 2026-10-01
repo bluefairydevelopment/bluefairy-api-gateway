@@ -1,0 +1,59 @@
+<?xml version="1.0"?>
+<ruleset name="BlueFairy API Gateway">
+	<description>WordPress Coding Standards + strict types for BlueFairy API Gateway.</description>
+
+	<file>bluefairy-api-gateway.php</file>
+	<file>uninstall.php</file>
+	<file>includes/</file>
+	<file>admin/</file>
+
+	<exclude-pattern>*/vendor/*</exclude-pattern>
+	<exclude-pattern>*/tests/*</exclude-pattern>
+	<exclude-pattern>*/node_modules/*</exclude-pattern>
+
+	<arg name="basepath" value="."/>
+	<arg name="extensions" value="php"/>
+	<arg name="colors"/>
+	<arg value="sp"/>
+
+	<rule ref="WordPress">
+		<!-- Allow short array syntax -->
+		<exclude name="Universal.Arrays.DisallowShortArraySyntax"/>
+		<!-- PSR-4 class files: includes/Cache/CacheManager.php, not class-cache-manager.php -->
+		<exclude name="WordPress.Files.FileName"/>
+	</rule>
+
+	<!-- Require declare(strict_types=1) in every file -->
+	<rule ref="Generic.PHP.RequireStrictTypes"/>
+
+	<!-- Enforce the plugin text domain -->
+	<rule ref="WordPress.WP.I18n">
+		<properties>
+			<property name="text_domain" type="array">
+				<element value="bluefairy-api-gateway"/>
+			</property>
+		</properties>
+	</rule>
+
+	<!-- Enforce naming prefixes for globals, constants, and hooks -->
+	<rule ref="WordPress.NamingConventions.PrefixAllGlobals">
+		<properties>
+			<property name="prefixes" type="array">
+				<element value="bfag"/>
+				<element value="bluefairy_api_gateway"/>
+				<element value="BlueFairy\ApiGateway"/>
+				<element value="BFAG"/>
+			</property>
+		</properties>
+	</rule>
+
+	<!-- Custom tables: every query is prepared; the table name comes from $wpdb->prefix -->
+	<rule ref="WordPress.DB.PreparedSQL"/>
+	<rule ref="WordPress.DB.DirectDatabaseQuery">
+		<properties>
+			<property name="customCacheGetFunctions" type="array">
+				<element value="wp_cache_get"/>
+			</property>
+		</properties>
+	</rule>
+</ruleset>
