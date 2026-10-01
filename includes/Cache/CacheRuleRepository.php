@@ -286,7 +286,7 @@ final class CacheRuleRepository {
 	}
 
 	/**
-	 * Accept an array or a comma-separated string; keep `[a-z0-9_-]`,
+	 * Accept an array or a comma-separated string; keep `[a-z0-9_:-]`,
 	 * lower-cased, unique, at most 20.
 	 *
 	 * @param mixed $raw Raw tags.
@@ -304,7 +304,7 @@ final class CacheRuleRepository {
 			if ( ! is_string( $tag ) ) {
 				continue;
 			}
-			$tag = preg_replace( '/[^a-z0-9_-]/', '', strtolower( trim( $tag ) ) ) ?? '';
+			$tag = preg_replace( '/[^a-z0-9_:-]/', '', strtolower( trim( $tag ) ) ) ?? '';
 			$tag = substr( $tag, 0, self::MAX_TAG_LENGTH );
 			if ( '' === $tag || in_array( $tag, $out, true ) ) {
 				continue;

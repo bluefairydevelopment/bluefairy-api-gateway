@@ -82,7 +82,7 @@ generation orphans the old entries (transients expire by TTL; object-cache entri
 columns, `enabled`/`id`/`ttl_seconds` cast to int, `tags` as a comma-separated string.
 - `all_enabled(): array` — object cache key `cache_rules_enabled`, ordered by id
 - `all( int $limit = 200 ): array`, `find( int $id ): ?array`, `count(): int`
-- `create( array $data ): int|false` — returns false (and logs) when `count() >= limit()`; validates glob with `GlobMatcher::is_valid`, ttl 1–86400, tags sanitised (`[a-z0-9_-]`, max 20)
+- `create( array $data ): int|false` — returns false (and logs) when `count() >= limit()`; validates glob with `GlobMatcher::is_valid`, ttl 1–86400, tags sanitised (`[a-z0-9_:-]`, max 20; `post:7`, `type:product` are the Pro purge-tag shapes)
 - `update( int $id, array $data ): bool`, `delete( int $id ): bool`, `set_enabled( int $id, bool ): bool`
 - `limit(): int` — `(int) apply_filters( 'bfag_cache_rule_limit', 1 )`
 - `match( string $route ): ?array` — first enabled rule whose glob matches (via `GlobMatcher`), null when none
@@ -212,6 +212,7 @@ permission `current_user_can( Capabilities::MANAGE )`; body `tags` (array, optio
 | `bfag_cache_purged` | action | — | `( 'all'|'tags', string[] )` |
 | `bfag_rate_limit_rule_limit` | filter | `1` | |
 | `bfag_rate_limit_subject_types` | filter | `['ip']` | Pro adds `user`, `apikey` |
+| `bfag_rate_limit_max_window` | filter | largest rule window | seconds of hits the prune cron must keep; Pro raises it to its DDoS window |
 | `bfag_rate_limit_subject` | filter | ip or null | `( $default, $type, $request, $ip )` |
 | `bfag_rate_limit_is_blocked` | filter | `false` | `( false, $ip, $request )` — Pro's ban list |
 | `bfag_rate_limit_breached` | action | — | `( $subject, $rule, $request, $ip )` — Pro's DDoS mitigator |

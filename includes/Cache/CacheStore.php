@@ -146,7 +146,7 @@ final class CacheStore {
 	/**
 	 * The generation of one tag (default 1).
 	 *
-	 * @param string $tag Tag name; sanitised to `[a-z0-9_-]`.
+	 * @param string $tag Tag name; sanitised to `[a-z0-9_:-]`.
 	 */
 	public function tag_generation( string $tag ): int {
 		$tag = $this->sanitize_tag( $tag );
@@ -182,12 +182,12 @@ final class CacheStore {
 	}
 
 	/**
-	 * Lower-case, `[a-z0-9_-]` only, at most 50 characters.
+	 * Lower-case, `[a-z0-9_:-]` only, at most 50 characters.
 	 *
 	 * @param string $tag Raw tag.
 	 */
 	private function sanitize_tag( string $tag ): string {
-		$tag = preg_replace( '/[^a-z0-9_-]/', '', strtolower( trim( $tag ) ) ) ?? '';
+		$tag = preg_replace( '/[^a-z0-9_:-]/', '', strtolower( trim( $tag ) ) ) ?? '';
 		return substr( $tag, 0, self::MAX_TAG_LENGTH );
 	}
 }

@@ -276,6 +276,18 @@ function do_action( string $hook_name, mixed ...$args ): void {
 		}
 	}
 }
+function __return_zero(): int {
+	return 0;
+}
+function __return_true(): bool {
+	return true;
+}
+function __return_false(): bool {
+	return false;
+}
+function __return_empty_array(): array {
+	return [];
+}
 function did_action( string $hook_name ): int {
 	return (int) ( $GLOBALS['bfag_test_fired'][ $hook_name ] ?? 0 );
 }

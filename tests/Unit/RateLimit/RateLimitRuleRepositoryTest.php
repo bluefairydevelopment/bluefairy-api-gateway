@@ -354,4 +354,13 @@ final class RateLimitRuleRepositoryTest extends TestCase {
 		$this->wpdb->queue( 'get_results', [ $this->row( [ 'window_seconds' => 10 ] ) ] );
 		$this->assertSame( 10, ( new RateLimitRuleRepository() )->max_window(), 'a window below 60 is reported, not floored' );
 	}
+
+	public function test_max_window_can_be_raised_but_not_zeroed_by_the_filter(): void {
+		add_filter( 'bfag_rate_limit_max_window', static fn( int $max ): int => max( $max, 900 ) );
+		$this->assertSame( 900, ( new RateLimitRuleRepository() )->max_window(), 'the Pro DDoS window raises it' );
+		remove_filter( 'bfag_rate_limit_max_window', static fn( int $max ): int => max( $max, 900 ) );
+		$GLOBALS['bfag_test_hooks']['bfag_rate_limit_max_window'] = [];
+		add_filter( 'bfag_rate_limit_max_window', '__return_zero' );
+		$this->assertSame( 1, ( new RateLimitRuleRepository() )->max_window(), 'never below one second' );
+	}
 }

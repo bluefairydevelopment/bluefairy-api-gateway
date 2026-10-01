@@ -272,7 +272,18 @@ final class RateLimitRuleRepository {
 		foreach ( $this->all_enabled() as $rule ) {
 			$max = max( $max, (int) $rule['window_seconds'] );
 		}
-		return $max > 0 ? $max : 60;
+		$max = $max > 0 ? $max : 60;
+
+		/**
+		 * The oldest hit the prune cron must keep, in seconds. The Pro add-on
+		 * raises it to its DDoS window so cross-route counts are not pruned
+		 * from under it.
+		 *
+		 * @since 1.0.0
+		 *
+		 * @param int $max Largest enabled rule window, or 60.
+		 */
+		return max( 1, (int) apply_filters( 'bfag_rate_limit_max_window', $max ) );
 	}
 
 	/**

@@ -172,5 +172,8 @@ final class CacheStoreTest extends TestCase {
 		$this->assertSame( 2, $store->tag_generation( 'PRODUCTS' ), 'lookup is sanitised the same way' );
 		$this->assertSame( 1, $store->tag_generation( '' ) );
 		$this->assertCount( 1, array_filter( array_keys( $GLOBALS['bfag_test_transients'] ), static fn( string $k ): bool => str_starts_with( $k, 'bfag_tag_gen_' ) ) );
+		$store->bump_tags( [ 'post:7' ] );
+		$this->assertSame( 2, $store->tag_generation( 'post:7' ), 'colons survive so post:7 is a distinct tag' );
+		$this->assertSame( 1, $store->tag_generation( 'post7' ), 'post7 is not post:7' );
 	}
 }
