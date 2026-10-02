@@ -119,11 +119,12 @@ This plugin connects to services outside your site in one way only: **outbound w
 
 == Screenshots ==
 
-1. Dashboard — cache hit rate, webhook success rate and Active blocks cards, the recent failed deliveries with Retry, and the status endpoint.
-2. Cache — the rules table with the seeded "All routes" rule, Purge all, and the add/edit form with route glob, TTL and tags.
-3. Rate limit — the rules table with the seeded per-IP rule and the form: count by, route glob, requests per window.
-4. Webhooks — the webhooks table with Send test, and the add/edit form: URL, event, signing secret and extra headers.
-5. Settings — the cache, rate-limit, webhooks and advanced groups (the General group's alert fields appear only with the Pro add-on).
+1. Dashboard — cache hit rate and webhook success rate over 24 hours, the recent failed deliveries with Retry, the row counts and the status endpoint.
+2. Cache — the seeded "All routes" rule with its route glob, TTL and Enabled badge, and Purge all.
+3. Rate limit — the seeded per-IP rule: 300 requests per 60 seconds on every route.
+4. Webhooks — three signed webhooks with their events and last-delivery status, Send test, and the Delivery log button.
+5. Settings — the cache, rate-limit, webhooks and advanced groups.
+6. Delivery log — every delivery with its HTTP status; a failed delivery's response opened, with Retry.
 
 == Changelog ==
 
@@ -132,6 +133,7 @@ This plugin connects to services outside your site in one way only: **outbound w
 * The readme gains an *External services* section describing the outbound webhooks you configure.
 * The Markdown feature reference is no longer in the plugin zip; everything it held — including the receiver signature examples and the Pro comparison — is in the features guide, `docs/ApiGatewayFeaturesGuide.pdf`.
 * The time-limit lift used while a network-wide activation provisions every site is documented in the code.
+* Screenshots retaken on this version; a sixth shows the delivery log. The features guide is rebuilt with the new dashboard and delivery-log images.
 
 = 1.0.0 =
 * First release.

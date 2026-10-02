@@ -15,7 +15,8 @@ Packaging for WordPress.org (WPMAP-142). No change to behaviour, settings, datab
 - The Markdown feature reference in the plugin root no longer ships in the plugin zip (Plugin Check warns on unexpected Markdown there). It stays in the source repository, where the features-guide generator reads it, and everything it held — the hook reference, the receiver signature examples and the Pro comparison — reaches users in `docs/ApiGatewayFeaturesGuide.pdf`, which ships. `README.md`, `readme.txt` and this file now point there.
 - `readme.txt` gains an *External services* section: the plugin contacts only the webhook URLs an administrator configures, with the fields each event sends.
 - The `set_time_limit( 0 )` in a network-wide activation or deactivation carries a targeted Plugin Check ignore and the reason: WordPress records a network activation only after the hook returns, so a run that hit `max_execution_time` would leave the plugin inactive and the network half-provisioned.
-- WordPress.org listing assets (banners, icons, screenshots) live in `wp-org-assets/`, which is kept out of the zip.
+- WordPress.org listing assets (banners, icons, six screenshots matching the readme captions) live in `wp-org-assets/`, which is kept out of the zip. The readme's screenshot captions now describe what each image shows; a sixth shows the delivery log.
+- `docs/ApiGatewayFeaturesGuide.pdf` rebuilt for 1.0.1, with the dashboard and delivery-log images retaken.
 
 ## [1.0.0] — 2026-10-01
 

@@ -140,5 +140,33 @@ final class ReleasePackagingTest extends TestCase {
 		preg_match_all( '/^(\d+)\. \S/m', $m[1] ?? '', $n );
 		$this->assertNotSame( [], $n[1] );
 		$this->assertSame( range( 1, count( $n[1] ) ), array_map( 'intval', $n[1] ) );
+
+		// Every caption has its image in wp-org-assets/, and no image lacks a caption.
+		$shots = array_map(
+			static fn( string $f ): int => (int) preg_replace( '/\D/', '', basename( $f ) ),
+			glob( BFAG_DIR . 'wp-org-assets/screenshot-*.png' ) ?: []
+		);
+		sort( $shots );
+		$this->assertSame( range( 1, count( $n[1] ) ), $shots, 'wp-org-assets/screenshot-N.png for each readme caption' );
+	}
+
+	/**
+	 * The listing banners and icons WordPress.org reads from SVN assets/, at
+	 * the sizes it asks for.
+	 */
+	public function test_listing_banners_and_icons_exist_at_their_sizes(): void {
+		$sizes = [
+			'banner-772x250.png'  => [ 772, 250 ],
+			'banner-1544x500.png' => [ 1544, 500 ],
+			'icon-128x128.png'    => [ 128, 128 ],
+			'icon-256x256.png'    => [ 256, 256 ],
+		];
+		foreach ( $sizes as $file => $expected ) {
+			$this->assertFileExists( BFAG_DIR . 'wp-org-assets/' . $file );
+			$info = getimagesize( BFAG_DIR . 'wp-org-assets/' . $file );
+			$this->assertIsArray( $info, "$file is a readable image" );
+			$this->assertSame( $expected, [ $info[0], $info[1] ], $file );
+			$this->assertSame( 'image/png', $info['mime'], $file );
+		}
 	}
 }
