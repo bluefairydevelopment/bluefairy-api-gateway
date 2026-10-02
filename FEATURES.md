@@ -120,7 +120,7 @@ these makes it `BYPASS` rather than stored:
 
 - the status is not 2xx;
 - `Content-Type` contains `text/event-stream`;
-- the response sets a cookie (`Set-Cookie`);
+- the response sets a cookie — a `Set-Cookie` header on the response, or one PHP has queued through `setcookie()` (how WordPress and WooCommerce set theirs, for example a guest's cart session). A plugin that sets a cookie on every request therefore keeps REST responses from being stored; `X-BF-Cache: BYPASS` shows it;
 - `Cache-Control` carries `no-store`, `private` or `no-cache`, or a `max-age=0` / `s-maxage=0` (the plugin cannot revalidate, so a response that must be revalidated is simply not stored).
 
 Everything else is stored for the rule's TTL and labelled `X-BF-Cache: MISS`,

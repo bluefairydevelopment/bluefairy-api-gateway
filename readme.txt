@@ -52,7 +52,7 @@ To confirm the cache from the command line, request a public route twice and rea
 
 = Why am I seeing X-BF-Cache: BYPASS? =
 
-`BYPASS` means the request or the response was not cacheable. On the request side: the cache is switched off; the method is not GET or HEAD; you are logged in (a browser with a WordPress cookie, including the admin's own browser); the request carries an `Authorization`, `X-WP-Nonce` or `X-BF-API-Key` header; the route is under `/bfag/v1`; or no enabled cache rule matches the route. On the response side: the status is not 2xx; the response streams (`text/event-stream`); it sets a cookie; or its `Cache-Control` says `no-store`, `private`, `no-cache` or `max-age=0`. Test with `curl` from a fresh shell, not from a logged-in browser tab.
+`BYPASS` means the request or the response was not cacheable. On the request side: the cache is switched off; the method is not GET or HEAD; you are logged in (a browser with a WordPress cookie, including the admin's own browser); the request carries an `Authorization`, `X-WP-Nonce` or `X-BF-API-Key` header; the route is under `/bfag/v1`; or no enabled cache rule matches the route. On the response side: the status is not 2xx; the response streams (`text/event-stream`); it sets a cookie (including through PHP's `setcookie()`, as WooCommerce's guest cart session does — a plugin that sets a cookie on every request keeps responses from being stored); or its `Cache-Control` says `no-store`, `private`, `no-cache` or `max-age=0`. Test with `curl` from a fresh shell, not from a logged-in browser tab.
 
 = Does it work without Redis or Memcached? =
 

@@ -58,15 +58,19 @@ final class CacheManager {
 	 * @param CacheStore           $store    Response storage.
 	 * @param CacheKeyGenerator    $keys     Key derivation.
 	 * @param CacheRuleRepository  $rules    Rules.
-	 * @param CacheStatsRepository $stats    Hit/miss counters.
-	 * @param Settings             $settings Plugin settings.
+	 * @param CacheStatsRepository $stats        Hit/miss counters.
+	 * @param Settings             $settings     Plugin settings.
+	 * @param \Closure|null        $sent_headers Returns the raw header lines PHP has queued for this
+	 *                                           response (list<string>); null uses headers_list(). A
+	 *                                           test seam: the CLI SAPI never records headers.
 	 */
 	public function __construct(
 		private readonly CacheStore $store,
 		private readonly CacheKeyGenerator $keys,
 		private readonly CacheRuleRepository $rules,
 		private readonly CacheStatsRepository $stats,
-		private readonly Settings $settings
+		private readonly Settings $settings,
+		private readonly ?\Closure $sent_headers = null
 	) {}
 
 	/**
@@ -207,10 +211,35 @@ final class CacheManager {
 		if ( str_contains( strtolower( (string) $this->header_value( $headers, 'Content-Type' ) ), 'text/event-stream' ) ) {
 			return false;
 		}
-		if ( null !== $this->header_value( $headers, 'Set-Cookie' ) ) {
+		if ( null !== $this->header_value( $headers, 'Set-Cookie' ) || $this->php_sets_cookie() ) {
 			return false;
 		}
 		return ! $this->cache_control_forbids( (string) $this->header_value( $headers, 'Cache-Control' ) );
+	}
+
+	/**
+	 * Has PHP queued a `Set-Cookie` header for this response (U-22 /
+	 * WPMAP-111)? Core and WooCommerce set cookies with PHP's setcookie(),
+	 * which never reaches the WP_REST_Response headers; `rest_post_dispatch`
+	 * runs before WP_REST_Server sends anything, so the cookie of a REST
+	 * callback is in headers_list() here. Without this, one guest's
+	 * cookie-setting response (a WooCommerce cart session) could be stored
+	 * and served to the next guest.
+	 *
+	 * The limit: a cookie set AFTER this filter (a later
+	 * `rest_post_dispatch` callback, `rest_pre_serve_request`, `shutdown`)
+	 * is not seen. A cookie set earlier in the request for every visitor
+	 * (on `init`) is seen, and the response is not stored — erring on the
+	 * side of never caching a response that sets a cookie.
+	 */
+	private function php_sets_cookie(): bool {
+		$lines = null === $this->sent_headers ? headers_list() : ( $this->sent_headers )();
+		foreach ( is_array( $lines ) ? $lines : [] as $line ) {
+			if ( is_string( $line ) && 0 === stripos( ltrim( $line ), 'set-cookie:' ) ) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/**

@@ -25,7 +25,7 @@ First release. The free base plugin of a pair: BlueFairy API Gateway Pro is an a
 - Thirty-six documented `bfag_*` actions and filters as the add-on contract, and `Plugin::service()` for shared instances.
 
 ### Security
-- Requests from logged-in users or carrying `Authorization`, `X-BF-API-Key` or `X-WP-Nonce` are never cached; responses that are not 2xx, that stream, that set a cookie or that say `no-store`, `private`, `no-cache` or `max-age=0` are never stored.
+- Requests from logged-in users or carrying `Authorization`, `X-BF-API-Key` or `X-WP-Nonce` are never cached; responses that are not 2xx, that stream, that set a cookie (on the response or through PHP's `setcookie()`, as a WooCommerce guest cart session does) or that say `no-store`, `private`, `no-cache` or `max-age=0` are never stored.
 - Custom webhook headers are sanitised at send time: `Host`, `Content-Length`, `Transfer-Encoding`, `Connection`, `Cookie`, `Authorization`, `Proxy-Authorization`, `X-Forwarded-*`, the plugin's own header names and any value containing a line break are dropped. `Authorization` is accepted only from the `bfag_webhook_request_args` filter.
 - An API-key scope is read only through the `bfag_request_key_scope` filter, never from a request parameter.
 - Every admin action checks the screen and the capability before the nonce; every output is escaped at the boundary.
