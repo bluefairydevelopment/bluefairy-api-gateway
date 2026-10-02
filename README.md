@@ -7,9 +7,9 @@ REST response caching, per-IP rate limiting and signed outbound webhooks for Wor
 **Requires PHP:** 8.1+  
 **License:** GPL-2.0-or-later
 
-This is the free base plugin of a pair. [BlueFairy API Gateway Pro](https://wordpress.bluefairydevelopment.com/product/bluefairy-api-gateway-pro/) is an add-on that attaches to the extension seams listed at the end of `FEATURES.md`; it does not replace this plugin and cannot run without it.
+This is the free base plugin of a pair. [BlueFairy API Gateway Pro](https://wordpress.bluefairydevelopment.com/product/bluefairy-api-gateway-pro/) is an add-on that attaches to the extension seams listed at the end of the features guide (`docs/ApiGatewayFeaturesGuide.pdf`); it does not replace this plugin and cannot run without it.
 
-For the customer-facing feature guide, including the Pro/free comparison table, see `FEATURES.md`.
+For the customer-facing feature guide, including the Pro/free comparison table, see the features guide (`docs/ApiGatewayFeaturesGuide.pdf`).
 
 ---
 
@@ -41,7 +41,7 @@ curl -sI https://example.com/wp-json/wp/v2/posts | grep -i x-bf-cache
 X-BF-Cache: HIT
 ```
 
-A `BYPASS` means the request or the response was not cacheable — the list of reasons is in `FEATURES.md` under *How the cache decides*.
+A `BYPASS` means the request or the response was not cacheable — the list of reasons is in the features guide (`docs/ApiGatewayFeaturesGuide.pdf`) under *How the cache decides*.
 
 **See the rate limit working.** The seeded rule allows 300 requests per 60 seconds per IP on every route. The 301st request within the window answers:
 
@@ -56,7 +56,7 @@ X-BF-RateLimit-Window: 60
 
 `GET /bfag/v1/status` is never rate-limited, so a monitor polling it cannot lock itself out.
 
-**Send a webhook.** On the **Webhooks** tab add a webhook: a label, an `https://` URL, an event (for example *Post published*) and, optionally, a signing secret — leave it blank and a random 64-character secret is generated and shown to you once after saving — copy it into the receiver then. Click **Send test** on the new row; the receiver gets a `test` event, the notice reports the HTTP status, and the response appears in the delivery log. The receiver verifies `X-BF-Signature` with the shared secret; PHP and Node examples are in `FEATURES.md`.
+**Send a webhook.** On the **Webhooks** tab add a webhook: a label, an `https://` URL, an event (for example *Post published*) and, optionally, a signing secret — leave it blank and a random 64-character secret is generated and shown to you once after saving — copy it into the receiver then. Click **Send test** on the new row; the receiver gets a `test` event, the notice reports the HTTP status, and the response appears in the delivery log. The receiver verifies `X-BF-Signature` with the shared secret; PHP and Node examples are in the features guide (`docs/ApiGatewayFeaturesGuide.pdf`).
 
 ## Settings reference
 
@@ -207,7 +207,7 @@ docs/ARCHITECTURE.md             Module contracts and the extension seams
 
 ## Extending
 
-The Pro add-on is built entirely on the `bfag_*` actions and filters, which are public API. Every hook, with its signature, is listed at the end of `FEATURES.md` under *Extending*; the module-level contracts are in `docs/ARCHITECTURE.md`.
+The Pro add-on is built entirely on the `bfag_*` actions and filters, which are public API. Every hook, with its signature, is listed at the end of the features guide (`docs/ApiGatewayFeaturesGuide.pdf`) under *Extending*; the module-level contracts are in `docs/ARCHITECTURE.md`.
 
 ## Uninstalling
 
@@ -234,4 +234,4 @@ The last line runs `assets/js/admin.js` against a dependency-free fake DOM (no n
 
 ## Support
 
-Documentation ships with the plugin (`FEATURES.md`, `CHANGELOG.md`, `docs/ARCHITECTURE.md`). For questions and bug reports, start from the product page at https://wordpress.bluefairydevelopment.com/product/bluefairy-api-gateway/ or https://bluefairydevelopment.com.
+Documentation ships with the plugin (`docs/ApiGatewayFeaturesGuide.pdf`, `CHANGELOG.md`, `docs/ARCHITECTURE.md`). For questions and bug reports, start from the product page at https://wordpress.bluefairydevelopment.com/product/bluefairy-api-gateway/ or https://bluefairydevelopment.com.

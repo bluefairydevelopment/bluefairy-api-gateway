@@ -7,9 +7,19 @@ Versioning follows [Semantic Versioning](https://semver.org/): major = architect
 
 ---
 
+## [1.0.1] — 2026-10-02
+
+Packaging for WordPress.org (WPMAP-142). No change to behaviour, settings, database schema or data.
+
+### Changed
+- The Markdown feature reference in the plugin root no longer ships in the plugin zip (Plugin Check warns on unexpected Markdown there). It stays in the source repository, where the features-guide generator reads it, and everything it held — the hook reference, the receiver signature examples and the Pro comparison — reaches users in `docs/ApiGatewayFeaturesGuide.pdf`, which ships. `README.md`, `readme.txt` and this file now point there.
+- `readme.txt` gains an *External services* section: the plugin contacts only the webhook URLs an administrator configures, with the fields each event sends.
+- The `set_time_limit( 0 )` in a network-wide activation or deactivation carries a targeted Plugin Check ignore and the reason: WordPress records a network activation only after the hook returns, so a run that hit `max_execution_time` would leave the plugin inactive and the network half-provisioned.
+- WordPress.org listing assets (banners, icons, screenshots) live in `wp-org-assets/`, which is kept out of the zip.
+
 ## [1.0.0] — 2026-10-01
 
-First release. The free base plugin of a pair: BlueFairy API Gateway Pro is an add-on that attaches to the `bfag_*` hooks listed in `FEATURES.md` and does not replace this plugin.
+First release. The free base plugin of a pair: BlueFairy API Gateway Pro is an add-on that attaches to the `bfag_*` hooks listed in the features guide (`docs/ApiGatewayFeaturesGuide.pdf`) and does not replace this plugin.
 
 ### Added
 - **REST response cache.** Anonymous `GET`/`HEAD` responses are served from `rest_pre_dispatch`, and every REST response carries `X-BF-Cache: HIT`, `MISS` or `BYPASS`. One cache rule matched by route glob (`*` one segment, `**` anything, `?` one character; a trailing `/*` or `/**` also matches the collection), seeded as `**` / 60 s. Stored in the persistent object cache when there is one, otherwise as transients capped at 64 KB and one hour and swept every five minutes. Purged by generation number — no entry is ever enumerated — when a post, term or comment changes, from the Cache tab, by AJAX, or through `POST /bfag/v1/cache/purge` with optional `tags`.

@@ -52,7 +52,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	define( 'ABSPATH', __DIR__ . '/fixtures/abspath/' );
 }
 if ( ! defined( 'BFAG_VERSION' ) ) {
-	define( 'BFAG_VERSION', '1.0.0' );
+	define( 'BFAG_VERSION', '1.0.1' );
 }
 if ( ! defined( 'BFAG_DB_VERSION' ) ) {
 	// N-16: read from the plugin file, never mirrored here — a mirror drifted to 1.0.0 while the plugin shipped 1.0.1.

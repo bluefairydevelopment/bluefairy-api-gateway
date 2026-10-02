@@ -148,8 +148,13 @@ final class Installer {
 		// PN8: a large network is provisioned inline (DDL and seeds per site);
 		// lift the time limit where PHP allows, and keep every site's option
 		// reads out of the object cache so the loop's memory stays flat.
+		// Why the limit is lifted: WordPress records a network activation only
+		// after this hook returns, so a run that hits max_execution_time on a
+		// network of a few hundred sites dies half-provisioned and the plugin is
+		// left inactive. Reached only for a network-wide (de)activation by a
+		// super admin; a single-site activation returns above without it.
 		if ( function_exists( 'set_time_limit' ) ) {
-			set_time_limit( 0 );
+			set_time_limit( 0 ); // phpcs:ignore Squiz.PHP.DiscouragedFunctions.Discouraged -- network-wide activation must finish every site; see above.
 		}
 		wp_suspend_cache_addition( true );
 		try {

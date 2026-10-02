@@ -4,7 +4,7 @@ Tags: rest api, cache, rate limit, webhooks, headless
 Requires at least: 6.6
 Tested up to: 7.1
 Requires PHP: 8.1
-Stable tag: 1.0.0
+Stable tag: 1.0.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -72,7 +72,7 @@ In the free plugin a failed delivery — any non-2xx answer, or no answer within
 
 = How does my receiver verify the signature? =
 
-Compute `HMAC-SHA256` with the webhook's secret over the string `X-BF-Timestamp + "." + raw request body`, hex-encode it, prefix `sha256=`, and compare it to `X-BF-Signature` in constant time (`hash_equals()` in PHP, `crypto.timingSafeEqual()` in Node). Read the raw body bytes before any framework parses them. Reject timestamps more than a few minutes old to defeat replay. Full PHP and Node examples are in the FEATURES.md file shipped with the plugin.
+Compute `HMAC-SHA256` with the webhook's secret over the string `X-BF-Timestamp + "." + raw request body`, hex-encode it, prefix `sha256=`, and compare it to `X-BF-Signature` in constant time (`hash_equals()` in PHP, `crypto.timingSafeEqual()` in Node). Read the raw body bytes before any framework parses them. Reject timestamps more than a few minutes old to defeat replay. Full PHP and Node examples are in the features guide shipped with the plugin, `docs/ApiGatewayFeaturesGuide.pdf`, under *Webhooks → Verifying at the receiver*.
 
 = Why does editing a blog post empty the whole cache? =
 
@@ -108,6 +108,15 @@ Yes. While WooCommerce is active four more events are offered: order created, or
 
 Network activation provisions every site — tables, the seeded rules, the capability and the cron jobs — and a site added later is provisioned when it is created. Each site keeps its own rules, webhooks and settings. Uninstalling cleans up on every site of the network.
 
+== External services ==
+
+This plugin connects to services outside your site in one way only: **outbound webhooks that you configure**. Nothing is sent anywhere until an administrator adds a webhook on **Settings → API Gateway → Webhooks**, and the plugin never contacts Blue Fairy Development or any other fixed address — there is no telemetry, licence check or update server.
+
+* **What it is used for:** notifying another system (your own app, an automation service, a CRM relay — whatever endpoint you choose) that something happened on your site.
+* **Where data is sent:** only to the `https://` URL you enter for each webhook, and only for the one event that webhook subscribes to. **Send test** sends a sample `test` event to that URL when you press it.
+* **What is sent, and when:** a JSON `POST` each time the subscribed event happens, carrying the event name, your site URL, a timestamp and the object's allow-listed fields — for a post: id, type, status, title, slug, link, author id and dates; for a user: id, login, email, display name and roles; for a comment: id, post id, author name, author email, approval status, date and type; for a WooCommerce order: id, status, currency, total, customer id, billing email and date created; for a product: id, name, SKU, status, price and type. Each request also carries the `X-BF-Event`, `X-BF-Delivery`, `X-BF-Timestamp` and `X-BF-Signature` headers and any extra headers you added to the webhook.
+* **Whose terms apply:** the receiving service is one you choose and control, so its terms of service and privacy policy are the ones that govern the data. Review them before sending personal data such as email addresses to it, and mention the transfer in your own site's privacy policy where the law requires.
+
 == Screenshots ==
 
 1. Dashboard — cache hit rate, webhook success rate and Active blocks cards, the recent failed deliveries with Retry, and the status endpoint.
@@ -117,6 +126,12 @@ Network activation provisions every site — tables, the seeded rules, the capab
 5. Settings — the cache, rate-limit, webhooks and advanced groups (the General group's alert fields appear only with the Pro add-on).
 
 == Changelog ==
+
+= 1.0.1 =
+* Packaging for WordPress.org; no change to behaviour, settings or data.
+* The readme gains an *External services* section describing the outbound webhooks you configure.
+* The Markdown feature reference is no longer in the plugin zip; everything it held — including the receiver signature examples and the Pro comparison — is in the features guide, `docs/ApiGatewayFeaturesGuide.pdf`.
+* The time-limit lift used while a network-wide activation provisions every site is documented in the code.
 
 = 1.0.0 =
 * First release.
@@ -128,6 +143,9 @@ Network activation provisions every site — tables, the seeded rules, the capab
 * Compatibility: tested against WordPress 7.1; requires PHP 8.1 or newer. Database schema version 1.0.3 (internal).
 
 == Upgrade Notice ==
+
+= 1.0.1 =
+Packaging and documentation only — no change to behaviour, settings or data.
 
 = 1.0.0 =
 First release — nothing to upgrade from. Rate limiting is on from activation at 300 requests per minute per IP on every REST route; behind Cloudflare or a load balancer, add the proxy ranges under Settings → Rate limit → Trusted proxies before relying on it.

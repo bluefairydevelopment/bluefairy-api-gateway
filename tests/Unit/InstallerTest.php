@@ -503,6 +503,9 @@ final class InstallerTest extends TestCase {
 		// set_time_limit() is a PHP builtin the harness cannot intercept: pin the guarded call in the source.
 		$source = (string) file_get_contents( BFAG_DIR . 'includes/Installer.php' );
 		$this->assertMatchesRegularExpression( '/if \( function_exists\( \'set_time_limit\' \) \) \{\s*set_time_limit\( 0 \);/', $source, 'PN8: the time limit is lifted where PHP allows' );
+		// WPMAP-142: Plugin Check warns on set_time_limit(); the one call carries a targeted, explained ignore, and there is no other.
+		$this->assertMatchesRegularExpression( '/set_time_limit\( 0 \); \/\/ phpcs:ignore Squiz\.PHP\.DiscouragedFunctions\.Discouraged -- \S.+$/m', $source, 'the set_time_limit() call states why it is needed' );
+		$this->assertSame( 1, substr_count( $source, 'set_time_limit(' ), 'one call — no unexplained set_time_limit() elsewhere' );
 	}
 
 	// ------------------------------------------------------------------

@@ -13,3 +13,11 @@
 /composer.json    export-ignore
 /docs/MARKETING.txt export-ignore
 /docs/COMPARISON.md export-ignore
+# FEATURES.md stays in the repo root — the features-guide generator
+# (wp-testkit capture/generate-ApiGateway-guide.js) reads it from here — but
+# does not ship: Plugin Check warns on unexpected markdown in the plugin root.
+# Its content reaches users as docs/ApiGatewayFeaturesGuide.pdf, which ships.
+/FEATURES.md      export-ignore
+# WordPress.org listing assets (banners, icons, screenshots) go to the SVN
+# assets/ directory, never into the plugin zip.
+/wp-org-assets    export-ignore
