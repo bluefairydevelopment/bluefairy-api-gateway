@@ -102,6 +102,9 @@ final class CachePageTest extends TestCase {
 		$this->assertStringContainsString( 'name="_wpnonce" value="nonce-bfag_save_cache_rule"', $html );
 		$this->assertStringContainsString( 'Add cache rule', $html );
 		$this->assertStringNotContainsString( 'all of them are in use', $html, 'no limit line under the limit' );
+		// The free plugin flushes everything on a content change (CachePurger): the help must not promise tag-narrowed purges without Pro.
+		$this->assertStringContainsString( 'A content change purges every rule, unless the Pro add-on is active', $html );
+		$this->assertStringNotContainsString( 'add tags to narrow purging', $html );
 
 		$table = strpos( $html, '</table>' );
 		$after = strpos( $html, $marker );

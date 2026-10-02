@@ -40,7 +40,7 @@ $bfag_editing = (int) $rule['id'] > 0;
 			<th scope="row"><label for="bfag-cache-tags"><?php esc_html_e( 'Tags', 'bluefairy-api-gateway' ); ?></label></th>
 			<td>
 				<input type="text" id="bfag-cache-tags" name="bfag[tags]" class="regular-text code" value="<?php echo esc_attr( (string) $rule['tags'] ); ?>" placeholder="products, posts" />
-				<p class="description"><?php esc_html_e( 'Comma-separated. Purging a tag orphans every response cached under it. A rule with no tags is purged on every content change; add tags to narrow purging to those tags.', 'bluefairy-api-gateway' ); ?></p>
+				<p class="description"><?php esc_html_e( 'Comma-separated. Purging a tag orphans every response cached under it. A content change purges every rule, unless the Pro add-on is active: then it purges only the rules tagged with what the change touched, and every rule with no tags.', 'bluefairy-api-gateway' ); ?></p>
 			</td>
 		</tr>
 		<tr>
