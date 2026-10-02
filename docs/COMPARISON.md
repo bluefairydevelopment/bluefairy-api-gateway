@@ -40,7 +40,7 @@ Pro is always the first column.
 
 ## Where each row was verified
 
-The **Licence** rows were added with the licence work (branch `feature/licence`): `Licence\Updater` offers updates through the `Update URI` header's `update_plugins_wordpress.bluefairydevelopment.com` filter only while `Licence::is_active()`, and nothing outside `includes/Licence/` and the Licence tab reads the licence (`PluginTest::test_no_licence_state_switches_off_any_pro_feature`).
+The **Licence** rows describe Pro's licence client: `Licence\Updater` offers updates through the `Update URI` header's `update_plugins_wordpress.bluefairydevelopment.com` filter only while `Licence::is_active()`, and nothing outside `includes/Licence/` and the Licence tab reads the licence (`PluginTest::test_no_licence_state_switches_off_any_pro_feature`).
 
 Against the shipped code of both plugins at 1.0.0 (free f70bf71, Pro e1fc2f6):
 
