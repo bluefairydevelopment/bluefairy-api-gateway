@@ -76,10 +76,12 @@ final class WebhookPageTest extends TestCase {
 	 *
 	 * @param list<array<string, mixed>> $rows     Webhook rows.
 	 * @param list<string|null>          $statuses One last status per row (null = no delivery yet).
+	 * @param array<string, mixed>|null  $editing  The row find() returns, when editing.
+	 * @param int|null                   $count    What count() returns; default the number of rows.
 	 */
-	private function prime_list( array $rows, array $statuses = [], ?array $editing = null ): void {
+	private function prime_list( array $rows, array $statuses = [], ?array $editing = null, ?int $count = null ): void {
 		$this->wpdb->queue( 'get_results', $rows );
-		$this->wpdb->queue( 'get_var', count( $rows ) );
+		$this->wpdb->queue( 'get_var', $count ?? count( $rows ) );
 		$last = [];
 		foreach ( $statuses as $i => $status ) {
 			if ( null !== $status ) {
@@ -121,7 +123,7 @@ final class WebhookPageTest extends TestCase {
 		$this->assertStringContainsString( 'data-bfag-toggle="webhook" data-bfag-id="2" data-bfag-enabled="0"', $html );
 		$this->assertStringContainsString( 'bfag_action=test_webhook&amp;id=1&amp;_wpnonce=nonce-bfag_test_webhook', $html );
 		$this->assertStringContainsString( 'bfag_action=delete_webhook&amp;id=1&amp;_wpnonce=nonce-bfag_delete_webhook', $html );
-		$this->assertStringContainsString( '2 of 3', $html );
+		$this->assertStringContainsString( '2 of 500', $html, 'WPMAP-142: the free plugin allows 500 webhooks, as Pro does' );
 		$this->assertStringContainsString( 'name="bfag_action" value="save_webhook"', $html, 'add form under the limit' );
 		$this->assertStringContainsString( 'name="_wpnonce" value="nonce-bfag_save_webhook"', $html );
 		$this->assertStringNotContainsString( 'name="bfag[preset]"', $html, 'no presets, no select' );
@@ -180,11 +182,20 @@ final class WebhookPageTest extends TestCase {
 		$this->assertStringNotContainsString( 'value="99"', $html, 'a filter cannot turn the add form into an edit of row 99' );
 	}
 
-	public function test_at_the_limit_the_form_gives_way_to_the_upsell_line(): void {
+	public function test_a_fourth_webhook_can_be_added_by_default(): void {
 		$this->prime_list( [ $this->webhook( 1 ), $this->webhook( 2 ), $this->webhook( 3 ) ], [ null, null, null ] );
 		$html = bfag_test_render( [ $this->page(), 'render' ] );
-		$this->assertStringContainsString( 'The free plugin allows 3 webhooks — Pro allows up to 500', $html );
+		$this->assertStringContainsString( '3 of 500', $html );
+		$this->assertStringContainsString( 'value="save_webhook"', $html, 'WPMAP-142: three webhooks no longer fill the free plugin' );
+		$this->assertStringNotContainsString( 'all of them are in use', $html );
+	}
+
+	public function test_at_the_limit_the_form_gives_way_to_the_limit_line_which_sells_nothing(): void {
+		$this->prime_list( [ $this->webhook( 1 ) ], [ null ], null, 500 );
+		$html = bfag_test_render( [ $this->page(), 'render' ] );
+		$this->assertStringContainsString( 'This site allows 500 webhooks and all of them are in use. Edit or delete one to add another.', $html );
 		$this->assertStringNotContainsString( 'value="save_webhook"', $html );
+		$this->assertStringNotContainsString( 'Pro allows', $html, 'WPMAP-142: reaching the limit is not an upsell' );
 	}
 
 	public function test_editing_prefills_the_form_without_the_secret_and_fires_the_form_fields_hook(): void {
@@ -620,7 +631,7 @@ final class WebhookPageTest extends TestCase {
 				'event' => 'post.published',
 			]
 		);
-		$this->wpdb->queue( 'get_var', 3 );
+		$this->wpdb->queue( 'get_var', 500 ); // the default limit, WPMAP-142.
 		$location = $this->redirect_of( [ $this->page(), 'handle_actions' ] );
 		$this->assertStringEndsWith( '&bfag_notice=webhook_limit', $location );
 		$this->assertSame( [], $this->wpdb->calls_to( 'insert' ) );

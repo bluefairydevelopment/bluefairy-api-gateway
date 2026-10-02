@@ -13,7 +13,6 @@ namespace BlueFairy\ApiGateway\Tests\Unit;
 use BlueFairy\ApiGateway\Admin\AdminMenu;
 use BlueFairy\ApiGateway\Admin\CachePage;
 use BlueFairy\ApiGateway\Admin\KpiCron;
-use BlueFairy\ApiGateway\Admin\ProUpsell;
 use BlueFairy\ApiGateway\Admin\SettingsPage;
 use BlueFairy\ApiGateway\Cache\CachePurger;
 use BlueFairy\ApiGateway\Cache\CacheRuleRepository;
@@ -192,12 +191,12 @@ final class OptionWriteFailureTest extends TestCase {
 	public function test_the_cache_tab_purge_says_not_purged(): void {
 		$this->refuse( CacheStore::GENERATION_OPTION );
 		bfag_test_admin_request( 'purge_cache' );
-		$exit = bfag_test_catch_exit( [ new CachePage( new CacheRuleRepository(), $this->purger(), new ProUpsell(), new Settings() ), 'handle_actions' ] );
+		$exit = bfag_test_catch_exit( [ new CachePage( new CacheRuleRepository(), $this->purger(), new Settings() ), 'handle_actions' ] );
 		$this->assertStringEndsWith( 'bfag_notice=cache_purge_failed', (string) $exit->payload );
 
 		$this->refuse();
 		bfag_test_admin_request( 'purge_cache' );
-		$exit = bfag_test_catch_exit( [ new CachePage( new CacheRuleRepository(), $this->purger(), new ProUpsell(), new Settings() ), 'handle_actions' ] );
+		$exit = bfag_test_catch_exit( [ new CachePage( new CacheRuleRepository(), $this->purger(), new Settings() ), 'handle_actions' ] );
 		$this->assertStringEndsWith( 'bfag_notice=cache_purged', (string) $exit->payload );
 	}
 

@@ -142,6 +142,21 @@ abstract class Page {
 	}
 
 	/**
+	 * The line shown in place of the add form once every row the limit
+	 * allows is in use. The same words with or without the Pro add-on: the
+	 * limit is the site's, not a paid tier (WPMAP-142).
+	 *
+	 * @param string $what The limit, counted, e.g. "500 cache rules".
+	 */
+	public static function limit_line( string $what ): string {
+		return sprintf(
+			/* translators: %s: the limit, counted, e.g. "500 cache rules" */
+			__( 'This site allows %s and all of them are in use. Edit or delete one to add another.', 'bluefairy-api-gateway' ),
+			$what
+		);
+	}
+
+	/**
 	 * Include a view from admin/views/ with the given variables in scope.
 	 *
 	 * @param string               $name Basename of the view, without `.php`.

@@ -18,8 +18,8 @@ use BlueFairy\ApiGateway\Logger;
 /**
  * Listens to post, term and comment changes and purges the response cache.
  *
- * By default a change flushes everything: the free plugin has one rule and
- * no tags, so there is nothing finer to do. The `bfag_cache_purge_tags`
+ * By default a change flushes everything: the free plugin cannot tell
+ * which cached responses a change touches, so there is nothing finer to do. The `bfag_cache_purge_tags`
  * filter lets an add-on return the tags that a given change touches, and
  * then only those generations are bumped. An untagged rule is keyed on the
  * implicit tag `all` (CacheKeyGenerator), so an answer that includes `all`

@@ -19,7 +19,9 @@ if ( ! defined( 'ABSPATH' ) ) {
  * something the admin already owns makes the product look like it does not
  * know its own state.
  *
- * Every feature named here ships in Pro today; nothing aspirational.
+ * Every feature named here ships in Pro today and is absent from this
+ * plugin; nothing aspirational, and no limit — this plugin and Pro share the
+ * same row limits (WPMAP-142, WordPress.org guideline 5).
  */
 final class ProUpsell {
 
@@ -47,27 +49,13 @@ final class ProUpsell {
 	 */
 	public function features(): array {
 		return [
-			__( 'Up to 500 cache rules and rate-limit rules (free: one of each)', 'bluefairy-api-gateway' ),
 			__( 'Purges narrowed to the tags a change touches', 'bluefairy-api-gateway' ),
 			__( 'Rate limits per user and per API key, with DDoS auto-block', 'bluefairy-api-gateway' ),
-			__( 'Up to 500 webhooks with automatic retries and failure alerts (free: three, single attempt)', 'bluefairy-api-gateway' ),
+			__( 'Automatic webhook retries and failure alert emails', 'bluefairy-api-gateway' ),
 			__( 'Salesforce, HubSpot and Mailchimp presets and a verified incoming-webhook endpoint', 'bluefairy-api-gateway' ),
 			__( 'API keys with scopes for integrations', 'bluefairy-api-gateway' ),
 			__( 'WPGraphQL query caching', 'bluefairy-api-gateway' ),
 		];
-	}
-
-	/**
-	 * The one-line limit notice shown in place of an add form.
-	 *
-	 * @param string $what   What is limited, e.g. "1 cache rule".
-	 */
-	public function limit_line( string $what ): string {
-		return sprintf(
-			/* translators: %s: the free plugin's allowance, e.g. "1 cache rule" */
-			__( 'The free plugin allows %s — Pro allows up to 500', 'bluefairy-api-gateway' ),
-			$what
-		);
 	}
 
 	/**

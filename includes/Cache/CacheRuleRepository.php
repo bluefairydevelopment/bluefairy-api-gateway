@@ -27,8 +27,8 @@ use BlueFairy\ApiGateway\Support\Limits;
  * set is read on every REST request, so it is object-cached under
  * `cache_rules_enabled` in group `bfag` and every write invalidates it.
  *
- * The free plugin allows one rule; the Pro add-on raises the limit through
- * the `bfag_cache_rule_limit` filter.
+ * A site may keep Limits::DEFAULT_LIMIT rules (500), with or without the
+ * Pro add-on; the `bfag_cache_rule_limit` filter lowers or raises that.
  */
 final class CacheRuleRepository {
 
@@ -205,12 +205,21 @@ final class CacheRuleRepository {
 	}
 
 	/**
-	 * Maximum number of rules: 1 unless an add-on raises it, and never more
-	 * than Limits::MAX_ROWS — the most all() and all_enabled() read
-	 * (WPMAP-138).
+	 * Maximum number of rules: Limits::DEFAULT_LIMIT unless a filter says
+	 * otherwise, and never more than Limits::MAX_ROWS — the most all() and
+	 * all_enabled() read (WPMAP-138).
 	 */
 	public function limit(): int {
-		return Limits::clamp( apply_filters( 'bfag_cache_rule_limit', 1 ) );
+		/**
+		 * Filters the maximum number of cache rules. Clamped to
+		 * 0..Limits::MAX_ROWS.
+		 *
+		 * @since 1.0.0
+		 * @since 1.0.1 Defaults to Limits::DEFAULT_LIMIT (500); was 1.
+		 *
+		 * @param int $limit Default Limits::DEFAULT_LIMIT.
+		 */
+		return Limits::clamp( apply_filters( 'bfag_cache_rule_limit', Limits::DEFAULT_LIMIT ) );
 	}
 
 	/**

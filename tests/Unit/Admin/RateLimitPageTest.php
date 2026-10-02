@@ -42,11 +42,13 @@ final class RateLimitPageTest extends TestCase {
 	}
 
 	/**
-	 * @param list<array<string, mixed>> $rules Rows.
+	 * @param list<array<string, mixed>> $rules   Rows.
+	 * @param array<string, mixed>|null  $editing The row find() returns, when editing.
+	 * @param int|null                   $count   What count() returns; default the number of rows.
 	 */
-	private function prime_render( array $rules, ?array $editing = null ): void {
+	private function prime_render( array $rules, ?array $editing = null, ?int $count = null ): void {
 		$this->wpdb->queue( 'get_results', $rules );
-		$this->wpdb->queue( 'get_var', count( $rules ) );
+		$this->wpdb->queue( 'get_var', $count ?? count( $rules ) );
 		if ( null !== $editing ) {
 			$this->wpdb->queue( 'get_row', $editing );
 		}
@@ -200,11 +202,20 @@ final class RateLimitPageTest extends TestCase {
 		$this->assertStringEndsWith( '&bfag_notice=ratelimit_range_invalid', $this->redirect_of( [ $this->page(), 'handle_actions' ] ) );
 	}
 
-	public function test_at_the_limit_the_add_form_gives_way_to_the_upsell_line(): void {
+	public function test_by_default_a_second_rule_can_be_added(): void {
 		$this->prime_render( [ $this->rule() ] );
 		$html = bfag_test_render( [ $this->page(), 'render' ] );
-		$this->assertStringContainsString( 'The free plugin allows 1 rate-limit rule — Pro allows up to 500', $html );
+		$this->assertStringContainsString( '1 of 500', $html, 'WPMAP-142: the free plugin allows 500 rules, as Pro does' );
+		$this->assertStringContainsString( 'value="save_rate_limit_rule"', $html );
+		$this->assertStringNotContainsString( 'all of them are in use', $html );
+	}
+
+	public function test_at_the_limit_the_add_form_gives_way_to_the_limit_line_which_sells_nothing(): void {
+		$this->prime_render( [ $this->rule() ], null, 500 );
+		$html = bfag_test_render( [ $this->page(), 'render' ] );
+		$this->assertStringContainsString( 'This site allows 500 rate-limit rules and all of them are in use. Edit or delete one to add another.', $html );
 		$this->assertStringNotContainsString( 'value="save_rate_limit_rule"', $html );
+		$this->assertStringNotContainsString( 'Pro allows', $html, 'WPMAP-142: reaching the limit is not an upsell' );
 
 		$_GET = [
 			'action' => 'edit',
@@ -298,7 +309,7 @@ final class RateLimitPageTest extends TestCase {
 				'window_seconds' => '1',
 			]
 		);
-		$this->wpdb->queue( 'get_var', 1 );
+		$this->wpdb->queue( 'get_var', 500 ); // the default limit, WPMAP-142.
 		$location = $this->redirect_of( [ $this->page(), 'handle_actions' ] );
 		$this->assertStringEndsWith( '&bfag_notice=ratelimit_limit', $location );
 		$this->assertSame( [], $this->wpdb->calls_to( 'insert' ) );

@@ -46,7 +46,7 @@ final class SubmitButtonIdTest extends TestCase {
 
 		$this->wpdb->queue( 'get_results', [] );
 		$this->wpdb->queue( 'get_var', 0 );
-		$html['cache'] = bfag_test_render( [ new CachePage( new CacheRuleRepository(), new CachePurger( new CacheStore(), new CacheRuleRepository() ), new ProUpsell(), new Settings() ), 'render' ] );
+		$html['cache'] = bfag_test_render( [ new CachePage( new CacheRuleRepository(), new CachePurger( new CacheStore(), new CacheRuleRepository() ), new Settings() ), 'render' ] );
 
 		$this->wpdb->queue( 'get_results', [] );
 		$this->wpdb->queue( 'get_var', 0 );

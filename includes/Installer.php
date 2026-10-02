@@ -404,7 +404,7 @@ final class Installer {
 		$engine = 'ENGINE=InnoDB ' . $charset_collate;
 
 		return [
-			// One row in the free plugin (seeded with route_glob '**', matching everything); up to 500 with Pro.
+			// Seeded with one rule (route_glob '**', matching everything); up to Limits::DEFAULT_LIMIT (500) rows.
 			'bfag_cache_rules'        => "CREATE TABLE {$prefix}bfag_cache_rules (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   label VARCHAR(100) NOT NULL DEFAULT '',

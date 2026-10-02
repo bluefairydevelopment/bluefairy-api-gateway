@@ -140,7 +140,7 @@ final class WebhookPage extends Page {
 
 		$editing = $edit_id > 0 ? $this->webhooks->find( $edit_id ) : null;
 		if ( null === $editing && $count >= $limit ) {
-			echo '<p class="bfag-limit-line">' . esc_html( $this->upsell->limit_line( sprintf( /* translators: %d: number of webhooks */ _n( '%d webhook', '%d webhooks', $limit, 'bluefairy-api-gateway' ), $limit ) ) ) . '</p>';
+			echo '<p class="bfag-limit-line">' . esc_html( self::limit_line( sprintf( /* translators: %d: number of webhooks */ _n( '%d webhook', '%d webhooks', $limit, 'bluefairy-api-gateway' ), $limit ) ) ) . '</p>';
 			return;
 		}
 

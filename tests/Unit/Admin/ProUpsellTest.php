@@ -33,8 +33,10 @@ final class ProUpsellTest extends TestCase {
 	}
 
 	/**
-	 * Every line must describe what Pro ships: a 500-row cap (never
-	 * "unlimited") and Salesforce/HubSpot/Mailchimp presets only.
+	 * Every line must describe something Pro ships and this plugin lacks
+	 * (Salesforce/HubSpot/Mailchimp presets only) — and no line may sell a
+	 * limit: both plugins allow the same 500 rows (WPMAP-142, WordPress.org
+	 * guideline 5).
 	 */
 	public function test_the_feature_list_claims_only_what_pro_ships(): void {
 		$upsell = new ProUpsell();
@@ -42,8 +44,7 @@ final class ProUpsellTest extends TestCase {
 
 		foreach (
 			[
-				'Up to 500 cache rules and rate-limit rules (free: one of each)',
-				'Up to 500 webhooks with automatic retries and failure alerts (free: three, single attempt)',
+				'Automatic webhook retries and failure alert emails',
 				'Salesforce, HubSpot and Mailchimp presets and a verified incoming-webhook endpoint',
 				'Purges narrowed to the tags a change touches',
 				'Rate limits per user and per API key, with DDoS auto-block',
@@ -54,14 +55,16 @@ final class ProUpsellTest extends TestCase {
 			$this->assertContains( $line, $upsell->features() );
 			$this->assertStringContainsString( esc_html( $line ), $html );
 		}
-		$this->assertStringContainsString( 'Pro allows up to 500 rules and webhooks and adds the parts integrations ask for:', $html, 'NF-18: the ceiling, not "removes the limits"' );
+		$this->assertCount( 6, $upsell->features(), 'nothing beyond the six lines above' );
+		$this->assertStringContainsString( 'This plugin caches, rate-limits and signs webhooks. Pro adds the parts integrations ask for:', $html );
 		$this->assertDoesNotMatchRegularExpression( '/\bbans?\b|\bbanned\b|removes the limit/i', $html, 'NF-16/NF-18' );
+		$this->assertDoesNotMatchRegularExpression( '/\b500\b|up to \d|\bfree:|\b(rules?|webhooks?) limits?\b|\bmore (cache |rate-limit )?(rules|webhooks)\b|one of each|single attempt|three webhooks/i', $html, 'WPMAP-142: no limit is sold' );
 		foreach ( [ 'Unlimited', 'unlimited', 'Slack', 'Zapier' ] as $false_claim ) {
 			$this->assertStringNotContainsString( $false_claim, $html, "the panel must not promise \"{$false_claim}\"" );
 		}
 	}
 
-	public function test_limit_line_names_the_allowance(): void {
-		$this->assertSame( 'The free plugin allows 1 cache rule — Pro allows up to 500', ( new ProUpsell() )->limit_line( '1 cache rule' ), 'NF-18: Pro has a ceiling too' );
+	public function test_there_is_no_limit_line_to_sell_any_more(): void {
+		$this->assertFalse( method_exists( ProUpsell::class, 'limit_line' ), 'WPMAP-142: the at-limit line is Page::limit_line(), the same with or without Pro' );
 	}
 }

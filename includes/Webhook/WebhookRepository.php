@@ -293,8 +293,8 @@ final class WebhookRepository {
 	}
 
 	/**
-	 * How many webhooks may exist. Three in the free plugin; the Pro add-on
-	 * raises it through `bfag_webhook_limit`. Never more than
+	 * How many webhooks may exist: Limits::DEFAULT_LIMIT unless a filter says
+	 * otherwise, with or without the Pro add-on. Never more than
 	 * Limits::MAX_ROWS, the most all() and all_enabled() read (WPMAP-138).
 	 */
 	public function limit(): int {
@@ -302,10 +302,11 @@ final class WebhookRepository {
 		 * Filter the maximum number of webhooks.
 		 *
 		 * @since 1.0.0
+		 * @since 1.0.1 Defaults to Limits::DEFAULT_LIMIT (500); was 3.
 		 *
-		 * @param int $limit Default 3. Clamped to 0..Limits::MAX_ROWS.
+		 * @param int $limit Default Limits::DEFAULT_LIMIT. Clamped to 0..Limits::MAX_ROWS.
 		 */
-		return Limits::clamp( apply_filters( 'bfag_webhook_limit', 3 ) );
+		return Limits::clamp( apply_filters( 'bfag_webhook_limit', Limits::DEFAULT_LIMIT ) );
 	}
 
 	/**

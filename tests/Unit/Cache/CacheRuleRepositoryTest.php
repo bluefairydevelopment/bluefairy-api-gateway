@@ -94,8 +94,9 @@ final class CacheRuleRepositoryTest extends TestCase {
 		$this->assertSame( 0, $this->repo->count(), 'nothing queued counts as zero' );
 	}
 
-	public function test_limit_is_one_unless_filtered(): void {
-		$this->assertSame( 1, $this->repo->limit() );
+	public function test_limit_is_500_unless_filtered(): void {
+		$this->assertSame( 500, $this->repo->limit(), 'WPMAP-142: the same ceiling as Pro' );
+		$this->assertSame( Limits::DEFAULT_LIMIT, $this->repo->limit() );
 		add_filter( 'bfag_cache_rule_limit', static fn(): int => 25 );
 		$this->assertSame( 25, $this->repo->limit() );
 	}
@@ -145,9 +146,15 @@ final class CacheRuleRepositoryTest extends TestCase {
 		$this->assertSame( 1, $data['enabled'] );
 	}
 
-	public function test_create_refuses_a_second_rule_at_the_lite_limit_and_logs(): void {
-		$this->enable_logging();
+	public function test_create_accepts_a_second_rule_by_default(): void {
 		$this->wpdb->queue( 'get_var', '1' );
+		$this->assertSame( 1, $this->repo->create( [ 'route_glob' => 'wp/v2/posts/**' ] ), 'WPMAP-142: one stored rule no longer fills the free plugin' );
+		$this->assertCount( 1, $this->wpdb->calls_to( 'insert' ) );
+	}
+
+	public function test_create_refuses_a_rule_at_the_default_limit_and_logs(): void {
+		$this->enable_logging();
+		$this->wpdb->queue( 'get_var', '500' );
 
 		$this->assertFalse( $this->repo->create( [ 'route_glob' => '**' ] ) );
 		$this->assertCount( 0, $this->wpdb->calls_to( 'insert' ) );

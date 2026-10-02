@@ -8,7 +8,6 @@ declare(strict_types=1);
 namespace BlueFairy\ApiGateway\Tests\Unit\Admin;
 
 use BlueFairy\ApiGateway\Admin\CachePage;
-use BlueFairy\ApiGateway\Admin\ProUpsell;
 use BlueFairy\ApiGateway\Cache\CachePurger;
 use BlueFairy\ApiGateway\Cache\CacheRuleRepository;
 use BlueFairy\ApiGateway\Cache\CacheStore;
@@ -27,7 +26,7 @@ final class CachePageTest extends TestCase {
 	}
 
 	private function page(): CachePage {
-		return new CachePage( new CacheRuleRepository(), new CachePurger( $this->store, new CacheRuleRepository() ), new ProUpsell(), new Settings() );
+		return new CachePage( new CacheRuleRepository(), new CachePurger( $this->store, new CacheRuleRepository() ), new Settings() );
 	}
 
 	/**
@@ -49,11 +48,13 @@ final class CachePageTest extends TestCase {
 	/**
 	 * Script render()'s queries: all() → get_results, count() → get_var, then find() → get_row when editing.
 	 *
-	 * @param list<array<string, mixed>> $rules Rows.
+	 * @param list<array<string, mixed>> $rules   Rows.
+	 * @param array<string, mixed>|null  $editing The row find() returns, when editing.
+	 * @param int|null                   $count   What count() returns; default the number of rows.
 	 */
-	private function prime_render( array $rules, ?array $editing = null ): void {
+	private function prime_render( array $rules, ?array $editing = null, ?int $count = null ): void {
 		$this->wpdb->queue( 'get_results', $rules );
-		$this->wpdb->queue( 'get_var', count( $rules ) );
+		$this->wpdb->queue( 'get_var', $count ?? count( $rules ) );
 		if ( null !== $editing ) {
 			$this->wpdb->queue( 'get_row', $editing );
 		}
@@ -100,7 +101,7 @@ final class CachePageTest extends TestCase {
 		$this->assertStringContainsString( 'name="bfag_action" value="save_cache_rule"', $html, 'add form shown under the limit' );
 		$this->assertStringContainsString( 'name="_wpnonce" value="nonce-bfag_save_cache_rule"', $html );
 		$this->assertStringContainsString( 'Add cache rule', $html );
-		$this->assertStringNotContainsString( 'Pro allows up to 500', $html );
+		$this->assertStringNotContainsString( 'all of them are in use', $html, 'no limit line under the limit' );
 
 		$table = strpos( $html, '</table>' );
 		$after = strpos( $html, $marker );
@@ -163,11 +164,20 @@ final class CachePageTest extends TestCase {
 		$this->assertStringContainsString( 'required value="60"', $html, 'back to the setting' );
 	}
 
-	public function test_at_the_limit_the_add_form_gives_way_to_the_upsell_line(): void {
+	public function test_by_default_a_second_rule_can_be_added(): void {
 		$this->prime_render( [ $this->rule() ] );
 		$html = bfag_test_render( [ $this->page(), 'render' ] );
-		$this->assertStringContainsString( 'The free plugin allows 1 cache rule — Pro allows up to 500', $html );
+		$this->assertStringContainsString( '1 of 500', $html, 'WPMAP-142: the free plugin allows 500 rules, as Pro does' );
+		$this->assertStringContainsString( 'value="save_cache_rule"', $html, 'the add form is offered with one rule stored' );
+		$this->assertStringNotContainsString( 'all of them are in use', $html );
+	}
+
+	public function test_at_the_limit_the_add_form_gives_way_to_the_limit_line_which_sells_nothing(): void {
+		$this->prime_render( [ $this->rule() ], null, 500 );
+		$html = bfag_test_render( [ $this->page(), 'render' ] );
+		$this->assertStringContainsString( 'This site allows 500 cache rules and all of them are in use. Edit or delete one to add another.', $html );
 		$this->assertStringNotContainsString( 'value="save_cache_rule"', $html );
+		$this->assertStringNotContainsString( 'Pro', $html, 'WPMAP-142: reaching the limit is not an upsell' );
 	}
 
 	public function test_editing_prefills_the_form_even_at_the_limit(): void {
@@ -183,7 +193,7 @@ final class CachePageTest extends TestCase {
 		$this->assertStringContainsString( 'value="120"', $html );
 		$this->assertStringContainsString( 'value="posts,pages"', $html );
 		$this->assertStringContainsString( 'checked="checked"', $html );
-		$this->assertStringNotContainsString( 'Pro allows up to 500', $html );
+		$this->assertStringNotContainsString( 'all of them are in use', $html );
 	}
 
 	public function test_the_table_lists_rules_in_match_order_and_says_the_most_specific_wins(): void {
@@ -289,7 +299,7 @@ final class CachePageTest extends TestCase {
 				'route_glob' => '**',
 			]
 		);
-		$this->wpdb->queue( 'get_var', 1 );
+		$this->wpdb->queue( 'get_var', 500 ); // the default limit, WPMAP-142.
 		$location = $this->redirect_of( [ $this->page(), 'handle_actions' ] );
 		$this->assertStringEndsWith( '&bfag_notice=cache_limit', $location );
 		$this->assertSame( [], $this->wpdb->calls_to( 'insert' ) );

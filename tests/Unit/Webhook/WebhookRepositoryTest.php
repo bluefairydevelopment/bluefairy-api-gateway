@@ -9,6 +9,7 @@ namespace BlueFairy\ApiGateway\Tests\Unit\Webhook;
 
 use BlueFairy\ApiGateway\Logger;
 use BlueFairy\ApiGateway\Settings;
+use BlueFairy\ApiGateway\Support\Limits;
 use BlueFairy\ApiGateway\Tests\TestCase;
 use BlueFairy\ApiGateway\Webhook\WebhookRepository;
 
@@ -31,23 +32,26 @@ final class WebhookRepositoryTest extends TestCase {
 	// create()
 	// ------------------------------------------------------------------
 
-	public function test_create_refuses_the_fourth_webhook_until_the_limit_filter_raises_it(): void {
+	public function test_create_accepts_a_fourth_webhook_by_default_and_refuses_one_at_the_limit(): void {
 		$this->enable_logging();
 		$repo = new WebhookRepository();
-		$this->assertSame( 3, $repo->limit() );
+		$this->assertSame( 500, $repo->limit(), 'WPMAP-142: the same ceiling as Pro' );
+		$this->assertSame( Limits::DEFAULT_LIMIT, $repo->limit() );
 
 		$this->wpdb->queue( 'get_var', '3' );
-		$this->assertFalse( $repo->create( self::VALID ) );
-		$this->assertCount( 0, $this->wpdb->calls_to( 'insert' ) );
-		$this->assertNotEmpty( array_filter( Logger::lines(), static fn( string $l ): bool => str_contains( $l, 'webhook limit reached' ) ) );
+		$this->assertSame( 1, $repo->create( self::VALID ), 'WPMAP-142: three stored webhooks no longer fill the free plugin' );
 
-		$this->wpdb->queue( 'get_var', '2' );
-		$this->assertSame( 1, $repo->create( self::VALID ), 'the third is allowed' );
+		$this->wpdb->queue( 'get_var', '500' );
+		$this->assertFalse( $repo->create( self::VALID ) );
+		$this->assertCount( 1, $this->wpdb->calls_to( 'insert' ) );
+		$this->assertNotEmpty( array_filter( Logger::lines(), static fn( string $l ): bool => str_contains( $l, 'webhook limit reached' ) ) );
 
 		add_filter( 'bfag_webhook_limit', static fn(): int => 10 );
 		$this->assertSame( 10, $repo->limit() );
-		$this->wpdb->queue( 'get_var', '3' );
+		$this->wpdb->queue( 'get_var', '9' );
 		$this->assertSame( 2, $repo->create( self::VALID ) );
+		$this->wpdb->queue( 'get_var', '10' );
+		$this->assertFalse( $repo->create( self::VALID ), 'a filtered limit binds' );
 		$this->assertCount( 2, $this->wpdb->calls_to( 'insert' ) );
 	}
 

@@ -22,9 +22,12 @@ if ( ! defined( 'ABSPATH' ) ) {
  * while Pro allowed 500, so rules 201-500 counted toward the limit but were
  * never listed and never matched).
  *
- * At least the Pro add-on's cap (500); a limit raised beyond MAX_ROWS through
- * `bfag_cache_rule_limit`, `bfag_rate_limit_rule_limit` or
- * `bfag_webhook_limit` stops at MAX_ROWS.
+ * Every site, with or without the Pro add-on, may keep DEFAULT_LIMIT rows of
+ * each kind (WPMAP-142: the same ceiling everywhere — an engineering bound on
+ * the admin lists and the per-request matching, not a paid tier). A site may
+ * lower or raise its own limit through `bfag_cache_rule_limit`,
+ * `bfag_rate_limit_rule_limit` or `bfag_webhook_limit`; a limit raised beyond
+ * MAX_ROWS stops at MAX_ROWS.
  */
 final class Limits {
 
@@ -32,6 +35,12 @@ final class Limits {
 	 * The most rows of one kind that are read, and the most that may exist.
 	 */
 	public const MAX_ROWS = 1000;
+
+	/**
+	 * How many cache rules, rate-limit rules and webhooks a site may keep
+	 * unless a filter says otherwise. At most MAX_ROWS.
+	 */
+	public const DEFAULT_LIMIT = 500;
 
 	/**
 	 * A filtered limit, clamped to 0..MAX_ROWS.

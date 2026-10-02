@@ -26,10 +26,11 @@ use BlueFairy\ApiGateway\Support\Limits;
  * `rl_rules_enabled` for 300 seconds and every write deletes that key, so the
  * middleware never pays for a query a rule change did not make necessary.
  *
- * The free plugin allows one rule and one subject type (`ip`); the Pro add-on
- * raises both through `bfag_rate_limit_rule_limit` and
+ * A site may keep Limits::DEFAULT_LIMIT rules (500), with or without the Pro
+ * add-on (`bfag_rate_limit_rule_limit` lowers or raises that). The free plugin
+ * counts by one subject type (`ip`); the Pro add-on adds more through
  * `bfag_rate_limit_subject_types`. create() reads those filters at call time,
- * never at construction, so a limit raised on `bfag_loaded` is honoured.
+ * never at construction, so a filter added on `bfag_loaded` is honoured.
  */
 final class RateLimitRuleRepository {
 
@@ -210,19 +211,21 @@ final class RateLimitRuleRepository {
 	}
 
 	/**
-	 * Maximum number of rules. One in the free plugin, and never more than
-	 * Limits::MAX_ROWS — the most all() and all_enabled() read (WPMAP-138).
+	 * Maximum number of rules: Limits::DEFAULT_LIMIT unless a filter says
+	 * otherwise, and never more than Limits::MAX_ROWS — the most all() and
+	 * all_enabled() read (WPMAP-138).
 	 */
 	public function limit(): int {
 		/**
 		 * Filters the maximum number of rate-limit rules. Clamped to
-		 * Limits::MAX_ROWS.
+		 * 0..Limits::MAX_ROWS.
 		 *
 		 * @since 1.0.0
+		 * @since 1.0.1 Defaults to Limits::DEFAULT_LIMIT (500); was 1.
 		 *
-		 * @param int $limit Default 1.
+		 * @param int $limit Default Limits::DEFAULT_LIMIT.
 		 */
-		return Limits::clamp( apply_filters( 'bfag_rate_limit_rule_limit', 1 ) );
+		return Limits::clamp( apply_filters( 'bfag_rate_limit_rule_limit', Limits::DEFAULT_LIMIT ) );
 	}
 
 	/**

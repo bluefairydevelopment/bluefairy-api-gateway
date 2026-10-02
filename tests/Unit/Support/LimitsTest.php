@@ -37,9 +37,24 @@ final class LimitsTest extends TestCase {
 		yield 'webhooks' => [ new WebhookRepository(), 'bfag_webhook_limit' ];
 	}
 
-	public function test_the_ceiling_is_at_least_the_pro_cap(): void {
-		// The Pro add-on's BlueFairy\ApiGatewayPro\Plugin::UNLIMITED; its suite asserts the same from its side.
-		$this->assertGreaterThanOrEqual( 500, Limits::MAX_ROWS );
+	public function test_the_default_limit_is_500_and_within_the_ceiling(): void {
+		// WPMAP-142: the free plugin and Pro share this default; the Pro suite asserts Pro leaves it alone.
+		$this->assertSame( 500, Limits::DEFAULT_LIMIT );
+		$this->assertLessThanOrEqual( Limits::MAX_ROWS, Limits::DEFAULT_LIMIT );
+	}
+
+	/**
+	 * WPMAP-142: with no filter attached — the free plugin alone — every kind
+	 * of row may number Limits::DEFAULT_LIMIT, and a site may lower that.
+	 *
+	 * @dataProvider repositories
+	 */
+	public function test_unfiltered_every_limit_is_the_default_and_a_filter_may_lower_it( object $repo, string $filter ): void {
+		$this->assertFalse( has_filter( $filter ), 'control: nothing raises the limit in this test' );
+		$this->assertSame( Limits::DEFAULT_LIMIT, $repo->limit() );
+
+		add_filter( $filter, static fn(): int => 2 );
+		$this->assertSame( 2, $repo->limit() );
 	}
 
 	public function test_clamp_bounds_a_filtered_limit_to_zero_through_the_ceiling(): void {

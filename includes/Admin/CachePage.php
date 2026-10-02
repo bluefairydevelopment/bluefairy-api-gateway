@@ -22,7 +22,7 @@ use BlueFairy\ApiGateway\Settings;
  *
  * Validation lives in CacheRuleRepository; this page turns its refusals
  * into notices and never stores anything itself. When the rule limit is
- * reached the add form gives way to the upsell line.
+ * reached the add form gives way to Page::limit_line().
  */
 final class CachePage extends Page {
 
@@ -33,13 +33,11 @@ final class CachePage extends Page {
 	 *
 	 * @param CacheRuleRepository $rules    Cache rules.
 	 * @param CachePurger         $purger   The one purge entry point (Purge all).
-	 * @param ProUpsell           $upsell   Pro state and copy.
 	 * @param Settings            $settings `default_cache_ttl` pre-fills the add form (U-09).
 	 */
 	public function __construct(
 		private readonly CacheRuleRepository $rules,
 		private readonly CachePurger $purger,
-		private readonly ProUpsell $upsell,
 		private readonly Settings $settings
 	) {}
 
@@ -85,7 +83,7 @@ final class CachePage extends Page {
 		);
 
 		if ( null === $editing && $at_limit ) {
-			echo '<p class="bfag-limit-line">' . esc_html( $this->upsell->limit_line( sprintf( /* translators: %d: number of rules */ _n( '%d cache rule', '%d cache rules', $limit, 'bluefairy-api-gateway' ), $limit ) ) ) . '</p>';
+			echo '<p class="bfag-limit-line">' . esc_html( self::limit_line( sprintf( /* translators: %d: number of rules */ _n( '%d cache rule', '%d cache rules', $limit, 'bluefairy-api-gateway' ), $limit ) ) ) . '</p>';
 		} else {
 			// A failed save re-fills the form once with what was typed (U-11); otherwise the row, or the defaults.
 			$rule = $editing ?? [

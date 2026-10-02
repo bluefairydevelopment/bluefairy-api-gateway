@@ -349,13 +349,26 @@ final class AdminMenuTest extends TestCase {
 	 * cause `cache_invalid` can name is the glob — with GlobMatcher's real
 	 * character class (U-23); the limit has its own code.
 	 */
-	public function test_cache_invalid_names_the_glob_only_and_cache_limit_names_the_allowance(): void {
+	public function test_cache_invalid_names_the_glob_only_and_cache_limit_sells_nothing(): void {
 		$codes = $this->menu()->notices();
 		$this->assertSame( [ 'error', 'Cache rule not saved: the route glob may contain only letters, digits and / * ? . - _ % : @ = & + ~ (up to 500 characters). Your entries are kept in the form below.' ], $codes['cache_invalid'] );
 		$this->assertStringNotContainsString( '(letters, digits, / * ? . - _).', $codes['cache_invalid'][1], 'the old, incomplete charset is gone' );
 		$this->assertStringNotContainsString( 'TTL', $codes['cache_invalid'][1], 'the TTL is clamped, never refused' );
-		$this->assertSame( [ 'error', 'Cache rule not added: the free plugin allows one rule.' ], $codes['cache_limit'] );
+		$this->assertSame( [ 'error', 'Cache rule not added: every cache rule this site allows is in use. Edit or delete one, then add the new rule.' ], $codes['cache_limit'] );
 		$this->assertNotSame( $codes['cache_invalid'], $codes['cache_limit'] );
+	}
+
+	/**
+	 * WPMAP-142: the three limit refusals state the site's limit; none of them
+	 * says "the free plugin allows" or points at Pro (WordPress.org guideline 5).
+	 */
+	public function test_the_limit_refusals_name_the_sites_limit_not_a_paid_tier(): void {
+		$codes = $this->menu()->notices();
+		$this->assertSame( [ 'error', 'Rate-limit rule not added: every rate-limit rule this site allows is in use. Edit or delete one, then add the new rule.' ], $codes['ratelimit_limit'] );
+		$this->assertSame( [ 'error', 'Webhook not added: every webhook this site allows is in use. Edit or delete one, then add the new webhook.' ], $codes['webhook_limit'] );
+		foreach ( [ 'cache_limit', 'ratelimit_limit', 'webhook_limit' ] as $code ) {
+			$this->assertDoesNotMatchRegularExpression( '/free plugin|\bPro\b|\bone rule\b|three/i', $codes[ $code ][1], $code );
+		}
 	}
 
 	public function test_render_notices_prints_the_requested_code_on_the_plugin_screen_only(): void {

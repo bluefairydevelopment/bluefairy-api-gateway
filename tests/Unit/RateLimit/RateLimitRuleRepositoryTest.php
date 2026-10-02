@@ -149,22 +149,22 @@ final class RateLimitRuleRepositoryTest extends TestCase {
 		$this->assertFalse( wp_cache_get( 'rl_rules_enabled', 'bfag' ), 'a write forgets the cached list' );
 	}
 
-	public function test_create_refuses_a_second_rule_under_the_lite_limit_until_the_filter_raises_it(): void {
+	public function test_create_accepts_a_second_rule_by_default_and_refuses_one_at_the_limit(): void {
 		$this->enable_logging();
 		$repo = new RateLimitRuleRepository();
 
 		$this->wpdb->queue( 'get_var', '1' );
-		$this->assertFalse( $repo->create( [ 'label' => 'Second' ] ) );
-		$this->assertCount( 0, $this->wpdb->calls_to( 'insert' ) );
+		$this->assertSame( 1, $repo->create( [ 'label' => 'Second' ] ), 'WPMAP-142: one stored rule no longer fills the free plugin' );
+		$this->assertCount( 1, $this->wpdb->calls_to( 'insert' ) );
+
+		$this->wpdb->queue( 'get_var', '500' );
+		$this->assertFalse( $repo->create( [ 'label' => 'Five hundred and first' ] ) );
+		$this->assertCount( 1, $this->wpdb->calls_to( 'insert' ) );
 		$this->assertStringContainsString( 'limit reached', Logger::lines()[0] );
 
 		add_filter( 'bfag_rate_limit_rule_limit', static fn(): int => 5 );
-		$this->wpdb->queue( 'get_var', '1' );
-		$this->assertSame( 1, $repo->create( [ 'label' => 'Second' ] ) );
-		$this->assertCount( 1, $this->wpdb->calls_to( 'insert' ) );
-
 		$this->wpdb->queue( 'get_var', '5' );
-		$this->assertFalse( $repo->create( [ 'label' => 'Sixth' ] ), 'the raised limit still binds' );
+		$this->assertFalse( $repo->create( [ 'label' => 'Sixth' ] ), 'a site that lowers its limit is held to it' );
 		$this->assertCount( 1, $this->wpdb->calls_to( 'insert' ) );
 	}
 
@@ -294,9 +294,10 @@ final class RateLimitRuleRepositoryTest extends TestCase {
 	// limit(), subject_types()
 	// ------------------------------------------------------------------
 
-	public function test_limit_is_one_until_filtered(): void {
+	public function test_limit_is_500_until_filtered(): void {
 		$repo = new RateLimitRuleRepository();
-		$this->assertSame( 1, $repo->limit() );
+		$this->assertSame( 500, $repo->limit(), 'WPMAP-142: the same ceiling as Pro' );
+		$this->assertSame( Limits::DEFAULT_LIMIT, $repo->limit() );
 		add_filter( 'bfag_rate_limit_rule_limit', static fn(): string => '25' );
 		$this->assertSame( 25, $repo->limit() );
 	}
