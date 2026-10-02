@@ -120,7 +120,7 @@ This plugin connects to services outside your site in one way only: **outbound w
 == Screenshots ==
 
 1. Dashboard — cache hit rate and webhook success rate over 24 hours, the recent failed deliveries with Retry, the row counts and the status endpoint.
-2. Cache — the seeded "All routes" rule with its route glob, TTL and Enabled badge, and Purge all.
+2. Cache — the seeded "All routes" rule (1 of 500) with its route glob, TTL and Enabled badge, Purge all, and the form to add another rule.
 3. Rate limit — the seeded per-IP rule: 300 requests per 60 seconds on every route.
 4. Webhooks — three signed webhooks with their events and last-delivery status, Send test, and the Delivery log button.
 5. Settings — the cache, rate-limit, webhooks and advanced groups.
