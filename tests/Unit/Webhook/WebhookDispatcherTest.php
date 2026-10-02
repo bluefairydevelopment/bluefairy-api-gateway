@@ -595,4 +595,109 @@ final class WebhookDispatcherTest extends TestCase {
 		$this->assertCount( 0, $GLOBALS['bfag_test_http_calls'], 'truncated bytes are not the signed document' );
 		$this->assertCount( 0, $this->wpdb->calls_to( 'update' ) );
 	}
+	// ------------------------------------------------------------------
+	// WPMAP-139: a delivery whose stored copy is truncated can never be
+	// resent, so its failure is final — never left `retrying` forever.
+	// ------------------------------------------------------------------
+
+	/**
+	 * Before the fix the 503 of an oversized payload fired with final =
+	 * false; Pro marked the row `retrying`, redeliver() refused it without
+	 * changing its status, and every sweep selected it again.
+	 */
+	public function test_a_failed_delivery_whose_stored_copy_is_truncated_is_final(): void {
+		$outcomes = [];
+		$listen   = static function () use ( &$outcomes ): void {
+			add_action( 'bfag_webhook_delivery_failed', static function ( int $id, array $webhook, int $attempt, ?int $status, bool $final ) use ( &$outcomes ): void {
+				$outcomes[] = [ 'status' => $status, 'final' => $final ];
+			}, 10, 5 );
+		};
+		$big = [ 'blob' => str_repeat( 'z', 2000 ) ];
+
+		$listen();
+		bfag_test_queue_http( 503, 'later' );
+		$this->dispatcher( [ 'max_payload_bytes' => 1024 ] )->dispatch( $this->webhook(), 'post.published', $big );
+		$this->assertSame( 1, $this->wpdb->calls_to( 'insert' )[0]['data']['truncated'], 'precondition: the stored copy is cut' );
+		$this->assertSame( 'failed', $this->wpdb->calls_to( 'update' )[0]['data']['status'] );
+
+		$this->reset();
+		$listen();
+		bfag_test_queue_http_error( 'http_request_failed', 'cURL error 28' );
+		$this->dispatcher( [ 'max_payload_bytes' => 1024 ] )->dispatch( $this->webhook(), 'post.published', $big );
+
+		// Controls: the same failures of a payload that fits are not final.
+		$this->reset();
+		$listen();
+		bfag_test_queue_http( 503, 'later' );
+		$this->dispatcher( [ 'max_payload_bytes' => 1024 ] )->dispatch( $this->webhook(), 'post.published', [ 'ok' => 1 ] );
+
+		$this->reset();
+		$listen();
+		bfag_test_queue_http_error( 'http_request_failed', 'cURL error 28' );
+		$this->dispatcher( [ 'max_payload_bytes' => 1024 ] )->dispatch( $this->webhook(), 'post.published', [ 'ok' => 1 ] );
+
+		$this->assertSame(
+			[
+				[ 'status' => 503, 'final' => true ],
+				[ 'status' => null, 'final' => true ],
+				[ 'status' => 503, 'final' => false ],
+				[ 'status' => null, 'final' => false ],
+			],
+			$outcomes,
+			'truncated 503, truncated transport error, then the same two with a payload that fits'
+		);
+	}
+
+	public function test_a_truncated_delivery_that_succeeds_fires_no_failure(): void {
+		add_action( 'bfag_webhook_delivery_failed', static function (): void {
+			self::fail( 'a 2xx is never a failure, truncated or not' );
+		} );
+		bfag_test_queue_http( 200, 'ok' );
+		$result = $this->dispatcher( [ 'max_payload_bytes' => 1024 ] )->dispatch( $this->webhook(), 'post.published', [ 'blob' => str_repeat( 'z', 2000 ) ] );
+		$this->assertTrue( $result['success'] );
+		$this->assertSame( 'success', $this->wpdb->calls_to( 'update' )[0]['data']['status'] );
+	}
+
+	/**
+	 * A truncated row a scheduler holds (`retrying`) reaching redeliver()
+	 * ends `failed` with no due time, and the failure action fires once as
+	 * final with the row's stored attempt and status — nothing is sent and
+	 * the stored response is kept.
+	 */
+	public function test_redeliver_ends_a_retrying_truncated_row_as_a_final_failure(): void {
+		$failed = [];
+		add_action( 'bfag_webhook_delivery_failed', static function ( int $id, array $webhook, int $attempt, ?int $status, bool $final ) use ( &$failed ): void {
+			$failed[] = [ $id, $webhook['id'], $attempt, $status, $final ];
+		}, 10, 5 );
+		$this->wpdb->queue( 'get_row', [ 'id' => 14, 'webhook_id' => 7, 'direction' => 'out', 'event' => 'e', 'payload' => '{"cut', 'truncated' => '1', 'status' => 'retrying', 'attempt' => '2', 'http_status' => '503', 'next_retry_at' => '2026-10-02 00:00:00' ] );
+
+		$result = $this->dispatcher()->redeliver( 14, $this->webhook() );
+
+		$this->assertSame( [ 'delivery_id' => 14, 'success' => false, 'http_status' => null ], $result );
+		$this->assertCount( 0, $GLOBALS['bfag_test_http_calls'], 'nothing is sent' );
+		$updates = $this->wpdb->calls_to( 'update' );
+		$this->assertCount( 1, $updates );
+		$this->assertSame(
+			[
+				'status'        => 'failed',
+				'next_retry_at' => null,
+			],
+			$updates[0]['data'],
+			'only the status and the due time change: the last response and attempt stay'
+		);
+		$this->assertSame( [ [ 14, 7, 2, 503, true ] ], $failed );
+	}
+
+	public function test_redeliver_leaves_a_truncated_row_that_is_already_failed_alone(): void {
+		add_action( 'bfag_webhook_delivery_failed', static function (): void {
+			self::fail( 'a failed row was announced when it failed; refusing it again announces nothing' );
+		} );
+		foreach ( [ 'failed', 'success', 'pending' ] as $status ) {
+			$this->reset();
+			$this->wpdb->queue( 'get_row', [ 'id' => 15, 'webhook_id' => 7, 'direction' => 'out', 'event' => 'e', 'payload' => '{"cut', 'truncated' => '1', 'status' => $status, 'attempt' => '1' ] );
+			$this->assertFalse( $this->dispatcher()->redeliver( 15, $this->webhook() )['success'] );
+			$this->assertCount( 0, $this->wpdb->calls_to( 'update' ), "a $status row is not rewritten" );
+			$this->assertCount( 0, $GLOBALS['bfag_test_http_calls'] );
+		}
+	}
 }

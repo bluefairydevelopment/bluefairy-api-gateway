@@ -123,7 +123,8 @@ final class WebhookDispatcher {
 		$attempt = max( 1, $attempt );
 
 		$max_bytes = max( 1, (int) $this->settings->get( 'max_payload_bytes' ) );
-		if ( strlen( $body ) > $max_bytes ) {
+		$truncated = strlen( $body ) > $max_bytes;
+		if ( $truncated ) {
 			// The request still carries the full body; only the stored copy is cut, so this delivery cannot be redelivered.
 			Logger::log(
 				'webhook payload exceeds max_payload_bytes; stored copy will be truncated',
@@ -165,12 +166,19 @@ final class WebhookDispatcher {
 			);
 		}
 
-		return $this->send( $webhook, $event, $payload, $body, $attempt, $delivery_id );
+		// WPMAP-139: a failure of a delivery whose stored copy is cut is
+		// final — nothing could resend it — so a scheduler leaves it `failed`.
+		return $this->send( $webhook, $event, $payload, $body, $attempt, $delivery_id, $truncated );
 	}
 
 	/**
 	 * Resend a stored delivery's exact bytes as the next attempt. A truncated
-	 * payload is refused: its bytes are no longer the signed document. An
+	 * payload is refused: its bytes are no longer the signed document. A
+	 * truncated row that is `retrying` (a scheduler is holding it) is also
+	 * recorded as a final failure — `failed`, `next_retry_at` cleared,
+	 * `bfag_webhook_delivery_failed` with `$is_final` true — so the sweep
+	 * stops selecting it and the final-failure alert fires (WPMAP-139); its
+	 * stored response and attempt are left as they were. An
 	 * inbound row (`direction` other than `out`) is refused too: it was
 	 * written by whoever called the receiving endpoint, and signing it with
 	 * the site's secret would launder an unverified sender's payload.
@@ -202,6 +210,9 @@ final class WebhookDispatcher {
 		}
 		if ( 1 === (int) $row['truncated'] ) {
 			Logger::log( 'redeliver: payload was truncated, refusing to resend', [ 'delivery_id' => $delivery_id ] );
+			if ( 'retrying' === (string) ( $row['status'] ?? '' ) ) {
+				$this->end_unresendable( $delivery_id, $row, $webhook );
+			}
 			return $failure;
 		}
 		$body    = (string) $row['payload'];
@@ -291,6 +302,30 @@ final class WebhookDispatcher {
 	}
 
 	/**
+	 * Record a `retrying` row that can never be resent (its stored payload
+	 * is truncated) as a final failure: `failed`, no due time, and
+	 * `bfag_webhook_delivery_failed` with `$is_final` true, so a scheduler
+	 * leaves it and its final-failure alert fires (WPMAP-139). Nothing is
+	 * sent; the row's last response and attempt stay as recorded.
+	 *
+	 * @param int                  $delivery_id Delivery row id.
+	 * @param array<string, mixed> $row         The delivery row.
+	 * @param array<string, mixed> $webhook     The webhook row.
+	 */
+	private function end_unresendable( int $delivery_id, array $row, array $webhook ): void {
+		$this->deliveries->update(
+			$delivery_id,
+			[
+				'status'        => 'failed',
+				'next_retry_at' => null,
+			]
+		);
+		$http_status = is_numeric( $row['http_status'] ?? null ) ? (int) $row['http_status'] : null;
+		/** This action is documented in includes/Webhook/WebhookDispatcher.php (finish()). */
+		do_action( 'bfag_webhook_delivery_failed', $delivery_id, $webhook, max( 1, (int) ( $row['attempt'] ?? 1 ) ), $http_status, true );
+	}
+
+	/**
 	 * The full row of a webhook given as a summary (no `secret` key — what
 	 * all_enabled() returns, WPMAP-117): read with find(), and null when it
 	 * is gone or no longer enabled. A full row (it carries `secret`) is
@@ -339,9 +374,11 @@ final class WebhookDispatcher {
 	 * @param string               $body        Exact bytes to send.
 	 * @param int                  $attempt     Attempt number.
 	 * @param int                  $delivery_id Delivery row id.
+	 * @param bool                 $unresendable True when the stored copy is truncated (WPMAP-139): a
+	 *                                           failure is then final, because no retry could resend it.
 	 * @return array{delivery_id:int, success:bool, http_status:int|null}
 	 */
-	private function send( array $webhook, string $event, array $payload, string $body, int $attempt, int $delivery_id ): array {
+	private function send( array $webhook, string $event, array $payload, string $body, int $attempt, int $delivery_id, bool $unresendable = false ): array {
 		$was_dispatching     = Plugin::$dispatching;
 		Plugin::$dispatching = true;
 		try {
@@ -437,10 +474,11 @@ final class WebhookDispatcher {
 
 			$response = wp_remote_post( $url, $args );
 			if ( is_wp_error( $response ) ) {
-				return $this->finish( $delivery_id, $webhook, $attempt, false, null, $response->get_error_message() );
+				return $this->finish( $delivery_id, $webhook, $attempt, false, null, $response->get_error_message(), $unresendable );
 			}
-			$code = (int) wp_remote_retrieve_response_code( $response );
-			return $this->finish( $delivery_id, $webhook, $attempt, $code >= 200 && $code < 300, $code, wp_remote_retrieve_body( $response ) );
+			$code    = (int) wp_remote_retrieve_response_code( $response );
+			$success = $code >= 200 && $code < 300;
+			return $this->finish( $delivery_id, $webhook, $attempt, $success, $code, wp_remote_retrieve_body( $response ), ! $success && $unresendable );
 		} finally {
 			Plugin::$dispatching = $was_dispatching;
 		}
@@ -456,7 +494,8 @@ final class WebhookDispatcher {
 	 * @param int|null             $http_status Response code, null for a transport failure.
 	 * @param string               $body        Response body or error message.
 	 * @param bool                 $is_final    True when a retry could never succeed (the preset
-	 *                                          skipped it, or the URL is invalid or unsafe).
+	 *                                          skipped it, the URL is invalid or unsafe, or the stored
+	 *                                          payload is truncated so nothing could resend it).
 	 * @return array{delivery_id:int, success:bool, http_status:int|null}
 	 */
 	private function finish( int $delivery_id, array $webhook, int $attempt, bool $success, ?int $http_status, string $body, bool $is_final = false ): array {
@@ -500,12 +539,15 @@ final class WebhookDispatcher {
 			 * A delivery failed. The Pro add-on schedules retries and alerts
 			 * from here.
 			 *
-			 * `$final` is true for the two outcomes a retry can never change
+			 * `$final` is true for the outcomes a retry can never change
 			 * (N-05 / D3): the request-args filter cancelled the delivery
 			 * (`bfag_skip` — the preset could not build a request from this
-			 * payload) or the URL is invalid or unsafe. A scheduler must leave
-			 * such a row `failed`. It is false for an HTTP (non-2xx) or
-			 * transport failure (`$http_status` null), which may be retried.
+			 * payload), the URL is invalid or unsafe, or the payload was
+			 * longer than `max_payload_bytes`, so the stored copy is
+			 * truncated and could not be resent (WPMAP-139). A scheduler must
+			 * leave such a row `failed`. It is false for any other HTTP
+			 * (non-2xx) or transport failure (`$http_status` null), which may
+			 * be retried.
 			 *
 			 * @since 1.0.0
 			 *
