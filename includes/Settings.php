@@ -23,6 +23,8 @@ if ( ! defined( 'ABSPATH' ) ) {
  */
 final class Settings {
 
+	use Support\WritesOptions;
+
 	public const OPTION = 'bfag_settings';
 
 	/**
@@ -77,6 +79,13 @@ final class Settings {
 	private ?array $cache = null;
 
 	/**
+	 * Whether the last update() reached the database (F21).
+	 *
+	 * @var bool
+	 */
+	private bool $last_update_ok = true;
+
+	/**
 	 * All settings, merged over the defaults.
 	 *
 	 * @return array<string, mixed>
@@ -102,14 +111,29 @@ final class Settings {
 	/**
 	 * Replace the stored option with a sanitised copy of $values.
 	 *
+	 * Whether the write reached the database is kept for
+	 * last_update_succeeded() (F21 / WPMAP-110): `update_option()` alone
+	 * cannot tell a refused write from an unchanged value. A refused write
+	 * is logged.
+	 *
 	 * @param array<string, mixed> $values Raw values, typically from a form.
-	 * @return array<string, mixed> What was stored.
+	 * @return array<string, mixed> What was meant to be stored (the sanitised values).
 	 */
 	public function update( array $values ): array {
-		$clean = $this->sanitize( $values );
-		update_option( self::OPTION, $clean, true ); // Autoloaded: read on every request (P7).
-		$this->cache = null;
+		$clean                = $this->sanitize( $values );
+		$this->last_update_ok = $this->write_option( self::OPTION, $clean, true ); // Autoloaded: read on every request (P7).
+		$this->cache          = null;
+		if ( ! $this->last_update_ok ) {
+			Logger::log( 'settings not saved: the database refused the option write', [ 'option' => self::OPTION ] );
+		}
 		return $clean;
+	}
+
+	/**
+	 * Did the last update() store its values? True before any update().
+	 */
+	public function last_update_succeeded(): bool {
+		return $this->last_update_ok;
 	}
 
 	/**

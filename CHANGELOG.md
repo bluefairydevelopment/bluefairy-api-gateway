@@ -29,6 +29,7 @@ First release. The free base plugin of a pair: BlueFairy API Gateway Pro is an a
 - Custom webhook headers are sanitised at send time: `Host`, `Content-Length`, `Transfer-Encoding`, `Connection`, `Cookie`, `Authorization`, `Proxy-Authorization`, `X-Forwarded-*`, the plugin's own header names and any value containing a line break are dropped. `Authorization` is accepted only from the `bfag_webhook_request_args` filter.
 - An API-key scope is read only through the `bfag_request_key_scope` filter, never from a request parameter.
 - Every admin action checks the screen and the capability before the nonce; every output is escaped at the boundary.
+- A settings save or cache purge the database refuses is reported — an error notice, or `500 bfag_purge_failed` from the purge endpoint and the AJAX button — never as saved or purged.
 - Table creation is verified after `dbDelta`; a missing table is logged, recorded in `bfag_install_error`, shown as an admin notice and retried at most once every five minutes.
 
 ### Notes

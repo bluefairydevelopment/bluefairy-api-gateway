@@ -232,10 +232,15 @@ final class SettingsPage extends Page {
 		}
 		$values = isset( $raw['bfag'] ) && is_array( $raw['bfag'] ) ? $raw['bfag'] : [];
 		$clean  = $this->settings->update( $values );
+		if ( ! $this->settings->last_update_succeeded() ) {
+			// F21: the database refused the write. Say so, and do not tell the
+			// add-on the settings were saved.
+			$this->redirect( 'settings_save_failed' );
+		}
 
 		/**
 		 * The base settings were saved. The add-on stores its own fields
-		 * from $raw here.
+		 * from $raw here. Not fired when the write failed (F21).
 		 *
 		 * @since 1.0.0
 		 *

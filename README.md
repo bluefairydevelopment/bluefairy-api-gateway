@@ -117,6 +117,8 @@ Body (JSON or form): optional `tags` — an array of tag names, or a comma-separ
 
 Tag names are lower-cased and reduced to `[a-z0-9_:-]`, so `post:42` arrives intact; a purge naming a tag that no enabled rule carries is harmless (and logged when debug logging is on).
 
+If the database refuses to store the new generation, nothing was purged and the answer says so — `500` with `{ "code": "bfag_purge_failed", … }` — never a `200` claiming a purge. The Cache tab's **Purge all** and the Settings form report a refused write the same way, as an error notice instead of *purged* / *saved*.
+
 ### Response headers on every REST request
 
 | Header | Set by | Values |
@@ -186,6 +188,7 @@ includes/
     GlobMatcher.php              Route globs: * one segment, ** anything, ? one character
     RequestContext.php           Client IP behind trusted proxies
     IpUtils.php                  IPv4/IPv6 and CIDR helpers
+    WritesOptions.php            An option write whose outcome is known (refused vs unchanged)
   Admin/
     AdminMenu.php                Settings → API Gateway: tabs, actions, notices, AJAX
     Page.php                     Base class: nonce + capability on every action

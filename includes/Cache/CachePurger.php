@@ -114,9 +114,15 @@ final class CachePurger {
 
 	/**
 	 * Orphan every stored response.
+	 *
+	 * @return bool False when nothing was purged — the store could not
+	 *              record the new generation (F21 / WPMAP-110); then
+	 *              `bfag_cache_purged` does not fire.
 	 */
-	public function purge_all(): void {
-		$this->store->flush_all();
+	public function purge_all(): bool {
+		if ( ! $this->store->flush_all() ) {
+			return false;
+		}
 		/**
 		 * The response cache was purged.
 		 *
@@ -126,6 +132,7 @@ final class CachePurger {
 		 * @param string[] $tags  The tags bumped (empty for 'all').
 		 */
 		do_action( 'bfag_cache_purged', 'all', [] );
+		return true;
 	}
 
 	/**
@@ -142,9 +149,12 @@ final class CachePurger {
 	 * is treated the same whoever names it.
 	 *
 	 * @param string[] $tags Tags to bump.
-	 * @return string[] The tags actually bumped (the known ones, in the order given).
+	 * @return string[]|false The tags actually bumped (the known ones, in the
+	 *                        order given); false when the store could not
+	 *                        record the bump (F21 / WPMAP-110: nothing was
+	 *                        purged, and `bfag_cache_purged` does not fire).
 	 */
-	public function purge_tags( array $tags ): array {
+	public function purge_tags( array $tags ): array|false {
 		$tags  = array_values( array_filter( $tags, static fn( mixed $tag ): bool => is_string( $tag ) && '' !== $tag ) );
 		$known = $this->known_tags();
 
@@ -154,7 +164,9 @@ final class CachePurger {
 		}
 		$tags = array_values( array_intersect( $tags, $known ) );
 
-		$this->store->bump_tags( $tags, $known );
+		if ( ! $this->store->bump_tags( $tags, $known ) ) {
+			return false;
+		}
 		/** This action is documented in includes/Cache/CachePurger.php */
 		do_action( 'bfag_cache_purged', 'tags', $tags );
 		return $tags;

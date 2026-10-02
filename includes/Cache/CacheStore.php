@@ -34,6 +34,8 @@ use BlueFairy\ApiGateway\Logger;
  */
 final class CacheStore {
 
+	use \BlueFairy\ApiGateway\Support\WritesOptions;
+
 	/**
 	 * Object-cache group for stored responses.
 	 */
@@ -249,15 +251,31 @@ final class CacheStore {
 	/**
 	 * Orphan every stored response by bumping the global generation, and
 	 * clear the response group outright where the object cache supports it.
+	 *
+	 * @return bool False when nothing was purged (F21 / WPMAP-110): the
+	 *              generation could not be written and no persistent
+	 *              response group was flushed in its place. Logged.
 	 */
-	public function flush_all(): void {
-		$next = $this->generation() + 1;
-		update_option( self::GENERATION_OPTION, $next, true ); // Autoloaded: every cacheable request keys on it (P7).
+	public function flush_all(): bool {
+		$next    = $this->generation() + 1;
+		$written = $this->write_option( self::GENERATION_OPTION, $next, true ); // Autoloaded: every cacheable request keys on it (P7).
 		wp_cache_delete( self::META_KEY, self::META_GROUP );
 
+		$flushed = false;
 		if ( wp_cache_supports( 'flush_group' ) ) {
-			wp_cache_flush_group( self::GROUP );
+			// Only a persistent group holds responses; on the transient backend this clears nothing that matters.
+			$flushed = wp_cache_flush_group( self::GROUP ) && $this->use_object_cache();
 		}
+		if ( ! $written ) {
+			Logger::log(
+				'cache generation not stored: the database refused the option write',
+				[
+					'option'        => self::GENERATION_OPTION,
+					'group_flushed' => $flushed,
+				]
+			);
+		}
+		return $written || $flushed;
 	}
 
 	/**
@@ -287,8 +305,11 @@ final class CacheStore {
 	 *
 	 * @param string[]      $tags Tag names.
 	 * @param string[]|null $keep Tags to retain a generation for; null keeps everything.
+	 * @return bool False when the new generations could not be stored (F21 /
+	 *              WPMAP-110: nothing was purged; logged). True otherwise,
+	 *              including when there was nothing to change.
 	 */
-	public function bump_tags( array $tags, ?array $keep = null ): void {
+	public function bump_tags( array $tags, ?array $keep = null ): bool {
 		$generations = $this->tag_generations();
 		$changed     = false;
 		$seen        = [];
@@ -312,14 +333,20 @@ final class CacheStore {
 			}
 		}
 		if ( ! $changed && ! $dropped ) {
-			return;
+			return true;
 		}
-		update_option( self::TAG_GENERATIONS_OPTION, $generations, false );
+		$written = $this->write_option( self::TAG_GENERATIONS_OPTION, $generations, false );
 		wp_cache_delete( self::TAGS_KEY, self::META_GROUP );
 		$this->tag_generations = null;
+		if ( ! $written ) {
+			Logger::log( 'tag generations not stored: the database refused the option write', [ 'option' => self::TAG_GENERATIONS_OPTION ] );
+			return false;
+		}
 		if ( $dropped ) {
+			// The requested tags are bumped either way; a failed flush here is logged by flush_all().
 			$this->flush_all();
 		}
+		return true;
 	}
 
 	/**

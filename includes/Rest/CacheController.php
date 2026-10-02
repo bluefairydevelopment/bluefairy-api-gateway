@@ -104,9 +104,8 @@ final class CacheController {
 	public function purge( \WP_REST_Request $request ): \WP_REST_Response {
 		$requested = $this->sanitize_tags( $request->get_param( 'tags' ) );
 		if ( [] === $requested ) {
-			$this->purger->purge_all();
+			$tags   = $this->purger->purge_all() ? [] : false;
 			$purged = 'all';
-			$tags   = [];
 		} else {
 			// Decided from what was REQUESTED, not from what was bumped: tags no
 			// enabled rule carries are dropped by the purger, and an answer of
@@ -114,6 +113,17 @@ final class CacheController {
 			// when nothing was (D-AG-1).
 			$tags   = $this->purger->purge_tags( $requested );
 			$purged = 'tags';
+		}
+		if ( false === $tags ) {
+			// F21: the generation write failed, so nothing was purged — never a 200 that says it was.
+			return new \WP_REST_Response(
+				[
+					'code'    => 'bfag_purge_failed',
+					'message' => __( 'The response cache was not purged: the database refused the write.', 'bluefairy-api-gateway' ),
+					'data'    => [ 'status' => 500 ],
+				],
+				500
+			);
 		}
 		return new \WP_REST_Response(
 			[

@@ -142,8 +142,7 @@ final class CachePage extends Page {
 				$this->redirect( $this->rules->set_enabled( $id, self::flag( $fields, 'enabled' ) ) ? 'cache_toggled' : 'error' );
 				// Unreachable.
 			case 'purge_cache':
-				$this->purger->purge_all();
-				$this->redirect( 'cache_purged' );
+				$this->redirect( $this->purger->purge_all() ? 'cache_purged' : 'cache_purge_failed' );
 				// Unreachable.
 			default:
 				$this->redirect( 'error' );

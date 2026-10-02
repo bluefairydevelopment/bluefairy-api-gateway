@@ -33,6 +33,8 @@ use BlueFairy\ApiGateway\Logger;
  */
 final class WebhookRepository {
 
+	use \BlueFairy\ApiGateway\Support\WritesOptions;
+
 	public const CACHE_GROUP = 'bfag';
 	public const CACHE_KEY   = 'webhooks_enabled';
 	public const CACHE_TTL   = 300;
@@ -289,7 +291,8 @@ final class WebhookRepository {
 	/**
 	 * Drop the object-cached enabled list and rewrite EVENTS_OPTION from the
 	 * table. Called after every write (also a failed or rolled-back one: the
-	 * table is the truth either way).
+	 * table is the truth either way). When the option write is refused the
+	 * option is deleted instead, so the next enabled_events() rebuilds it.
 	 */
 	public function invalidate(): void {
 		global $wpdb;
@@ -299,7 +302,11 @@ final class WebhookRepository {
 			$wpdb->prepare( "SELECT DISTINCT event FROM {$wpdb->prefix}bfag_webhooks WHERE enabled = %d ORDER BY event ASC LIMIT %d", 1, 1000 )
 		);
 		$events = array_values( array_map( 'strval', array_filter( is_array( $events ) ? $events : [], 'is_scalar' ) ) );
-		update_option( self::EVENTS_OPTION, $events, true );
+		if ( ! $this->write_option( self::EVENTS_OPTION, $events, true ) ) {
+			// F21: a stale list would leave an enabled webhook's event unhooked. Drop it so the next boot rebuilds it from the table.
+			delete_option( self::EVENTS_OPTION );
+			Logger::log( 'webhook event list not stored: the database refused the option write; it is rebuilt on the next request', [ 'option' => self::EVENTS_OPTION ] );
+		}
 	}
 
 	/**

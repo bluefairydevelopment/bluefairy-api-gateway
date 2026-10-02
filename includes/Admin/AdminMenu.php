@@ -332,6 +332,8 @@ final class AdminMenu {
 			'webhook_test_ok'         => [ 'success', __( 'Test delivery succeeded. The receiver\'s response is in the delivery log.', 'bluefairy-api-gateway' ) ],
 			'webhook_test_failed'     => [ 'error', __( 'Test delivery failed. The receiver\'s response is in the delivery log.', 'bluefairy-api-gateway' ) ],
 			'settings_saved'          => [ 'success', __( 'Settings saved.', 'bluefairy-api-gateway' ) ],
+			'settings_save_failed'    => [ 'error', __( 'Settings not saved: the database refused the write. Nothing was changed; try again, and check the database if it keeps failing.', 'bluefairy-api-gateway' ) ],
+			'cache_purge_failed'      => [ 'error', __( 'The response cache was not purged: the database refused the write. Try again, and check the database if it keeps failing.', 'bluefairy-api-gateway' ) ],
 		];
 
 		/**
@@ -492,11 +494,11 @@ final class AdminMenu {
 				)
 			);
 		}
-		if ( [] === $tags ) {
-			$this->purger->purge_all();
-		} else {
-			$tags = $this->purger->purge_tags( $tags );
+		$purged = [] === $tags ? $this->purger->purge_all() : $this->purger->purge_tags( $tags );
+		if ( false === $purged ) {
+			wp_send_json_error( [ 'message' => __( 'The response cache was not purged: the database refused the write.', 'bluefairy-api-gateway' ) ], 500 );
 		}
+		$tags = is_array( $purged ) ? $purged : [];
 		wp_send_json_success(
 			[
 				'purged' => [] === $tags ? 'all' : 'tags',
