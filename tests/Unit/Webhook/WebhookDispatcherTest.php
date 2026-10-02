@@ -563,7 +563,7 @@ final class WebhookDispatcherTest extends TestCase {
 		$this->assertSame( [ 'delivery_id' => 31, 'success' => true, 'http_status' => 204 ], $result );
 	}
 
-	public function test_dispatch_pending_fails_the_row_without_sending_when_the_webhook_is_gone_disabled_or_the_payload_truncated(): void {
+	public function test_dispatch_pending_fails_the_row_without_sending_when_the_webhook_is_gone_or_disabled(): void {
 		$dispatcher = $this->dispatcher();
 		$this->enable_logging(); // After dispatcher(): that helper resets the settings option.
 		$row        = [ 'id' => 32, 'webhook_id' => 7, 'event' => 'post.updated', 'payload' => '{}', 'truncated' => 0, 'status' => 'pending', 'attempt' => 1 ];
@@ -572,16 +572,55 @@ final class WebhookDispatcherTest extends TestCase {
 		$this->assertSame( [ 'delivery_id' => 32, 'success' => false, 'http_status' => null ], $dispatcher->dispatch_pending( $row ), 'missing webhook (not in the enabled list)' );
 		wp_cache_set( WebhookRepository::CACHE_KEY, [ $this->webhook( [ 'enabled' => 0 ] ) ], WebhookRepository::CACHE_GROUP );
 		$this->assertFalse( $dispatcher->dispatch_pending( $row )['success'], 'a disabled row that somehow sits in the list' );
-		wp_cache_set( WebhookRepository::CACHE_KEY, [ $this->webhook() ], WebhookRepository::CACHE_GROUP );
-		$this->assertFalse( $dispatcher->dispatch_pending( [ 'truncated' => 1 ] + $row )['success'], 'truncated payload' );
 
 		$this->assertSame( [], $GLOBALS['bfag_test_http_calls'], 'nothing sent' );
 		foreach ( $this->wpdb->calls_to( 'update' ) as $update ) {
 			$this->assertSame( [ 'status' => 'failed', 'next_retry_at' => null ], $update['data'] );
 			$this->assertSame( [ 'id' => 32 ], $update['where'] );
 		}
-		$this->assertCount( 3, $this->wpdb->calls_to( 'update' ) );
-		$this->assertCount( 3, Logger::lines() );
+		$this->assertCount( 2, $this->wpdb->calls_to( 'update' ) );
+		$this->assertCount( 2, Logger::lines() );
+	}
+
+	/**
+	 * WPMAP-141: a delivery queued past the flush limit whose stored payload
+	 * is truncated can never be sent. It was marked `failed` with no failure
+	 * action, so Pro never alerted; it now ends as a final failure, exactly
+	 * like an oversized delivery that fails inside the shutdown flush.
+	 */
+	public function test_dispatch_pending_ends_a_truncated_row_as_a_final_failure_and_fires_the_action(): void {
+		$dispatcher = $this->dispatcher();
+		$failed     = [];
+		add_action( 'bfag_webhook_delivery_failed', static function ( int $id, array $webhook, int $attempt, ?int $status, bool $final ) use ( &$failed ): void {
+			$failed[] = [ $id, $webhook['id'], $attempt, $status, $final ];
+		}, 10, 5 );
+		add_action( 'bfag_webhook_delivered', static function (): void {
+			self::fail( 'nothing was delivered' );
+		} );
+		wp_cache_set( WebhookRepository::CACHE_KEY, [ $this->webhook() ], WebhookRepository::CACHE_GROUP );
+		$row = [ 'id' => 33, 'webhook_id' => 7, 'event' => 'post.updated', 'payload' => '{"blob":"zz', 'truncated' => 1, 'status' => 'pending', 'attempt' => 1, 'next_retry_at' => '2026-10-02 00:00:00' ];
+
+		$result = $dispatcher->dispatch_pending( $row );
+
+		$this->assertSame( [ 'delivery_id' => 33, 'success' => false, 'http_status' => null ], $result );
+		$this->assertSame( [], $GLOBALS['bfag_test_http_calls'], 'nothing sent' );
+		$updates = $this->wpdb->calls_to( 'update' );
+		$this->assertCount( 1, $updates );
+		$this->assertSame( [ 'id' => 33 ], $updates[0]['where'] );
+		$this->assertSame( 'failed', $updates[0]['data']['status'] );
+		$this->assertNull( $updates[0]['data']['http_status'] );
+		$this->assertNull( $updates[0]['data']['next_retry_at'], 'handed out once' );
+		$this->assertSame( 1, $updates[0]['data']['attempt'] );
+		$this->assertSame( WebhookDispatcher::TRUNCATED_UNSENT, $updates[0]['data']['response_body'], 'the log says why nothing was sent' );
+		$this->assertSame( [ [ 33, 7, 1, null, true ] ], $failed, 'fires once, final' );
+
+		// Control: the same row with a payload that fits is sent.
+		$this->reset();
+		wp_cache_set( WebhookRepository::CACHE_KEY, [ $this->webhook() ], WebhookRepository::CACHE_GROUP );
+		$this->wpdb->rows_by_id( 'bfag_webhooks', [ $this->webhook() ] );
+		bfag_test_queue_http( 200, 'ok' );
+		$this->assertTrue( $this->dispatcher()->dispatch_pending( [ 'truncated' => 0, 'payload' => '{"ok":1}' ] + $row )['success'] );
+		$this->assertCount( 1, $GLOBALS['bfag_test_http_calls'] );
 	}
 
 	public function test_redeliver_refuses_a_missing_or_truncated_delivery(): void {

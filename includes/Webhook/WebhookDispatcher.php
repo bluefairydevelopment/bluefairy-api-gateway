@@ -69,6 +69,12 @@ final class WebhookDispatcher {
 	public const TIMEOUT = 5;
 
 	/**
+	 * The response body recorded for a queued delivery whose stored payload
+	 * is truncated: nothing was sent (WPMAP-141).
+	 */
+	public const TRUNCATED_UNSENT = 'Payload longer than Max stored payload (bytes): the stored copy is truncated, so it could not be sent (nothing sent).';
+
+	/**
 	 * Reader of a row's custom headers and of the webhook a queued delivery
 	 * belongs to: the shared instance from Plugin::boot(), or one built here
 	 * when none was given (F16).
@@ -238,9 +244,13 @@ final class WebhookDispatcher {
 	 * stored payload, as the attempt the row records (1). The webhook comes
 	 * from `WebhookRepository::all_enabled()` — object-cached, so a batch of
 	 * queued rows costs no webhook query per row (PN4); a webhook missing
-	 * from it (deleted or disabled), or a truncated payload, marks the row
-	 * `failed` without sending. `next_retry_at` is cleared first so the row
-	 * is handed out once.
+	 * from it (deleted or disabled) marks the row `failed` without sending.
+	 * A truncated payload (WPMAP-141) cannot be sent at all — the full body
+	 * existed only in the request that queued it — so the row is finished as
+	 * a FINAL failure: `failed`, `response_body` TRUNCATED_UNSENT, and
+	 * `bfag_webhook_delivery_failed` with `$is_final` true, as the shutdown
+	 * flush does for an oversized delivery that fails, so the Pro alert
+	 * fires. `next_retry_at` is cleared first so the row is handed out once.
 	 *
 	 * @param array<string, mixed> $row A delivery row from DeliveryRepository::pending().
 	 * @return array{delivery_id:int, success:bool, http_status:int|null}
@@ -272,15 +282,22 @@ final class WebhookDispatcher {
 			return $failure;
 		}
 		if ( 1 === (int) ( $row['truncated'] ?? 0 ) ) {
+			// WPMAP-141: the stored copy is all that is left and it is cut, so
+			// nothing can be sent now or ever. Recorded like any other final
+			// failure — `failed`, the reason as the response, and
+			// bfag_webhook_delivery_failed with $is_final true — so a scheduler
+			// leaves it and the final-failure alert fires, exactly as for an
+			// oversized delivery that failed in the shutdown flush.
 			Logger::log( 'pending delivery dropped: payload was truncated', [ 'delivery_id' => $delivery_id ] );
-			$this->deliveries->update(
+			return $this->finish(
 				$delivery_id,
-				[
-					'status'        => 'failed',
-					'next_retry_at' => null,
-				]
+				$webhook,
+				max( 1, (int) ( $row['attempt'] ?? 1 ) ),
+				false,
+				null,
+				self::TRUNCATED_UNSENT,
+				true
 			);
-			return $failure;
 		}
 		// The summary decided; the credentials come from the row itself (WPMAP-117), one read per delivery sent.
 		$webhook = $this->with_credentials( $webhook );

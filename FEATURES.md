@@ -425,7 +425,10 @@ the PHP worker that saved them, and the queue drains at the endpoint's
 speed rather than twenty rows per cron spawn. Under WP-CLI or WP-Cron, where
 there is no response to wait for, the queue is flushed as soon as it passes
 twenty rather than held in memory. A queued row the cron never reaches is
-pruned after a day. A `save_post` triggered by a receiver writing back during
+pruned after a day. A queued delivery whose payload is longer than *Max
+stored payload (bytes)* cannot be sent at all — only the truncated stored
+copy is left — so it is recorded as `failed` with the reason as its
+response, and reported as a final failure (with Pro, the failure alert). A `save_post` triggered by a receiver writing back during
 delivery is ignored rather than queued, so two sites pointing at each other
 cannot loop.
 
@@ -536,7 +539,7 @@ body. Fifty rows, newest first; filtered to one webhook when you arrive from
 its row.
 
 - **Response** — the first 2,000 characters of what the receiver returned (`HTTP 500` then the body), or `Transport error: <message>` when there was no HTTP response at all (DNS, connection refused, timeout). *Send test* reports the same status in its notice: *Test delivery failed (HTTP 503)* or *(no HTTP response: transport error)*.
-- **Truncated** — the stored payload was cut at *Max stored payload (bytes)*. The receiver got the full body; the log did not keep it, so the delivery cannot be resent as signed.
+- **Truncated** — the stored payload was cut at *Max stored payload (bytes)*. The receiver got the full body; the log did not keep it, so the delivery cannot be resent as signed. A truncated delivery that was queued (past the first twenty of a request) was never sent, and says so in its response.
 - **Retry** resends the stored bytes as attempt + 1 with a new timestamp and signature. It is the only retry in the free plugin; automatic retries with back-off are a Pro feature. Only outgoing rows can be resent: an inbound row (Pro's receiving endpoint) was written by whoever called it, and the plugin will not sign someone else's payload with the site's secret.
 - **Retention** — `bfag_cron_prune_deliveries` removes `success` and `failed` rows older than *Delivery log retention* once a day, 5,000 at a time. `pending` and `retrying` rows older than a day are removed whatever the retention, so a row the cron never reached cannot live for ever.
 
@@ -701,7 +704,7 @@ fired.
 | `bfag_webhook_payload` | filter | `( array\|null $payload, string $event, array $hook_args )` | The payload before it is signed and sent. Return `null` to suppress the delivery. |
 | `bfag_webhook_request_args` | filter | `( array $args, array $webhook, string $event, array $payload )` | The `wp_remote_post()` arguments. May rewrite `body` and `headers`, set `url` to redirect the delivery, and set `headers['Authorization']` — the only place a credential header is accepted. The filter is trusted for credentials, not for transport: after it runs the headers are sanitised again, so a `Host`, `X-Forwarded-*` or line-break value it plants is dropped. Set `$args['bfag_skip']` to a non-empty string to cancel the delivery: it is logged as `failed` with that string as the response body, nothing is sent, and `bfag_webhook_delivery_failed` fires with `$is_final` true. |
 | `bfag_webhook_allow_http` | filter | `( bool $allow = false )` | Permit `http://` targets (local development only). |
-| `bfag_webhook_delivery_failed` | action | `( int $delivery_id, array $webhook, int $attempt, int\|null $http_status, bool $is_final )` | A delivery failed. `$is_final` is **true** for the outcomes a retry can never change — the request-args filter cancelled the delivery (`bfag_skip`: the preset could not build a request from this payload), the URL is invalid or unsafe (logged as `Invalid or unsafe URL (nothing sent): <url>`), or the payload was longer than *Max stored payload (bytes)*, so the stored copy is truncated and could not be resent; a scheduler must leave such a row `failed`. It is **false** for any other non-2xx answer or transport error (`$http_status` null), which may be retried. Pro schedules retries and alerts from here; a listener registered with four accepted arguments keeps working. |
+| `bfag_webhook_delivery_failed` | action | `( int $delivery_id, array $webhook, int $attempt, int\|null $http_status, bool $is_final )` | A delivery failed. `$is_final` is **true** for the outcomes a retry can never change — the request-args filter cancelled the delivery (`bfag_skip`: the preset could not build a request from this payload), the URL is invalid or unsafe (logged as `Invalid or unsafe URL (nothing sent): <url>`), or the payload was longer than *Max stored payload (bytes)*, so the stored copy is truncated and could not be resent (or, for a delivery queued past the first twenty of a request, could not be sent at all — its response reads *Payload longer than Max stored payload (bytes): … (nothing sent).*); a scheduler must leave such a row `failed`. It is **false** for any other non-2xx answer or transport error (`$http_status` null), which may be retried. Pro schedules retries and alerts from here; a listener registered with four accepted arguments keeps working. |
 | `bfag_webhook_delivered` | action | `( int $delivery_id, array $webhook )` | A delivery succeeded. |
 | `bfag_webhook_finish_response` | filter | `( bool $finish )` | Whether the shutdown flush calls `fastcgi_finish_request()` before sending (default: whenever PHP is not running as CLI). A plugin that prints on `shutdown` after this one returns `false`. |
 
