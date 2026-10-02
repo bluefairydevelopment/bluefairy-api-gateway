@@ -7,6 +7,9 @@
  * @var int                                        $webhook_id The filter, 0 for all.
  * @var string                                     $back_url   Back to the webhook list.
  * @var \BlueFairy\ApiGateway\Admin\WebhookPage    $page       For url().
+ * @var int                                        $total      Every delivery the filter matches.
+ * @var array{paged:int, pages:int, offset:int, per_page:int} $window The page shown (Pager::window()).
+ * @var string                                     $list_url   This log's URL without the page argument.
  *
  * @package BlueFairy\ApiGateway
  */
@@ -25,6 +28,17 @@ defined( 'ABSPATH' ) || exit;
 	<span class="bfag-status" data-bfag-status aria-live="polite"></span>
 </div>
 
+<?php
+\BlueFairy\ApiGateway\Admin\Pager::render(
+	\BlueFairy\ApiGateway\Admin\WebhookPage::LOG_PAGE_ARG,
+	$list_url,
+	$window['paged'],
+	$window['pages'],
+	/* translators: %s: number of deliveries */
+	sprintf( _n( '%s delivery', '%s deliveries', $total, 'bluefairy-api-gateway' ), number_format_i18n( $total ) ),
+	'bfag-log-pages'
+);
+?>
 <div class="bfag-table-scroll">
 <table class="widefat striped bfag-table">
 	<caption class="screen-reader-text"><?php esc_html_e( 'Delivery log, newest first', 'bluefairy-api-gateway' ); ?></caption>

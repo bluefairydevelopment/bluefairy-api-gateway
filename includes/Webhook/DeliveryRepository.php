@@ -137,28 +137,31 @@ final class DeliveryRepository {
 	 * One literal statement whatever the filters: each optional filter is a
 	 * `( %d = 0 OR column = %d )` pair that MySQL folds away when the value
 	 * is the neutral one, so nothing is ever interpolated into the SQL.
+	 * `$offset` pages through the rest (WPMAP-144: the delivery log and the
+	 * Pro REST list could reach only the newest rows); count() says how many
+	 * rows the same filters match.
 	 *
-	 * @param int                  $limit   Maximum rows.
+	 * @param int                  $limit   Maximum rows (1..500).
 	 * @param array<string, mixed> $filters webhook_id, status, direction.
+	 * @param int                  $offset  Rows to skip (a page's start).
 	 * @return list<array<string, mixed>>
 	 */
-	public function recent( int $limit = 50, array $filters = [] ): array {
+	public function recent( int $limit = 50, array $filters = [], int $offset = 0 ): array {
 		global $wpdb;
 
-		$webhook_id = isset( $filters['webhook_id'] ) && (int) $filters['webhook_id'] > 0 ? (int) $filters['webhook_id'] : 0;
-		$status     = isset( $filters['status'] ) && is_string( $filters['status'] ) && in_array( $filters['status'], self::STATUSES, true ) ? $filters['status'] : '';
-		$direction  = isset( $filters['direction'] ) && in_array( $filters['direction'], [ 'in', 'out' ], true ) ? $filters['direction'] : '';
+		[ $webhook_id, $status, $direction ] = $this->filter_values( $filters );
 
 		$rows = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
 			$wpdb->prepare(
-				"SELECT * FROM {$wpdb->prefix}bfag_webhook_deliveries WHERE ( %d = 0 OR webhook_id = %d ) AND ( %s = '' OR status = %s ) AND ( %s = '' OR direction = %s ) ORDER BY created_at DESC, id DESC LIMIT %d",
+				"SELECT * FROM {$wpdb->prefix}bfag_webhook_deliveries WHERE ( %d = 0 OR webhook_id = %d ) AND ( %s = '' OR status = %s ) AND ( %s = '' OR direction = %s ) ORDER BY created_at DESC, id DESC LIMIT %d OFFSET %d",
 				$webhook_id,
 				$webhook_id,
 				$status,
 				$status,
 				$direction,
 				$direction,
-				max( 1, min( 500, $limit ) )
+				max( 1, min( 500, $limit ) ),
+				max( 0, $offset )
 			),
 			ARRAY_A
 		);
@@ -169,6 +172,44 @@ final class DeliveryRepository {
 			}
 		}
 		return $out;
+	}
+
+	/**
+	 * How many deliveries the recent() filters match (WPMAP-144).
+	 *
+	 * @param array<string, mixed> $filters webhook_id, status, direction.
+	 */
+	public function count( array $filters = [] ): int {
+		global $wpdb;
+
+		[ $webhook_id, $status, $direction ] = $this->filter_values( $filters );
+
+		return (int) $wpdb->get_var( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
+			$wpdb->prepare(
+				"SELECT COUNT(*) FROM {$wpdb->prefix}bfag_webhook_deliveries WHERE ( %d = 0 OR webhook_id = %d ) AND ( %s = '' OR status = %s ) AND ( %s = '' OR direction = %s )",
+				$webhook_id,
+				$webhook_id,
+				$status,
+				$status,
+				$direction,
+				$direction
+			)
+		);
+	}
+
+	/**
+	 * The recent()/count() filters, validated: webhook id (0 = all), status
+	 * ('' = all), direction ('' = both).
+	 *
+	 * @param array<string, mixed> $filters webhook_id, status, direction.
+	 * @return array{int, string, string}
+	 */
+	private function filter_values( array $filters ): array {
+		return [
+			isset( $filters['webhook_id'] ) && (int) $filters['webhook_id'] > 0 ? (int) $filters['webhook_id'] : 0,
+			isset( $filters['status'] ) && is_string( $filters['status'] ) && in_array( $filters['status'], self::STATUSES, true ) ? $filters['status'] : '',
+			isset( $filters['direction'] ) && in_array( $filters['direction'], [ 'in', 'out' ], true ) ? (string) $filters['direction'] : '',
+		];
 	}
 
 	/**

@@ -135,6 +135,26 @@ final class DeliveryRepositoryTest extends TestCase {
 	// recent()
 	// ------------------------------------------------------------------
 
+	/**
+	 * WPMAP-144: the delivery log and the Pro REST list page through every
+	 * row: an offset for recent(), and count() with the same filters.
+	 */
+	public function test_recent_pages_at_an_offset_and_count_uses_the_same_filters(): void {
+		$repo = new DeliveryRepository( new Settings() );
+		$repo->recent( 50, [ 'webhook_id' => 3 ], 100 );
+		$repo->recent( 50, [], -7 );
+		$sql = array_map( static fn( array $c ): string => (string) $c['sql'], $this->wpdb->calls_to( 'get_results' ) );
+		$this->assertStringEndsWith( 'ORDER BY created_at DESC, id DESC LIMIT 50 OFFSET 100', $sql[0] );
+		$this->assertStringContainsString( '( 3 = 0 OR webhook_id = 3 )', $sql[0] );
+		$this->assertStringEndsWith( 'LIMIT 50 OFFSET 0', $sql[1], 'a negative offset is 0' );
+
+		$this->wpdb->queue( 'get_var', '137' );
+		$this->assertSame( 137, $repo->count( [ 'webhook_id' => 3, 'status' => 'failed', 'direction' => 'out' ] ) );
+		$this->assertSame( "SELECT COUNT(*) FROM bfw_bfag_webhook_deliveries WHERE ( 3 = 0 OR webhook_id = 3 ) AND ( 'failed' = '' OR status = 'failed' ) AND ( 'out' = '' OR direction = 'out' )", (string) $this->wpdb->calls_to( 'get_var' )[0]['sql'] );
+		$this->assertSame( 0, $repo->count( [ 'status' => 'bogus', 'direction' => 'sideways' ] ) );
+		$this->assertStringContainsString( "( '' = '' OR status = '' ) AND ( '' = '' OR direction = '' )", (string) $this->wpdb->calls_to( 'get_var' )[1]['sql'], 'invalid filters ignored, as in recent()' );
+	}
+
 	public function test_recent_builds_filters_into_prepared_sql(): void {
 		$repo = $this->repo();
 		$this->wpdb->queue( 'get_results', [ [ 'id' => '3', 'webhook_id' => '1', 'status' => 'success', 'payload' => '{}', 'attempt' => '1' ] ] );
@@ -142,14 +162,14 @@ final class DeliveryRepositoryTest extends TestCase {
 		$this->assertSame( 3, $rows[0]['id'] );
 		$sql = $this->wpdb->calls_to( 'get_results' )[0]['sql'];
 		// One literal statement (Plugin Check: nothing interpolated); a filter is a neutral-or-equal pair the optimiser folds.
-		$this->assertSame( "SELECT * FROM bfw_bfag_webhook_deliveries WHERE ( 1 = 0 OR webhook_id = 1 ) AND ( 'success' = '' OR status = 'success' ) AND ( 'in' = '' OR direction = 'in' ) ORDER BY created_at DESC, id DESC LIMIT 10", $sql );
+		$this->assertSame( "SELECT * FROM bfw_bfag_webhook_deliveries WHERE ( 1 = 0 OR webhook_id = 1 ) AND ( 'success' = '' OR status = 'success' ) AND ( 'in' = '' OR direction = 'in' ) ORDER BY created_at DESC, id DESC LIMIT 10 OFFSET 0", $sql );
 
 		$repo->recent();
-		$this->assertSame( "SELECT * FROM bfw_bfag_webhook_deliveries WHERE ( 0 = 0 OR webhook_id = 0 ) AND ( '' = '' OR status = '' ) AND ( '' = '' OR direction = '' ) ORDER BY created_at DESC, id DESC LIMIT 50", $this->wpdb->calls_to( 'get_results' )[1]['sql'], 'P14: newest by created_at, id as the tiebreak' );
+		$this->assertSame( "SELECT * FROM bfw_bfag_webhook_deliveries WHERE ( 0 = 0 OR webhook_id = 0 ) AND ( '' = '' OR status = '' ) AND ( '' = '' OR direction = '' ) ORDER BY created_at DESC, id DESC LIMIT 50 OFFSET 0", $this->wpdb->calls_to( 'get_results' )[1]['sql'], 'P14: newest by created_at, id as the tiebreak' );
 
 		$repo->recent( 9999, [ 'status' => "x' OR 1=1", 'direction' => 'up', 'webhook_id' => 0 ] );
 		$sql = $this->wpdb->calls_to( 'get_results' )[2]['sql'];
-		$this->assertStringContainsString( "( 0 = 0 OR webhook_id = 0 ) AND ( '' = '' OR status = '' ) AND ( '' = '' OR direction = '' ) ORDER BY created_at DESC, id DESC LIMIT 500", $sql, 'invalid filter values are ignored; limit clamped' );
+		$this->assertStringContainsString( "( 0 = 0 OR webhook_id = 0 ) AND ( '' = '' OR status = '' ) AND ( '' = '' OR direction = '' ) ORDER BY created_at DESC, id DESC LIMIT 500 OFFSET 0", $sql, 'invalid filter values are ignored; limit clamped' );
 		$this->assertStringNotContainsString( 'OR 1=1', $sql );
 		$this->assertSame( [], $repo->recent( 5 ), 'no rows queued' );
 	}

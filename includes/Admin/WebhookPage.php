@@ -38,6 +38,12 @@ final class WebhookPage extends Page {
 	public const DELIVERY_LIMIT = 50;
 
 	/**
+	 * Query argument naming the page of the delivery log (WPMAP-144: the log
+	 * showed the newest DELIVERY_LIMIT rows and nothing else).
+	 */
+	public const LOG_PAGE_ARG = 'bfag_log_page';
+
+	/**
 	 * Seconds a generated secret waits to be shown once. It is shown on the
 	 * page the save redirects to; the value is sealed while it waits
 	 * (Support\SealedValue, WPMAP-140), so neither the options table nor a
@@ -196,14 +202,23 @@ final class WebhookPage extends Page {
 		foreach ( $this->webhooks->all() as $row ) {
 			$labels[ (int) $row['id'] ] = (string) $row['label'];
 		}
+		$list_args = [ 'view' => 'deliveries' ];
+		if ( $webhook_id > 0 ) {
+			$list_args['webhook_id'] = $webhook_id;
+		}
+		$total  = $this->deliveries->count( $filters );
+		$window = Pager::window( self::LOG_PAGE_ARG, $total, self::DELIVERY_LIMIT );
 		$this->view(
 			'deliveries',
 			[
-				'deliveries' => $this->deliveries->recent( self::DELIVERY_LIMIT, $filters ),
+				'deliveries' => $this->deliveries->recent( self::DELIVERY_LIMIT, $filters, $window['offset'] ),
 				'labels'     => $labels,
 				'webhook_id' => $webhook_id,
 				'back_url'   => $this->url(),
 				'page'       => $this,
+				'total'      => $total,
+				'window'     => $window,
+				'list_url'   => $this->url( $list_args ),
 			]
 		);
 	}

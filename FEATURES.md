@@ -535,8 +535,10 @@ site's timezone and formats — the headers say *site time*), and a
 not truncated — never on a successful or in-flight one, and the server refuses
 such a retry with a 400 even if asked directly. Under every
 finished row a **Response** disclosure opens the HTTP status and the response
-body. Fifty rows, newest first; filtered to one webhook when you arrive from
-its row.
+body. Fifty rows a page, newest first; filtered to one webhook when you arrive
+from its row. With more than fifty, a pager above the table (*N deliveries*,
+*Page X of Y*, first/previous/next/last) reaches every row, keeping the
+webhook filter, so an older failure can still be opened and retried.
 
 - **Response** — the first 2,000 characters of what the receiver returned (`HTTP 500` then the body), or `Transport error: <message>` when there was no HTTP response at all (DNS, connection refused, timeout). *Send test* reports the same status in its notice: *Test delivery failed (HTTP 503)* or *(no HTTP response: transport error)*.
 - **Truncated** — the stored payload was cut at *Max stored payload (bytes)*. The receiver got the full body; the log did not keep it, so the delivery cannot be resent as signed. A truncated delivery that was queued (past the first twenty of a request) was never sent, and says so in its response.

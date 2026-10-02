@@ -228,6 +228,38 @@ final class WebhookPageTest extends TestCase {
 		$this->assertArrayNotHasKey( 'secret', $seen, 'the hook never sees the secret' );
 	}
 
+	/**
+	 * WPMAP-144: the log showed the newest 50 rows and nothing else, so an
+	 * older failed delivery could be neither seen nor retried there. With
+	 * more than one page it pages through them all, keeping the filter.
+	 */
+	public function test_the_delivery_log_pages_through_every_row_and_keeps_the_filter(): void {
+		$_GET = [ 'view' => 'deliveries', 'webhook_id' => '1', WebhookPage::LOG_PAGE_ARG => '3' ];
+		$this->wpdb->queue( 'get_results', [ $this->webhook( 1 ) ] );
+		$this->wpdb->queue( 'get_var', '120' );
+		$this->wpdb->queue( 'get_results', [ $this->delivery( 7, 'failed' ) ] );
+
+		$html = bfag_test_render( [ $this->page(), 'render' ] );
+
+		$reads = array_values( array_filter( $this->wpdb->queries_matching( 'bfag_webhook_deliveries' ), static fn( string $q ): bool => str_starts_with( $q, 'SELECT * ' ) ) );
+		$this->assertStringEndsWith( 'LIMIT 50 OFFSET 100', $reads[0], 'page 3 of 50 a page' );
+		$this->assertStringContainsString( 'webhook_id = 1', $reads[0] );
+		$this->assertStringContainsString( '120 deliveries', $html );
+		$this->assertStringContainsString( 'Page 3 of 3', $html );
+		$this->assertStringContainsString( 'data-bfag-retry="7"', $html, 'a row on a later page can be retried' );
+		$this->assertMatchesRegularExpression( '#class="prev-page button" href="[^"]*view=deliveries[^"]*webhook_id=1[^"]*bfag_log_page=2"#', $html, 'the pager keeps the webhook filter' );
+		$this->assertStringNotContainsString( 'next-page', $html );
+	}
+
+	public function test_one_page_of_deliveries_shows_no_pager(): void {
+		$_GET = [ 'view' => 'deliveries' ];
+		$this->wpdb->queue( 'get_results', [ $this->webhook( 1 ) ] );
+		$this->wpdb->queue( 'get_var', '50' );
+		$this->wpdb->queue( 'get_results', [ $this->delivery( 7, 'failed' ) ] );
+		$html = bfag_test_render( [ $this->page(), 'render' ] );
+		$this->assertStringNotContainsString( 'tablenav-pages', $html );
+	}
+
 	public function test_the_delivery_log_sub_view_shows_badges_truncation_and_retry(): void {
 		$_GET = [ 'view' => 'deliveries' ];
 		update_option( 'date_format', 'd/m/Y' );
@@ -268,7 +300,8 @@ final class WebhookPageTest extends TestCase {
 		$this->assertStringNotContainsString( 'data-bfag-retry="12"', $html, 'inbound rows are not resent' );
 		$this->assertStringContainsString( 'CRM &lt;sync&gt;', $html );
 		$this->assertStringNotContainsString( self::SECRET, $html );
-		$this->assertStringContainsString( "( 0 = 0 OR webhook_id = 0 ) AND ( '' = '' OR status = '' ) AND ( '' = '' OR direction = '' ) ORDER BY created_at DESC, id DESC LIMIT 50", $this->wpdb->queries_matching( 'bfag_webhook_deliveries' )[0] );
+		$log_reads = array_values( array_filter( $this->wpdb->queries_matching( 'bfag_webhook_deliveries' ), static fn( string $q ): bool => str_starts_with( $q, 'SELECT * ' ) ) );
+		$this->assertStringContainsString( "( 0 = 0 OR webhook_id = 0 ) AND ( '' = '' OR status = '' ) AND ( '' = '' OR direction = '' ) ORDER BY created_at DESC, id DESC LIMIT 50 OFFSET 0", $log_reads[0] );
 	}
 
 	/**
