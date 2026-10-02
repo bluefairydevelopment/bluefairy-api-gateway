@@ -104,6 +104,7 @@ function bfag_test_reset(): void {
 	$GLOBALS['bfag_test_cron']          = [];
 	$GLOBALS['bfag_test_single_events'] = [];
 	$GLOBALS['bfag_test_user_id']       = 0;
+	$GLOBALS['bfag_test_users']         = null; // Unscripted: every positive id is a user. The base TestCase turns the registry on.
 	$GLOBALS['bfag_test_caps']          = [];
 	$GLOBALS['bfag_test_ext_cache']     = null; // core: null until an object-cache.php drop-in sets it.
 	$GLOBALS['bfag_test_is_admin']      = false;
@@ -550,8 +551,21 @@ function wp_salt( string $scheme = 'auth' ): string {
 function wp_hash( string $data, string $scheme = 'auth' ): string {
 	return hash_hmac( 'md5', $data, wp_salt( $scheme ) );
 }
+/**
+ * As core: the largest unit (B, KB, MB, GB, TB at 1024) that keeps the
+ * number at least 1, formatted with $decimals; false for a non-number.
+ */
 function size_format( int|string $bytes, int $decimals = 0 ): string|false {
-	return $bytes . ' B';
+	if ( ! is_numeric( $bytes ) ) {
+		return false;
+	}
+	$bytes = (float) $bytes;
+	foreach ( [ 'TB' => 1024 ** 4, 'GB' => 1024 ** 3, 'MB' => 1024 ** 2, 'KB' => 1024, 'B' => 1 ] as $unit => $size ) {
+		if ( $bytes >= $size ) {
+			return number_format( $bytes / $size, $decimals ) . ' ' . $unit;
+		}
+	}
+	return '0 B';
 }
 function number_format_i18n( float|int $number, int $decimals = 0 ): string {
 	return number_format( (float) $number, $decimals );
@@ -615,8 +629,19 @@ function date_i18n( string $format, int|bool $timestamp = false, bool $gmt = fal
 	}
 	return gmdate( $format, (int) $timestamp );
 }
+/**
+ * As core's phrasing: seconds under a minute, then minutes, hours and days
+ * (rounded, at least 1), singular or plural.
+ */
 function human_time_diff( int $from, int $to = 0 ): string {
-	return abs( ( 0 === $to ? bfag_test_now() : $to ) - $from ) . ' secs';
+	$diff = abs( ( 0 === $to ? bfag_test_now() : $to ) - $from );
+	foreach ( [ [ 86400, 'day' ], [ 3600, 'hour' ], [ 60, 'min' ] ] as [ $size, $unit ] ) {
+		if ( $diff >= $size ) {
+			$n = max( 1, (int) round( $diff / $size ) );
+			return $n . ' ' . $unit . ( 1 === $n ? '' : 's' );
+		}
+	}
+	return $diff . ' ' . ( 1 === $diff ? 'second' : 'seconds' );
 }
 /**
  * As core: a GMT `Y-m-d H:i:s` rendered in the site timezone (TF1).
@@ -701,11 +726,36 @@ function wp_set_current_user( ?int $id, string $name = '' ): WP_User {
 	$GLOBALS['bfag_test_user_id'] = (int) $id;
 	return new WP_User( (int) $id );
 }
-function get_user_by( string $field, mixed $value ): WP_User|false {
-	return 'id' === $field && (int) $value > 0 ? new WP_User( (int) $value ) : false;
+// Users (T5 / WPMAP-114): $GLOBALS['bfag_test_users'] is the registry, id =>
+// WP_User. As core, an id that is not in it is no user — so "an unknown user
+// is refused" is provable. The base suite runs with the registry on (TestCase
+// sets it to [] for its own tests); null — the reset default — is the
+// unscripted mode in which every positive id resolves to a user, kept for a
+// suite that extends TestCase from another namespace (the Pro add-on's) until
+// it registers its users with bfag_test_add_user().
+function bfag_test_add_user( int $id, array $props = [] ): WP_User {
+	$user = new WP_User( $id );
+	foreach ( $props as $key => $value ) {
+		$user->$key = $value;
+	}
+	if ( ! is_array( $GLOBALS['bfag_test_users'] ?? null ) ) {
+		$GLOBALS['bfag_test_users'] = [];
+	}
+	$GLOBALS['bfag_test_users'][ $id ] = $user;
+	return $user;
 }
 function get_userdata( int $user_id ): WP_User|false {
-	return $user_id > 0 ? new WP_User( $user_id ) : false;
+	if ( $user_id <= 0 ) {
+		return false;
+	}
+	$registry = $GLOBALS['bfag_test_users'] ?? null;
+	if ( ! is_array( $registry ) ) {
+		return new WP_User( $user_id );
+	}
+	return $registry[ $user_id ] ?? false;
+}
+function get_user_by( string $field, mixed $value ): WP_User|false {
+	return 'id' === $field ? get_userdata( (int) $value ) : false;
 }
 function is_admin(): bool {
 	return (bool) $GLOBALS['bfag_test_is_admin'];
@@ -1053,7 +1103,31 @@ function wp_schedule_event( int $timestamp, string $recurrence, string $hook, ar
 function bfag_test_cron_key( string $hook, array $args ): string {
 	return [] === $args ? $hook : $hook . ':' . md5( serialize( $args ) );
 }
+/**
+ * As core (T7 / WPMAP-114): an event with the same hook and args already
+ * scheduled within ten minutes of $timestamp makes this a duplicate — nothing
+ * is scheduled and false is returned. An event due within the next ten
+ * minutes collides with any earlier one; one in the past with any up to ten
+ * minutes from now. Recurring events count too.
+ */
 function wp_schedule_single_event( int $timestamp, string $hook, array $args = [], bool $wp_error = false ): bool {
+	$now = bfag_test_now();
+	$min = $timestamp < $now + 600 ? 0 : $timestamp - 600;
+	$max = $timestamp < $now ? $now + 600 : $timestamp + 600;
+	$key = md5( serialize( $args ) );
+	$existing = $GLOBALS['bfag_test_single_events'];
+	foreach ( $GLOBALS['bfag_test_cron'] as $slot => $event ) {
+		$existing[] = [
+			'timestamp' => (int) $event['timestamp'],
+			'hook'      => explode( ':', (string) $slot, 2 )[0],
+			'args'      => $event['args'] ?? [],
+		];
+	}
+	foreach ( $existing as $event ) {
+		if ( $event['hook'] === $hook && md5( serialize( $event['args'] ) ) === $key && $event['timestamp'] >= $min && $event['timestamp'] <= $max ) {
+			return false;
+		}
+	}
 	$GLOBALS['bfag_test_single_events'][] = compact( 'timestamp', 'hook', 'args' );
 	return true;
 }

@@ -22,6 +22,12 @@ abstract class TestCase extends PHPUnitTestCase {
 		parent::setUp();
 		bfag_test_reset();
 		$this->wpdb = $GLOBALS['wpdb'];
+		// T5: the base suite models core — only a registered user exists. A
+		// suite from another namespace (the Pro add-on's) keeps the unscripted
+		// default until it registers its users.
+		if ( str_starts_with( static::class, 'BlueFairy\\ApiGateway\\Tests\\' ) ) {
+			$GLOBALS['bfag_test_users'] = [];
+		}
 	}
 
 	protected function tearDown(): void {

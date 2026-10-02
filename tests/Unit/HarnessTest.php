@@ -204,4 +204,69 @@ final class HarnessTest extends TestCase {
 		$this->assertFalse( add_option( 'bfag_new', 1 ) );
 		$this->assertFalse( get_option( 'bfag_new' ) );
 	}
+
+	/**
+	 * T5 / WPMAP-114: get_userdata() answers from the registry. The base
+	 * suite runs with it on; null is the unscripted mode a suite from
+	 * another namespace keeps.
+	 */
+	public function test_users_come_from_the_registry_and_an_unknown_id_is_no_user(): void {
+		$this->assertSame( [], $GLOBALS['bfag_test_users'], 'the base TestCase turns the registry on' );
+		$this->assertFalse( get_userdata( 7 ), 'an unregistered positive id is no user, as in core' );
+		$this->assertFalse( get_user_by( 'id', 7 ) );
+
+		$user = bfag_test_add_user( 7, [ 'user_login' => 'ann' ] );
+		$this->assertSame( $user, get_userdata( 7 ) );
+		$this->assertSame( 'ann', get_user_by( 'id', '7' )->user_login );
+		$this->assertFalse( get_userdata( 8 ) );
+		$this->assertFalse( get_userdata( 0 ) );
+
+		$GLOBALS['bfag_test_users'] = null;
+		$this->assertInstanceOf( \WP_User::class, get_userdata( 8 ), 'unscripted: any positive id' );
+		$this->assertFalse( get_userdata( 0 ) );
+		bfag_test_reset();
+		$this->assertNull( $GLOBALS['bfag_test_users'], 'the reset default is unscripted (the Pro suite relies on it)' );
+	}
+
+	/**
+	 * T7 / WPMAP-114: wp_schedule_single_event() refuses a duplicate — same
+	 * hook and args — within ten minutes, as core does.
+	 */
+	public function test_single_events_dedupe_within_ten_minutes_as_core(): void {
+		bfag_test_set_time( 1_700_000_000 );
+		$now = bfag_test_now(); // The harness clock (time() is PHP's own).
+		$this->assertTrue( wp_schedule_single_event( $now + 3600, 'bfag_h', [ 1 ] ) );
+		$this->assertFalse( wp_schedule_single_event( $now + 3600 + 600, 'bfag_h', [ 1 ] ), 'ten minutes later: still a duplicate' );
+		$this->assertFalse( wp_schedule_single_event( $now + 3600 - 599, 'bfag_h', [ 1 ] ) );
+		$this->assertTrue( wp_schedule_single_event( $now + 3600 + 601, 'bfag_h', [ 1 ] ), 'just outside the window' );
+		$this->assertTrue( wp_schedule_single_event( $now + 3600, 'bfag_h', [ 2 ] ), 'other args are another event' );
+		$this->assertTrue( wp_schedule_single_event( $now + 3600, 'bfag_other', [ 1 ] ), 'another hook' );
+		$this->assertCount( 4, $GLOBALS['bfag_test_single_events'] );
+
+		// Due within ten minutes: any earlier event with the key collides.
+		$this->assertTrue( wp_schedule_single_event( $now - 5000, 'bfag_soon' ) );
+		$this->assertFalse( wp_schedule_single_event( $now + 60, 'bfag_soon' ) );
+		// A recurring event counts.
+		wp_schedule_event( $now + 100, 'daily', 'bfag_recurring' );
+		$this->assertFalse( wp_schedule_single_event( $now, 'bfag_recurring' ) );
+		$this->assertTrue( wp_schedule_single_event( $now, 'bfag_recurring', [ 'x' ] ) );
+	}
+
+	/**
+	 * T7 / WPMAP-114: size_format() and human_time_diff() phrase as core
+	 * does, so a view test cannot pass only on stub text.
+	 */
+	public function test_size_format_and_human_time_diff_phrase_as_core(): void {
+		$this->assertSame( '512 B', size_format( 512 ) );
+		$this->assertSame( '1 KB', size_format( 1024 ) );
+		$this->assertSame( '1.5 MB', size_format( 1572864, 1 ) );
+		$this->assertFalse( size_format( 'lots' ) );
+
+		bfag_test_set_time( 1_700_000_000 );
+		$this->assertSame( '1 second', human_time_diff( bfag_test_now() - 1 ) );
+		$this->assertSame( '45 seconds', human_time_diff( bfag_test_now() - 45 ) );
+		$this->assertSame( '5 mins', human_time_diff( bfag_test_now() - 300 ) );
+		$this->assertSame( '1 hour', human_time_diff( bfag_test_now() - 3600 ) );
+		$this->assertSame( '2 days', human_time_diff( 1_700_000_000, 1_700_172_800 ) );
+	}
 }

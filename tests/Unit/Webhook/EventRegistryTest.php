@@ -123,10 +123,21 @@ final class EventRegistryTest extends TestCase {
 	public function test_user_payloads_never_carry_the_password_or_the_raw_userdata(): void {
 		$registry = new EventRegistry();
 		$userdata = [ 'ID' => 9, 'user_login' => 'jen', 'user_pass' => 'hunter2-plaintext', 'user_email' => 'jen@example.com', 'user_url' => 'https://attacker.example' ];
+		bfag_test_add_user(
+			9,
+			[
+				'user_login'   => 'jen-stored',
+				'user_email'   => 'jen@example.com',
+				'display_name' => 'Jen',
+				'roles'        => [ 'subscriber' ],
+			]
+		);
 
 		$registered = $registry->payload( 'user.registered', [ 9, $userdata ] );
 		$this->assertNotNull( $registered );
 		$this->assertSame( 9, $registered['object']['id'] );
+		$this->assertSame( 'jen-stored', $registered['object']['login'], 'read from the stored user, not the hook\'s array' );
+		$this->assertSame( [ 'subscriber' ], $registered['object']['roles'] );
 		$this->assertSame( [ 'id', 'login', 'email', 'display_name', 'roles' ], array_keys( $registered['object'] ) );
 		$json = (string) wp_json_encode( $registered );
 		$this->assertStringNotContainsString( 'user_pass', $json );
@@ -140,6 +151,19 @@ final class EventRegistryTest extends TestCase {
 
 		$this->assertNull( $registry->payload( 'user.registered', [ 0, $userdata ] ) );
 		$this->assertNull( $registry->payload( 'user.updated', [ 'x' ] ) );
+	}
+
+	/**
+	 * T5 / WPMAP-114: a positive id with no user behind it (deleted between
+	 * the hook and the flush, or a forged id) yields no payload. Unprovable
+	 * while the harness answered every positive id with a user.
+	 */
+	public function test_a_user_event_for_an_id_with_no_user_is_not_dispatched(): void {
+		$registry = new EventRegistry();
+		bfag_test_add_user( 9 );
+		$this->assertNotNull( $registry->payload( 'user.registered', [ 9, [] ] ), 'control: a stored user' );
+		$this->assertNull( $registry->payload( 'user.registered', [ 404, [ 'ID' => 404, 'user_login' => 'ghost' ] ] ) );
+		$this->assertNull( $registry->payload( 'user.updated', [ 404, null, [] ] ) );
 	}
 
 	public function test_comment_created_reads_the_comment_object(): void {
