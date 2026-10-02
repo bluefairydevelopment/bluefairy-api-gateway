@@ -77,7 +77,7 @@ final class PruneCronTest extends TestCase {
 		$bound_calls = $this->wpdb->calls_to( 'get_var' );
 		$this->assertCount( 1, $bound_calls );
 		$this->assertSame( 'SELECT COALESCE(MAX(id) - MIN(id) + 1, 0) FROM bfw_bfag_rate_limit_hits', $bound_calls[0]['sql'], 'PN9: the id-range bound, not the engine estimate' );
-		$this->assertCount( 0, $this->wpdb->queries_matching( 'TRUNCATE' ), '42 rows is not huge' );
+		$this->assertCount( 0, $this->wpdb->queries_matching( 'WHERE id <' ), '42 rows is not huge: no rotation delete' );
 
 		$order = array_column( $this->wpdb->calls, 'method' );
 		$this->assertSame( [ 'query', 'query', 'get_var' ], $order, 'prune first, then the cap check' );
@@ -98,9 +98,12 @@ final class PruneCronTest extends TestCase {
 	public function test_run_rotates_the_table_when_it_is_over_the_cap(): void {
 		$this->rules_with_windows( [ 60 ] );
 		$this->wpdb->queue( 'query', 0 );
-		$this->wpdb->queue( 'get_var', (string) ( HitCounter::ROTATE_THRESHOLD + 1 ) );
+		$this->wpdb->queue( 'get_var', (string) ( HitCounter::ROTATE_THRESHOLD + 1 ) ); // The bound.
+		$this->wpdb->queue( 'get_var', (string) ( HitCounter::ROTATE_THRESHOLD + 1 ) ); // MAX(id).
+		$this->wpdb->queue( 'query', 1 );
 		$this->cron()->run();
-		$this->assertSame( [ 'TRUNCATE TABLE bfw_bfag_rate_limit_hits' ], $this->wpdb->queries_matching( 'TRUNCATE' ) );
+		$this->assertSame( [], $this->wpdb->queries_matching( 'TRUNCATE' ), 'P17: never a TRUNCATE' );
+		$this->assertSame( [ 'DELETE FROM bfw_bfag_rate_limit_hits WHERE id < 2 LIMIT 10000' ], $this->wpdb->queries_matching( 'WHERE id <' ), 'the oldest row goes' );
 	}
 
 	public function test_run_logs_the_outcome_when_debug_logging_is_on(): void {

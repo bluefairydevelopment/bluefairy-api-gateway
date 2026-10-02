@@ -128,7 +128,7 @@ Tag names are lower-cased and reduced to `[a-z0-9_:-]`, so `post:42` arrives int
 
 | Hook | Schedule | Work |
 |---|---|---|
-| `bfag_cron_prune_hits` | every five minutes (`bfag_five_minutes`, registered by the plugin) | Deletes rate-limit hits older than the longest enabled window, 10,000 rows at a time; truncates the table outright if the `MAX(id) - MIN(id)` bound has passed ten million. |
+| `bfag_cron_prune_hits` | every five minutes (`bfag_five_minutes`, registered by the plugin) | Deletes rate-limit hits older than the longest enabled window, 10,000 rows at a time; if the `MAX(id) - MIN(id)` bound has passed ten million, deletes the oldest rows by id range (10,000 at a time, at most fifty slices a run) so the newest ten million remain — never a `TRUNCATE`, which would stall concurrent inserts and reset every client's window at once. |
 | `bfag_cron_prune_deliveries` | daily | Deletes finished deliveries older than *Delivery log retention*, and `pending`/`retrying` rows older than a day, 5,000 rows at a time. |
 | `bfag_cron_recompute_kpis` | every five minutes | Flushes the object-cache hit/miss counters (with a persistent object cache), then recomputes the dashboard figures into the `bfag_kpis` transient (six-minute TTL). |
 | `bfag_cron_prune_responses` | every five minutes | Without a persistent object cache: deletes every expired `bfag…` transient (stored responses, limited markers, parked forms, the Pro add-on's `bfagp_` ones), 1,000 pairs at a time. |

@@ -197,13 +197,22 @@ final class HitCounter {
 
 	/**
 	 * Safety cap: when the pruner has fallen so far behind that the table
-	 * holds more than $threshold rows, empty it rather than let every
-	 * request's COUNT degrade further. Logged, because it forgives every
-	 * subject's current window. Reads the id-range bound, not COUNT(*):
-	 * this runs every five minutes on a table the KPI cron already counts.
+	 * holds more than $threshold rows, delete the OLDEST rows so the newest
+	 * $threshold remain, rather than let the table grow without bound.
+	 * Reads the id-range bound, not COUNT(*): this runs every five minutes on
+	 * a table the KPI cron already counts.
 	 *
-	 * @param int $threshold Row count above which the table is truncated.
-	 * @return bool True when the table was truncated.
+	 * The delete is by primary-key range (`id < MAX(id) - $threshold + 1`)
+	 * in slices of PRUNE_BATCH, at most PRUNE_MAX_ITERATIONS a run — a run
+	 * that cannot catch up finishes on the next. It never TRUNCATEs (P17 /
+	 * WPMAP-108): TRUNCATE takes an exclusive metadata lock that stalls every
+	 * concurrent INSERT, and it forgave every subject's window at once. A
+	 * range delete of the oldest ids locks rows far below the end of the
+	 * index where new hits are appended, and forgives only the oldest hits.
+	 * Logged with the number of rows deleted.
+	 *
+	 * @param int $threshold Row count above which the oldest rows are deleted.
+	 * @return bool True when rows were deleted.
 	 */
 	public function rotate_if_huge( int $threshold = self::ROTATE_THRESHOLD ): bool {
 		$rows = $this->approximate_rows();
@@ -212,16 +221,31 @@ final class HitCounter {
 		}
 		global $wpdb;
 
-		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.DirectDatabaseQuery.SchemaChange -- plugin table, prefix interpolation; the DB1 hard cap.
-		$wpdb->query( "TRUNCATE TABLE {$wpdb->prefix}bfag_rate_limit_hits" );
+		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- plugin table, prefix interpolation; one index end.
+		$max = $wpdb->get_var( "SELECT MAX(id) FROM {$wpdb->prefix}bfag_rate_limit_hits" );
+		if ( ! is_numeric( $max ) ) {
+			return false;
+		}
+		$cutoff  = (int) $max - max( 0, $threshold ) + 1; // Ids below this go; the newest $threshold stay.
+		$deleted = 0;
+		for ( $i = 0; $i < self::PRUNE_MAX_ITERATIONS; $i++ ) {
+			// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- plugin table, prefix interpolation; batched delete of the oldest ids.
+			$result   = $wpdb->query( $wpdb->prepare( "DELETE FROM {$wpdb->prefix}bfag_rate_limit_hits WHERE id < %d LIMIT %d", $cutoff, self::PRUNE_BATCH ) );
+			$slice    = is_int( $result ) ? $result : 0;
+			$deleted += max( 0, $slice );
+			if ( $slice < self::PRUNE_BATCH ) {
+				break;
+			}
+		}
 		Logger::log(
 			'rate-limit hits table rotated',
 			[
 				'rows'      => $rows,
 				'threshold' => $threshold,
+				'deleted'   => $deleted,
 			]
 		);
-		return true;
+		return $deleted > 0;
 	}
 
 	/**

@@ -578,7 +578,7 @@ notification email is stored as blank; unknown keys are dropped.
 
 | Hook | Schedule | Work |
 |---|---|---|
-| `bfag_cron_prune_hits` | every five minutes | prune the rate-limit hit log; rotate it past ten million rows (by the `MAX(id) - MIN(id)` bound) |
+| `bfag_cron_prune_hits` | every five minutes | prune the rate-limit hit log; past ten million rows (by the `MAX(id) - MIN(id)` bound) delete the oldest so the newest ten million remain |
 | `bfag_cron_prune_deliveries` | daily | prune finished deliveries past the retention setting, and `pending`/`retrying` rows older than a day |
 | `bfag_cron_recompute_kpis` | every five minutes | flush the object-cache hit/miss counters (persistent cache only), then rebuild the dashboard transient (`bfag_kpis`, six-minute TTL) |
 | `bfag_cron_prune_responses` | every five minutes | delete every expired `bfag…` transient (no persistent object cache) in slices of 1,000 pairs |

@@ -135,7 +135,7 @@ window_seconds among enabled rules (default 60).
 - `prune( int $max_window ): int` — `DELETE … WHERE hit_at < %s LIMIT 10000` in a loop until 0 rows (max 50 iterations); returns rows deleted
 - `total_rows(): int` — exact `COUNT(*)`; the KPI cron's once-per-five-minutes figure
 - `approximate_rows(): int` — `SELECT COALESCE(MAX(id) - MIN(id) + 1, 0)`: an upper bound from two index ends, engine-independent (PN9: MySQL 8 caches the `SHOW TABLE STATUS` estimate for up to a day). It over-counts only by rows deleted from the middle of the id range — the prune removes the oldest, and ids rise with `hit_at`, so in practice it is the live count — and never under-counts, so the cap still fires; 0 when there is no such table
-- `rotate_if_huge( int $threshold = 10000000 ): bool` — `TRUNCATE` when `approximate_rows()` exceeds threshold (log it); no second COUNT(*) every five minutes
+- `rotate_if_huge( int $threshold = 10000000 ): bool` — when `approximate_rows()` exceeds threshold: `SELECT MAX(id)`, then `DELETE … WHERE id < MAX(id) - threshold + 1 LIMIT PRUNE_BATCH` in a loop until a short slice (max `PRUNE_MAX_ITERATIONS`), so the newest `threshold` rows remain; logged with `rows`, `threshold`, `deleted`; true when rows were deleted. Never `TRUNCATE` (P17 / WPMAP-108: an exclusive metadata lock stalls every concurrent INSERT and every subject's window resets at once; the range delete locks the oldest ids, far from the end of the primary key where hits are appended). No second COUNT(*) every five minutes
 
 **`RateLimitMiddleware`** — `__construct( RateLimitRuleRepository, HitCounter, Settings, RequestContext )`.
 - `register_hooks(): void` — `rest_pre_dispatch` priority 5 (3 args) → `check()`
@@ -147,7 +147,7 @@ window_seconds among enabled rules (default 60).
 - `blocked_response(): \WP_REST_Response` — status 403, code `bfag_blocked`
 
 **`PruneCron`** — `__construct( HitCounter, RateLimitRuleRepository )`. `register_hooks()` adds
-`bfag_cron_prune_hits` → `run()`: `prune( max_window() )`, then `rotate_if_huge()` (the id-range bound, not a COUNT(*)).
+`bfag_cron_prune_hits` → `run()`: `prune( max_window() )`, then `rotate_if_huge()` (the id-range bound, not a COUNT(*); an oldest-first range delete, not a TRUNCATE).
 
 ### Webhooks (`includes/Webhook/`)
 
