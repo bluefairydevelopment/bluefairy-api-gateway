@@ -35,9 +35,12 @@ Pro is always the first column.
 | **Webhook REST API** — list, create, update, delete, read the log, retry | Yes | — |
 | **Scoped API keys** (`read`, `write`, `cache:purge`, `webhook:read`, `webhook:write`) | Yes | — |
 | `GET /bfag/v1/status` for a monitoring tool | Yes | Yes |
-| Admin tabs | 6 (adds **API Keys**) | 5 |
+| **Updates through your licence key** (Licence tab); no feature depends on the licence | Yes | Updates from WordPress.org |
+| Admin tabs | 7 (adds **API Keys** and **Licence**) | 5 |
 
 ## Where each row was verified
+
+The **Licence** rows were added with the licence work (branch `feature/licence`): `Licence\Updater` offers updates through the `Update URI` header's `update_plugins_wordpress.bluefairydevelopment.com` filter only while `Licence::is_active()`, and nothing outside `includes/Licence/` and the Licence tab reads the licence (`PluginTest::test_no_licence_state_switches_off_any_pro_feature`).
 
 Against the shipped code of both plugins at 1.0.0 (free f70bf71, Pro e1fc2f6):
 
@@ -53,9 +56,10 @@ Against the shipped code of both plugins at 1.0.0 (free f70bf71, Pro e1fc2f6):
 
 ## How the two fit together
 
-Pro is an add-on. It declares `Requires Plugins: bluefairy-api-gateway` and boots
-on `bfag_loaded`, which only the free plugin fires; installed alone it shows a
-notice and does nothing. Every rule, webhook and delivery lives in the free
+Pro is an add-on. It boots on `bfag_loaded`, which only the free plugin fires;
+installed alone it shows a notice linking to the shop's downloads page and does
+nothing. It carries no `Requires Plugins` header, because WordPress resolves that
+slug on WordPress.org, where the free plugin is not listed. Every rule, webhook and delivery lives in the free
 plugin's tables, so upgrading moves nothing and removing Pro loses nothing the
 free plugin owns. Adding Pro to the cart adds the free plugin with it.
 
