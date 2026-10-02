@@ -15,9 +15,10 @@ For the customer-facing feature guide, including the Pro/free comparison table, 
 
 ## What it does
 
-- **Response cache** — anonymous `GET`/`HEAD` requests to the REST API are stored and served back with an `X-BF-Cache: HIT` header. Every REST response passing through is labelled `HIT`, `MISS` or `BYPASS`, so you can see the decision from `curl`. One cache rule in the free plugin (seeded as `**`, "All routes", 60 s). Purged automatically when a post, term or comment changes; purged by hand from the Cache tab or `POST /bfag/v1/cache/purge`.
-- **Rate limiting** — a sliding-window counter per client IP and rule. The breaching request gets `429` with `Retry-After`, `X-BF-RateLimit-Limit` and `X-BF-RateLimit-Window`. One rule in the free plugin (seeded as 300 requests per 60 s on `**`; logged-in users who can edit posts are exempt by default). One forwarded-IP header of your choosing is honoured, only from the proxies you list.
-- **Outbound webhooks** — up to three webhooks subscribing to six WordPress events (ten with WooCommerce). Each delivery is a JSON `POST` signed with `X-BF-Signature: sha256=HMAC-SHA256(timestamp.body, secret)`, logged with its HTTP status and response, and can be resent from the delivery log.
+- **Response cache** — anonymous `GET`/`HEAD` requests to the REST API are stored and served back with an `X-BF-Cache: HIT` header. Every REST response passing through is labelled `HIT`, `MISS` or `BYPASS`, so you can see the decision from `curl`. Up to 500 cache rules, the most specific match winning (one seeded as `**`, "All routes", 60 s). Purged automatically when a post, term or comment changes; purged by hand from the Cache tab or `POST /bfag/v1/cache/purge`.
+- **Rate limiting** — a sliding-window counter per client IP and rule. The breaching request gets `429` with `Retry-After`, `X-BF-RateLimit-Limit` and `X-BF-RateLimit-Window`. Up to 500 rules (one seeded as 300 requests per 60 s on `**`; logged-in users who can edit posts are exempt by default). One forwarded-IP header of your choosing is honoured, only from the proxies you list.
+- **Outbound webhooks** — up to 500 webhooks subscribing to six WordPress events (ten with WooCommerce). Each delivery is a JSON `POST` signed with `X-BF-Signature: sha256=HMAC-SHA256(timestamp.body, secret)`, logged with its HTTP status and response, and can be resent from the delivery log.
+- **Limits** — 500 cache rules, 500 rate-limit rules and 500 webhooks, the same with or without the Pro add-on (`Support\Limits::DEFAULT_LIMIT`); the `bfag_cache_rule_limit`, `bfag_rate_limit_rule_limit` and `bfag_webhook_limit` filters lower or raise each, to at most 1,000 (`Limits::MAX_ROWS`, the most rows any list or match reads).
 - **Dashboard** — cache hit rate and webhook success rate over the last 24 hours, the current size of the rate-limit log, the ten most recent failed deliveries with a Retry button, and the same figures at `GET /bfag/v1/status` for a monitoring tool authenticated with an Application Password (or, with Pro, an API key).
 
 ## Installation
@@ -26,7 +27,7 @@ For the customer-facing feature guide, including the Pro/free comparison table, 
 2. Activate it from the **Plugins** screen. Activation refuses to proceed on PHP below 8.1.
 3. Open **Settings → API Gateway**.
 
-Activation creates six database tables (listed below), seeds the one cache rule and the one rate-limit rule, grants the `bfag_manage_gateway` capability to the Administrator role, and schedules four recurring WP-Cron jobs (a fifth, `bfag_cron_flush_pending`, is a single event scheduled on demand). Nothing is sent anywhere until you add a webhook.
+Activation creates six database tables (listed below), seeds one cache rule and one rate-limit rule, grants the `bfag_manage_gateway` capability to the Administrator role, and schedules four recurring WP-Cron jobs (a fifth, `bfag_cron_flush_pending`, is a single event scheduled on demand). Nothing is sent anywhere until you add a webhook.
 
 No Composer install is needed at runtime: the plugin autoloads its own namespace. `composer install` in the plugin folder pulls in the development tools only (PHPUnit, PHPCS, PHPStan).
 

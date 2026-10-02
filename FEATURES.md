@@ -1,6 +1,6 @@
 # BlueFairy API Gateway — Feature Guide
 
-Version 1.0.0 | GPL-2.0-or-later | PHP 8.1+ | WordPress 6.6+
+Version 1.0.1 | GPL-2.0-or-later | PHP 8.1+ | WordPress 6.6+
 
 BlueFairy API Gateway sits in front of the WordPress REST API and does three
 things: it caches anonymous responses, it rate-limits clients, and it sends
@@ -62,10 +62,12 @@ figures there; that route is never rate-limited.
 rule wins** — when several enabled rules match a route, the one with the most
 literal (non-wildcard) characters in its glob applies, a tie going to the
 older rule — so a `wp/v2/posts/**` rule added beside the seeded `**` rule
-takes the posts routes and `**` keeps the rest. The counter beside the heading reads `1 of 1` in
-the free plugin: the seeded rule *All routes* (`**`, 60 s) is the one rule
-allowed, and the add form gives way to a one-line notice once it exists. Edit
-the seeded rule freely — narrow its glob, lengthen its TTL, disable it.
+takes the posts routes and `**` keeps the rest. The counter beside the heading reads `1 of 500`
+on a new site: the seeded rule *All routes* (`**`, 60 s) is the first of up to
+500 — the same with or without Pro. Once all 500 are in use the add form gives
+way to *This site allows 500 cache rules and all of them are in use. Edit or
+delete one to add another.* Edit the seeded rule freely — narrow its glob,
+lengthen its TTL, disable it.
 
 **Purge all** orphans every cached response at once (a confirmation dialog
 first). It works without JavaScript, through a nonce URL.
@@ -167,8 +169,8 @@ that supports it; a tag purge relies on the tag generations alone.
 | `POST /bfag/v1/cache/purge` with no `tags` | everything |
 | `POST /bfag/v1/cache/purge` with `tags` | only responses cached under those tags |
 
-In the free plugin every content change flushes everything, because there is
-one rule and nothing finer to do. The `bfag_cache_purge_tags` filter lets an
+In the free plugin every content change flushes everything, because it cannot
+tell which cached responses a change touches. The `bfag_cache_purge_tags` filter lets an
 add-on answer with the tags a change touches instead; the Pro add-on does
 exactly that, and its answer always includes `all`, the implicit tag of every
 untagged rule. So with Pro a rule with no tags is still purged on every
@@ -190,8 +192,8 @@ WP-CLI notes*). The dashboard and `/bfag/v1/status` sum the last 24 hours.
 
 **Rate-limit rules** shows label, **Count by** (*IP address*), route glob, limit as
 `N per M s`, the **Enabled** toggle badge and **Edit** | **Delete**. The
-counter reads `1 of 1`: the seeded rule *Global per-IP limit* (300 per 60 s on
-`**`) is the one rule the free plugin allows. The note under the table says what
+counter reads `1 of 500`: the seeded rule *Global per-IP limit* (300 per 60 s on
+`**`) is the first of up to 500, with or without Pro. The note under the table says what
 it is for: a sensible ceiling for anonymous API traffic from one address; lower
 it for a public site, raise it for a headless front end that calls from one
 server. Edit it to taste.
@@ -255,8 +257,7 @@ query. The budget is **per subject and
 per rule**, not per path: every route a rule matches draws on the same
 allowance, so the `**` seeded rule means "300 per minute in total", and neither
 a crawl of 10,000 distinct URLs nor `/wp/v2/Posts` spelled ten different ways
-gets a fresh budget. Give a route its own allowance with its own rule (Pro;
-the free plugin has one rule). The `route` column of the hit log still shows
+gets a fresh budget. Give a route its own allowance with its own rule. The `route` column of the hit log still shows
 the real route each hit came from.
 
 If the insert fails (a database fault) the limiter fails open — a database
@@ -314,8 +315,10 @@ five minutes, and that is the figure the dashboard shows.
 **Webhooks** lists label, target host, event, preset (`—` in the free plugin),
 the **Enabled** toggle badge, the status of the last delivery (`success`,
 `failed`, `pending`; click it for that webhook's log), and **Edit** | **Send
-test** | **Delete**. The counter reads `N of 3`: three webhooks is the free
-plugin's allowance. **Delivery log** opens the log for every webhook.
+test** | **Delete**. The counter reads `N of 500`: a site may keep 500
+webhooks, with or without Pro, and at 500 the form gives way to *This site
+allows 500 webhooks and all of them are in use.* **Delivery log** opens the log
+for every webhook.
 
 Deleting a webhook deletes its delivery log with it, inside one transaction.
 
@@ -640,7 +643,7 @@ a single event scheduled on demand and re-armed while queued rows remain.
 2. Activate it from the **Plugins** screen (PHP 8.1 or newer is required; the
    activation refuses otherwise).
 3. Open **Settings → API Gateway**. The cache and the rate limiter are already
-   on, with one rule each; webhooks wait for you to add one.
+   on, with one seeded rule each; webhooks wait for you to add one.
 
 ---
 
@@ -672,7 +675,7 @@ fired.
 
 | Hook | Type | Signature | Purpose |
 |---|---|---|---|
-| `bfag_loaded` | action | `()` | Fired by `Plugin::boot()` **before** any subsystem binds. Attach the limit, subject-type, purge-tag and preset filters here — a limit raised after a repository has read it is raised too late. Does not fire while this plugin is inactive, so an add-on must also check the dependency on `plugins_loaded`. |
+| `bfag_loaded` | action | `()` | Fired by `Plugin::boot()` **before** any subsystem binds. Attach the subject-type, purge-tag, preset and any limit filters here — a filter attached after a repository has read it is attached too late. Does not fire while this plugin is inactive, so an add-on must also check the dependency on `plugins_loaded`. |
 | `bfag_booted` | action | `()` | Fired after every subsystem is wired; `Plugin::service()` is populated. |
 | `bfag_is_pro` | filter | `( bool $is_pro = false )` | `true` hides the Pro panel, reveals the Pro-only form fields and is reported by `GET /bfag/v1/status`. |
 
@@ -680,7 +683,7 @@ fired.
 
 | Hook | Type | Signature | Purpose |
 |---|---|---|---|
-| `bfag_cache_rule_limit` | filter | `( int $limit = 1 )` | Maximum number of cache rules; at most 1,000 (the most rules the plugin reads). |
+| `bfag_cache_rule_limit` | filter | `( int $limit = 500 )` | Maximum number of cache rules: 500 by default, with or without Pro (`Support\Limits::DEFAULT_LIMIT`; 1 before 1.0.1). Lower or raise it; at most 1,000 (the most rules the plugin reads). |
 | `bfag_cache_purge_tags` | filter | `( string[]\|null $tags = null, string $type, int $id )` | `$type` is `'post'`, `'term'` or `'comment'`. Return the tags the change touches to bump only those; return `null` to flush everything. Include `all`: a rule with no tags is keyed on it and is purged on every content change; only tagged rules are narrower. |
 | `bfag_cache_bypass` | filter | `( bool $bypass = false, WP_REST_Request $request )` | Return `true` to force a request past the cache (`BYPASS`). |
 | `bfag_cache_purged` | action | `( string $scope, string[] $tags )` | `$scope` is `'all'` or `'tags'`. Fired by every purge path: content hooks, the Cache tab, AJAX and the REST endpoint. |
@@ -689,7 +692,7 @@ fired.
 
 | Hook | Type | Signature | Purpose |
 |---|---|---|---|
-| `bfag_rate_limit_rule_limit` | filter | `( int $limit = 1 )` | Maximum number of rate-limit rules; at most 1,000. |
+| `bfag_rate_limit_rule_limit` | filter | `( int $limit = 500 )` | Maximum number of rate-limit rules: 500 by default, with or without Pro (1 before 1.0.1); at most 1,000. |
 | `bfag_rate_limit_subject_types` | filter | `( string[] $types = [ 'ip' ] )` | Subject types a rule may count by. Pro adds `user` and `apikey`. |
 | `bfag_rate_limit_subject` | filter | `( string\|null $subject, string $type, WP_REST_Request $request, string $ip )` | The subject a rule counts this request against. Default is the IP for type `ip`, `null` otherwise; `null` or `''` means the rule does not apply to this request. |
 | `bfag_rate_limit_is_blocked` | filter | `( bool $blocked = false, string $ip, WP_REST_Request $request )` | Return `true` to answer `403 bfag_blocked` before any rule is counted. |
@@ -701,7 +704,7 @@ fired.
 
 | Hook | Type | Signature | Purpose |
 |---|---|---|---|
-| `bfag_webhook_limit` | filter | `( int $limit = 3 )` | Maximum number of webhooks; at most 1,000. |
+| `bfag_webhook_limit` | filter | `( int $limit = 500 )` | Maximum number of webhooks: 500 by default, with or without Pro (3 before 1.0.1); at most 1,000. |
 | `bfag_webhook_events` | filter | `( array $events )` | Add events: `key => [ 'hook' => string, 'label' => string, 'accepted_args' => int, 'group' => string ]`. An add-on event's payload object is `[ 'id' => <first integer hook argument> ]` until `bfag_webhook_payload` fills it in. |
 | `bfag_webhook_payload` | filter | `( array\|null $payload, string $event, array $hook_args )` | The payload before it is signed and sent. Return `null` to suppress the delivery. |
 | `bfag_webhook_request_args` | filter | `( array $args, array $webhook, string $event, array $payload )` | The `wp_remote_post()` arguments. May rewrite `body` and `headers`, set `url` to redirect the delivery, and set `headers['Authorization']` — the only place a credential header is accepted. The filter is trusted for credentials, not for transport: after it runs the headers are sanitised again, so a `Host`, `X-Forwarded-*` or line-break value it plants is dropped. Set `$args['bfag_skip']` to a non-empty string to cancel the delivery: it is logged as `failed` with that string as the response body, nothing is sent, and `bfag_webhook_delivery_failed` fires with `$is_final` true. |
@@ -770,8 +773,8 @@ never read.
 
 ## What API Gateway Pro adds
 
-You have a cache, a rate limiter and signed webhooks, and you have one rule of
-each kind and three webhooks. What you do not have is anything that happens
+You have a cache, a rate limiter and signed webhooks — up to 500 rules of each
+kind and 500 webhooks, the same as with Pro. What you do not have is anything that happens
 when a delivery fails at three in the morning, any way to stop a client that
 keeps hammering you, or any way to give an integration its own credentials.
 
@@ -782,12 +785,11 @@ plugin keeps doing exactly what it does now.
 | Feature | API Gateway Pro | API Gateway (free) |
 |---|---|---|
 | REST response cache, every response labelled `X-BF-Cache: HIT` / `MISS` / `BYPASS` | Yes | Yes |
-| Cache rules | Up to 500 | 1 |
+| Cache rules, rate-limit rules, webhooks | Up to 500 of each | Up to 500 of each — the same limit |
 | What a content change purges | Only the tags it touches: `post:<id>`, `type:<post_type>`, `term:<id>`, `tax:<taxonomy>`, `all` | Everything |
 | **Purge all** button and `POST /bfag/v1/cache/purge` | Yes | Yes |
 | **WPGraphQL query caching** (anonymous, error-free queries) | Yes | — |
 | Per-IP sliding-window rate limiting with `429` and `Retry-After` | Yes | Yes |
-| Rate-limit rules | Up to 500 | 1 |
 | **Count a rule by logged-in user or by API key** | Yes | — |
 | **Penalty block** — an address that breaches an IP rule is blocked for N seconds | Yes | — |
 | **DDoS auto-block**, with a never-block list | Yes | — |
@@ -795,7 +797,6 @@ plugin keeps doing exactly what it does now.
 | Dashboard *Active blocks* card | Live count of blocked addresses | *Blocked (Pro)* placeholder |
 | Real client address behind trusted proxies | Yes | Yes |
 | Signed outbound webhooks (`X-BF-Signature`, HMAC-SHA256) | Yes | Yes |
-| Webhooks | Up to 500 | 3 |
 | Events — six WordPress, four WooCommerce | Yes | Yes |
 | Delivery log with a manual **Retry** on failed deliveries | Yes | Yes |
 | **Automatic retries** — 1 min, 5 min, then 30 min, by a five-minute sweep, up to each webhook's *Max retries* (0–10) | Yes | — |
@@ -829,11 +830,10 @@ Pro's presets turn the delivery into a Salesforce Lead, a HubSpot contact, deal
 or ticket, or a Mailchimp subscriber directly, and verify the webhooks those
 vendors send back to you.
 
-**One blog post edit empties the product cache.** This plugin has one cache
-rule and one answer to any content change: flush everything. Every post you
-publish turns your whole API cache cold again. Pro tags what each change
-touches, so editing a post leaves responses tagged `type:product` warm, and with
-up to 500 rules every route can have the lifetime it deserves. If your front end
+**One blog post edit empties the product cache.** This plugin has one answer
+to any content change: flush everything. Every post you publish turns your
+whole API cache cold again. Pro tags what each change touches, so editing a
+post leaves responses tagged `type:product` warm. If your front end
 speaks WPGraphQL, Pro caches those queries too; this plugin does not.
 
 **A client that is hammering you is only slowed down.** The free limiter answers
@@ -843,10 +843,11 @@ on the rule, or, once you switch on auto-block, for an hour by default after a
 rule has refused the DDoS threshold number of its requests over the limit — and gives you a panel listing every block, its
 reason and its expiry, with **Unblock** and a form to block an address by hand.
 
-**One rule means one budget for everyone.** Your search endpoint, your user
-routes and your product feed all draw on the same per-IP allowance. Pro gives each
-route its own rule and lets a rule count per logged-in user or per API key, so a
-partner integration gets its own allowance instead of sharing an office IP.
+**One address means one budget for everyone behind it.** Every rule in this
+plugin counts by IP address, so every user and every integration calling from
+one office or one server shares one allowance. Pro lets a rule count per
+logged-in user or per API key, so a partner integration gets its own allowance
+instead of sharing an office IP.
 
 **Every integration shares the administrator's login.** Today a build server
 that needs to purge the cache holds a credential that can do anything the

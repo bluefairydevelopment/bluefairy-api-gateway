@@ -5,7 +5,7 @@ BlueFairy API Gateway — Marketing Content
 3-SENTENCE SUMMARY
 ------------------
 
-BlueFairy API Gateway sits in front of the WordPress REST API with a response cache, a per-IP rate limiter and signed outbound webhooks, all managed from one screen at Settings → API Gateway. Anonymous GET responses are served from cache with an X-BF-Cache header you can see from curl, clients over the limit get a proper 429 with Retry-After, and post, user, comment and WooCommerce order events reach your other systems as HMAC-signed JSON with a delivery log and one-click resend. Requires PHP 8.1+ and WordPress 6.6+; licensed GPL-2.0-or-later; free — add API Gateway Pro for up to 500 of everything, tag-based purges, per-key limits, DDoS blocking, automatic retries with alerts and CRM presets.
+BlueFairy API Gateway sits in front of the WordPress REST API with a response cache, a per-IP rate limiter and signed outbound webhooks, all managed from one screen at Settings → API Gateway. Anonymous GET responses are served from cache with an X-BF-Cache header you can see from curl, clients over the limit get a proper 429 with Retry-After, and post, user, comment and WooCommerce order events reach your other systems as HMAC-signed JSON with a delivery log and one-click resend. Requires PHP 8.1+ and WordPress 6.6+; licensed GPL-2.0-or-later; free, with up to 500 cache rules, rate-limit rules and webhooks — add API Gateway Pro for tag-based purges, per-key limits, DDoS blocking, automatic retries with alerts and CRM presets.
 
 
 CSS CLASS PREFIX
@@ -89,11 +89,11 @@ HTML LONG DESCRIPTION
 <div class="bfag-dc-included">
   <h3>What&rsquo;s included</h3>
   <ul>
-    <li>REST response cache — one route rule, HIT/MISS/BYPASS header, automatic purge on content changes</li>
+    <li>REST response cache — up to 500 route rules, HIT/MISS/BYPASS header, automatic purge on content changes</li>
     <li>Purge by hand from the Cache tab or <code>POST /bfag/v1/cache/purge</code></li>
-    <li>Per-IP rate limiting — one rule, 429 with Retry-After and X-BF-RateLimit headers</li>
+    <li>Per-IP rate limiting — up to 500 rules, 429 with Retry-After and X-BF-RateLimit headers</li>
     <li>Trusted-proxy handling for X-Forwarded-For, CF-Connecting-IP, X-Real-IP or True-Client-IP</li>
-    <li>Up to three HMAC-signed outbound webhooks — post, user, comment and WooCommerce order events</li>
+    <li>Up to 500 HMAC-signed outbound webhooks — post, user, comment and WooCommerce order events</li>
     <li>Delivery log with response bodies and one-click resend</li>
     <li>Dashboard and a <code>GET /bfag/v1/status</code> endpoint for monitoring</li>
     <li>Multisite — network activation provisions every site; each keeps its own rules, webhooks and settings</li>

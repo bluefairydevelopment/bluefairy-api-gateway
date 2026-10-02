@@ -11,12 +11,11 @@ Pro is always the first column.
 | Feature | API Gateway Pro | API Gateway (free) |
 |---|---|---|
 | REST response cache, every response labelled `X-BF-Cache: HIT` / `MISS` / `BYPASS` | Yes | Yes |
-| Cache rules | Up to 500 | 1 |
+| Cache rules, rate-limit rules, webhooks | Up to 500 of each | Up to 500 of each — the same limit |
 | What a content change purges | Only the tags it touches: `post:<id>`, `type:<post_type>`, `term:<id>`, `tax:<taxonomy>`, `all` | Everything |
 | **Purge all** button and `POST /bfag/v1/cache/purge` | Yes | Yes |
 | **WPGraphQL query caching** (anonymous, error-free queries) | Yes | — |
 | Per-IP sliding-window rate limiting with `429` and `Retry-After` | Yes | Yes |
-| Rate-limit rules | Up to 500 | 1 |
 | **Count a rule by logged-in user or by API key** | Yes | — |
 | **Penalty block** — an address that breaches an IP rule is blocked for N seconds | Yes | — |
 | **DDoS auto-block**, with a never-block list | Yes | — |
@@ -24,7 +23,6 @@ Pro is always the first column.
 | Dashboard *Active blocks* card | Live count of blocked addresses | *Blocked (Pro)* placeholder |
 | Real client address behind trusted proxies | Yes | Yes |
 | Signed outbound webhooks (`X-BF-Signature`, HMAC-SHA256) | Yes | Yes |
-| Webhooks | Up to 500 | 3 |
 | Events — six WordPress, four WooCommerce | Yes | Yes |
 | Delivery log with a manual **Retry** on failed deliveries | Yes | Yes |
 | **Automatic retries** — 1 min, 5 min, then 30 min, by a five-minute sweep, up to each webhook's *Max retries* (0–10) | Yes | — |
@@ -42,9 +40,9 @@ Pro is always the first column.
 
 The **Licence** rows describe Pro's licence client: `Licence\Updater` offers updates through the `Update URI` header's `update_plugins_wordpress.bluefairydevelopment.com` filter only while `Licence::is_active()`, and nothing outside `includes/Licence/` and the Licence tab reads the licence (`PluginTest::test_no_licence_state_switches_off_any_pro_feature`).
 
-Against the 1.0.0 code of both plugins, re-verified on 2026-10-02 at free 768d911 and Pro 4b14e9a:
+Against the 1.0.1 code of both plugins, re-verified on 2026-10-02 at free 843e3b3 and Pro 8e41a8a:
 
-- **Limits** — the free plugin's `bfag_cache_rule_limit` and `bfag_rate_limit_rule_limit` default to 1 and `bfag_webhook_limit` to 3; Pro answers all three with `Plugin::UNLIMITED`, which is **500**.
+- **Limits** — the free plugin's `bfag_cache_rule_limit`, `bfag_rate_limit_rule_limit` and `bfag_webhook_limit` all default to `Support\Limits::DEFAULT_LIMIT`, **500** (WPMAP-142; 1, 1 and 3 before 1.0.1). Pro attaches nothing to them on a 1.0.1 or newer base (`PluginTest::test_boot_attaches_is_pro_and_subject_types_and_leaves_the_limits_alone`); only on an older base does `Plugin::hold_legacy_base_limits()` hold them at the same 500.
 - **No alerts in the free plugin** — no `wp_mail()` call anywhere in it; Pro's `Webhook\FailureNotifier` sends the alert, in the modes `Settings::ALERT_MODES` (`first`, `after_n`, `exhausted`; default `exhausted`).
 - **Tag purges** — Pro's `Cache\TagPurgeProvider` on `bfag_cache_purge_tags`; the free plugin's default answer is to flush everything.
 - **GraphQL** — Pro's `Cache\GraphQLCacheIntegration` on `pre_graphql_execute_request` and `graphql_return_response`.
@@ -65,8 +63,13 @@ free plugin owns. Adding Pro to the cart adds the free plugin with it.
 
 ## Things that must never be claimed
 
-- **"Unlimited."** Pro's ceiling is 500 rules of each kind and 500 webhooks.
-  The constant is called `UNLIMITED`; the number is not.
+- **"Unlimited."** The ceiling is 500 rules of each kind and 500 webhooks, in
+  both plugins.
+- **That Pro raises, lifts or removes a limit**, or that the free plugin allows
+  fewer rules or webhooks than Pro. Both allow 500 of each (WPMAP-142), and
+  WordPress.org guideline 5 forbids a free plugin whose functionality is
+  locked until an upgrade. Sell Pro on the rows above that the free plugin
+  does not have at all.
 - **"Ban."** The screens say *block*, *Blocked IP addresses*, *Unblock*. Use
   their word.
 - That the free plugin sends any alert, or retries anything on its own. It

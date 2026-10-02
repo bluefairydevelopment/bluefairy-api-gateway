@@ -14,9 +14,9 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 /**
- * Creates the six tables with dbDelta, seeds the one cache rule and the one
- * rate-limit rule the free plugin allows, grants the capability and schedules
- * the maintenance crons.
+ * Creates the six tables with dbDelta, seeds one cache rule and one
+ * rate-limit rule (a site may keep up to Limits::DEFAULT_LIMIT of each),
+ * grants the capability and schedules the maintenance crons.
  *
  * The dbDelta rules that shaped the DDL: two spaces after `PRIMARY KEY`, `KEY`
  * not `INDEX`, no `CONSTRAINT`/FOREIGN KEY lines (dbDelta cannot parse them

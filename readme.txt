@@ -14,15 +14,15 @@ REST response caching, per-IP rate limiting and signed outbound webhooks — a h
 
 BlueFairy API Gateway sits in front of the WordPress REST API and does three things, each managed from one screen at **Settings → API Gateway**.
 
-**Response cache.** Anonymous `GET` responses are stored and served back with an `X-BF-Cache: HIT` header; every REST response is labelled `HIT`, `MISS` or `BYPASS` so you can see the decision from `curl`. Requests from logged-in users, or carrying an `Authorization`, `X-WP-Nonce` or `X-BF-API-Key` header, are never cached. Responses that are not 2xx, that stream, that set a cookie or whose `Cache-Control` says `no-store`, `private`, `no-cache` or `max-age=0` are never stored. One cache rule, matched by route glob (`wp/v2/posts/**` — a trailing `/**` or `/*` matches the collection route too), seeded on activation as "all routes, 60 seconds". The cache is purged automatically when a post, term or comment changes, and by hand from the Cache tab or `POST /bfag/v1/cache/purge`. Responses live in your persistent object cache (Redis, Memcached) when you have one, otherwise in transients — capped there at 64 KB per response and one hour, and swept every five minutes.
+**Response cache.** Anonymous `GET` responses are stored and served back with an `X-BF-Cache: HIT` header; every REST response is labelled `HIT`, `MISS` or `BYPASS` so you can see the decision from `curl`. Requests from logged-in users, or carrying an `Authorization`, `X-WP-Nonce` or `X-BF-API-Key` header, are never cached. Responses that are not 2xx, that stream, that set a cookie or whose `Cache-Control` says `no-store`, `private`, `no-cache` or `max-age=0` are never stored. Up to 500 cache rules, each matched by route glob (`wp/v2/posts/**` — a trailing `/**` or `/*` matches the collection route too) with its own lifetime; the most specific matching rule wins, and one is seeded on activation as "all routes, 60 seconds". The cache is purged automatically when a post, term or comment changes, and by hand from the Cache tab or `POST /bfag/v1/cache/purge`. Responses live in your persistent object cache (Redis, Memcached) when you have one, otherwise in transients — capped there at 64 KB per response and one hour, and swept every five minutes.
 
-**Rate limiting.** A sliding-window counter per client IP and rule. The breaching request gets `429 Too Many Requests` with `Retry-After`, `X-BF-RateLimit-Limit` and `X-BF-RateLimit-Window`. One rule, seeded as 300 requests per 60 seconds across every route; logged-in users who can edit posts are exempt by default. One forwarded-IP header of your choosing (`X-Forwarded-For` by default; `CF-Connecting-IP`, `X-Real-IP` or `True-Client-IP`) is honoured, and only from the proxy ranges you list, so a visitor cannot pick their own bucket. A client over the limit is refused from a marker for the rest of its window without touching the database; with a persistent object cache the count itself is an atomic increment rather than a query. The hit log is pruned every five minutes.
+**Rate limiting.** A sliding-window counter per client IP and rule. The breaching request gets `429 Too Many Requests` with `Retry-After`, `X-BF-RateLimit-Limit` and `X-BF-RateLimit-Window`. Up to 500 rules, each counting the routes its glob matches; one is seeded as 300 requests per 60 seconds across every route, and logged-in users who can edit posts are exempt by default. One forwarded-IP header of your choosing (`X-Forwarded-For` by default; `CF-Connecting-IP`, `X-Real-IP` or `True-Client-IP`) is honoured, and only from the proxy ranges you list, so a visitor cannot pick their own bucket. A client over the limit is refused from a marker for the rest of its window without touching the database; with a persistent object cache the count itself is an atomic increment rather than a query. The hit log is pruned every five minutes.
 
-**Signed outbound webhooks.** Up to three webhooks, each subscribing to one event: post published, updated or deleted; user registered or updated; comment created; and, with WooCommerce, order created, order status changed, order completed, product updated. Each delivery is a JSON `POST` carrying `X-BF-Event`, `X-BF-Delivery`, `X-BF-Timestamp` and `X-BF-Signature: sha256=HMAC-SHA256(timestamp.body, secret)`, so the receiver can verify both origin and freshness. Deliveries are collected during the request and sent once after the response — twenty at most, and for fifteen seconds at most, the rest through a WP-Cron event so a bulk import or a dead endpoint never ties up the request that saved it — logged with their HTTP status and response body, and any failed delivery can be resent from the log. Targets must be `https://`; a secret is generated for you and shown once, right after saving, for you to copy into the receiver.
+**Signed outbound webhooks.** Up to 500 webhooks, each subscribing to one event: post published, updated or deleted; user registered or updated; comment created; and, with WooCommerce, order created, order status changed, order completed, product updated. Each delivery is a JSON `POST` carrying `X-BF-Event`, `X-BF-Delivery`, `X-BF-Timestamp` and `X-BF-Signature: sha256=HMAC-SHA256(timestamp.body, secret)`, so the receiver can verify both origin and freshness. Deliveries are collected during the request and sent once after the response — twenty at most, and for fifteen seconds at most, the rest through a WP-Cron event so a bulk import or a dead endpoint never ties up the request that saved it — logged with their HTTP status and response body, and any failed delivery can be resent from the log. Targets must be `https://`; a secret is generated for you and shown once, right after saving, for you to copy into the receiver.
 
 **Dashboard.** Cache hit rate and webhook success rate over the last 24 hours, the current size of the rate-limit log, the ten most recent failed deliveries with a Retry button, and the same figures at `GET /bfag/v1/status` for a monitoring tool — a route that is never rate-limited.
 
-**Add API Gateway Pro** for up to 500 cache rules, rate-limit rules and webhooks; purges narrowed to the tags a change touches; rate limits per user and per API key with penalty blocks; DDoS auto-block with a blocked-IPs panel; automatic webhook retries with back-off and failure alerts by email; Salesforce, HubSpot and Mailchimp presets; a verified incoming-webhook endpoint (HubSpot signed; Salesforce and Mailchimp shared secret); a webhook REST API; API keys with scopes; and WPGraphQL query caching. Pro installs alongside this plugin rather than replacing it.
+**Add API Gateway Pro** for purges narrowed to the tags a change touches; rate limits per user and per API key with penalty blocks; DDoS auto-block with a blocked-IPs panel; automatic webhook retries with back-off and failure alerts by email; Salesforce, HubSpot and Mailchimp presets; a verified incoming-webhook endpoint (HubSpot signed; Salesforce and Mailchimp shared secret); a webhook REST API; API keys with scopes; and WPGraphQL query caching. Pro installs alongside this plugin rather than replacing it.
 
 == Installation ==
 
@@ -38,7 +38,7 @@ Everything lives under **Settings → API Gateway**, in five tabs.
 
 **Dashboard** — three cards (cache hit rate, webhook success rate for outgoing deliveries, and the Pro *Active blocks* count — shown as *Blocked (Pro)* without the add-on) recomputed every five minutes or when you press **Refresh**; the ten newest failed deliveries with **Retry**; the raw counts; and the status endpoint URL with a **Copy** button. Timestamps are shown in the site's timezone.
 
-**Cache** — the rules table with an Enabled/Disabled badge you can click, **Edit** and **Delete**, and **Purge all**. The add/edit form takes a label, a route glob (matched without the leading slash: `wc/v3/products/*` matches `wc/v3/products` and `wc/v3/products/12`), a TTL in seconds and optional comma-separated tags. A rule with no tags is purged on every content change; add tags to narrow purging to those tags. Edit the seeded "All routes" rule to narrow it. With more than one rule the most specific one wins, and the table is listed in that order.
+**Cache** — the rules table with an Enabled/Disabled badge you can click, **Edit** and **Delete**, and **Purge all**. The add/edit form takes a label, a route glob (matched without the leading slash: `wc/v3/products/*` matches `wc/v3/products` and `wc/v3/products/12`), a TTL in seconds and optional comma-separated tags. Every content change purges every rule; with API Gateway Pro a tagged rule is purged only by the changes that touch its tags. Edit the seeded "All routes" rule to narrow it. With more than one rule the most specific one wins, and the table is listed in that order.
 
 **Rate limit** — the rules table and a form with a label, *Count by* (IP address), a route glob, and *Requests per seconds*. Values outside 1–65535 requests or 1–86400 seconds are refused rather than silently changed.
 
@@ -76,15 +76,15 @@ Compute `HMAC-SHA256` with the webhook's secret over the string `X-BF-Timestamp 
 
 = Why does editing a blog post empty the whole cache? =
 
-Because the free plugin has one rule and no way to tell which cached responses a change touches, so any post, term or comment change flushes everything. API Gateway Pro answers the `bfag_cache_purge_tags` filter with the tags each change touches (`post:42`, `type:product`, `term:7`, `tax:category`, `all`), so a rule tagged `type:product` survives a blog post edit. A rule with no tags is purged on every content change even with Pro; add tags to narrow purging to those tags.
+Because the free plugin has no way to tell which cached responses a change touches, so any post, term or comment change flushes everything. API Gateway Pro answers the `bfag_cache_purge_tags` filter with the tags each change touches (`post:42`, `type:product`, `term:7`, `tax:category`, `all`), so a rule tagged `type:product` survives a blog post edit. A rule with no tags is purged on every content change even with Pro; add tags to narrow purging to those tags.
 
 = Will my logged-in users or my app's authenticated API calls be cached? =
 
 No. A request with a WordPress login cookie, an `Authorization` header (Application Passwords, bearer tokens), an `X-WP-Nonce` or an `X-BF-API-Key` is never served from or stored in the cache, because such a response may contain data nobody else should see. Only anonymous public reads are cached.
 
-= What are the limits in the free plugin? =
+= How many rules and webhooks can I add? =
 
-One cache rule, one rate-limit rule and three webhooks. Rate limiting counts by IP address only. The admin page tells you when you have reached a limit. Pro raises each to 500 and adds per-user and per-API-key counting.
+Up to 500 cache rules, 500 rate-limit rules and 500 webhooks — the same with or without API Gateway Pro. The ceiling keeps the admin lists and the rule matching on every request quick; a developer can lower it, or raise it to at most 1,000, with the `bfag_cache_rule_limit`, `bfag_rate_limit_rule_limit` and `bfag_webhook_limit` filters. When every one is in use the add form gives way to a line saying so: edit or delete one to add another. Rate limiting counts by IP address; Pro adds per-user and per-API-key counting.
 
 = The webhook will not save — "URL refused: it must start with https:// and resolve to a public address". =
 
@@ -129,7 +129,9 @@ This plugin connects to services outside your site in one way only: **outbound w
 == Changelog ==
 
 = 1.0.1 =
-* Packaging for WordPress.org; no change to behaviour, settings or data.
+* Up to 500 cache rules, 500 rate-limit rules and 500 webhooks — was one, one and three. The ceiling is now the same with or without API Gateway Pro, which is sold on its own features alone. The page shown when every one is in use, and the notice when a save is refused for that reason, no longer mention Pro.
+* The Pro panel lists only what Pro adds, with no limit among them.
+* Packaging for WordPress.org; no change to settings or data.
 * The readme gains an *External services* section describing the outbound webhooks you configure.
 * The Markdown feature reference is no longer in the plugin zip; everything it held — including the receiver signature examples and the Pro comparison — is in the features guide, `docs/ApiGatewayFeaturesGuide.pdf`.
 * The time-limit lift used while a network-wide activation provisions every site is documented in the code.
@@ -147,7 +149,7 @@ This plugin connects to services outside your site in one way only: **outbound w
 == Upgrade Notice ==
 
 = 1.0.1 =
-Packaging and documentation only — no change to behaviour, settings or data.
+Up to 500 cache rules, rate-limit rules and webhooks (was one, one and three), as in Pro. No change to settings or data.
 
 = 1.0.0 =
 First release — nothing to upgrade from. Rate limiting is on from activation at 300 requests per minute per IP on every REST route; behind Cloudflare or a load balancer, add the proxy ranges under Settings → Rate limit → Trusted proxies before relying on it.

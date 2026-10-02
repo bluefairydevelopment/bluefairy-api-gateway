@@ -9,9 +9,13 @@ Versioning follows [Semantic Versioning](https://semver.org/): major = architect
 
 ## [1.0.1] — 2026-10-02
 
-Packaging for WordPress.org (WPMAP-142). No change to behaviour, settings, database schema or data.
+Packaging for WordPress.org (WPMAP-142), and the row limits made the same as Pro's. No change to settings, database schema or data.
 
 ### Changed
+- **Up to 500 cache rules, 500 rate-limit rules and 500 webhooks** — was one, one and three. The default of `bfag_cache_rule_limit`, `bfag_rate_limit_rule_limit` and `bfag_webhook_limit` is now `Support\Limits::DEFAULT_LIMIT` (500), with or without the Pro add-on: an engineering bound on the admin lists and per-request matching, not a paid tier (WordPress.org guideline 5 forbids locking functionality behind an upgrade). The three filters still lower or raise a site's limit, to at most `Limits::MAX_ROWS` (1,000).
+- When every row of a kind is in use, the add form gives way to *This site allows 500 cache rules and all of them are in use. Edit or delete one to add another.* (and the same for rate-limit rules and webhooks), and a refused save says *every cache rule this site allows is in use* — neither mentions Pro any more. `ProUpsell::limit_line()` is gone; the line is `Page::limit_line()`, and `CachePage` no longer takes a `ProUpsell`.
+- The Pro panel lists only what Pro adds: its limit lines are gone, and *Automatic webhook retries and failure alert emails* replaces the webhook one.
+- `readme.txt`, `README.md`, the features guide and the comparison table state the shared limit; the readme's *Admin Instructions* and the cache docblock no longer say that tags narrow purging without Pro (every content change purges every rule unless Pro answers `bfag_cache_purge_tags`).
 - The Markdown feature reference in the plugin root no longer ships in the plugin zip (Plugin Check warns on unexpected Markdown there). It stays in the source repository, where the features-guide generator reads it, and everything it held — the hook reference, the receiver signature examples and the Pro comparison — reaches users in `docs/ApiGatewayFeaturesGuide.pdf`, which ships. `README.md`, `readme.txt` and this file now point there.
 - `readme.txt` gains an *External services* section: the plugin contacts only the webhook URLs an administrator configures, with the fields each event sends.
 - The `set_time_limit( 0 )` in a network-wide activation or deactivation carries a targeted Plugin Check ignore and the reason: WordPress records a network activation only after the hook returns, so a run that hit `max_execution_time` would leave the plugin inactive and the network half-provisioned.
