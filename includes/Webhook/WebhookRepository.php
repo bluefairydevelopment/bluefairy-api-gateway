@@ -24,14 +24,24 @@ use BlueFairy\ApiGateway\Logger;
  * registered as a target) and about `headers`, which must decode to a flat
  * object of strings — the dispatcher sanitises them again at send time.
  *
- * `all_enabled()` is the hot path (EventBus reads it on every request) and is
- * object-cached under `bfag/webhooks_enabled`; every write clears that key.
+ * `all_enabled()` is object-cached under `bfag/webhooks_enabled`; every write
+ * clears that key. The list EventBus needs on EVERY request — which events
+ * have an enabled webhook — is kept in the autoloaded option
+ * `bfag_webhook_events`, rewritten from the table after every write (P7 /
+ * WPMAP-106): without a persistent object cache, reading it from the table
+ * was a SELECT on every page view.
  */
 final class WebhookRepository {
 
 	public const CACHE_GROUP = 'bfag';
 	public const CACHE_KEY   = 'webhooks_enabled';
 	public const CACHE_TTL   = 300;
+
+	/**
+	 * Autoloaded option holding the distinct event keys of the enabled
+	 * webhooks (list<string>).
+	 */
+	public const EVENTS_OPTION = 'bfag_webhook_events';
 
 	/**
 	 * Every webhook, newest last.
@@ -115,16 +125,27 @@ final class WebhookRepository {
 	}
 
 	/**
-	 * Distinct event keys that have at least one enabled webhook.
+	 * Distinct event keys that have at least one enabled webhook, from the
+	 * autoloaded option EVENTS_OPTION (no query). When the option does not
+	 * exist yet (the first boot of an install, or one upgraded from before
+	 * it existed) it is built from `all_enabled()` and added — with
+	 * `add_option()`, so a boot never overwrites what a concurrent write
+	 * stored.
 	 *
 	 * @return list<string>
 	 */
 	public function enabled_events(): array {
+		$stored = get_option( self::EVENTS_OPTION, false );
+		if ( is_array( $stored ) ) {
+			return array_values( array_filter( $stored, 'is_string' ) );
+		}
 		$events = [];
 		foreach ( $this->all_enabled() as $row ) {
 			$events[ (string) $row['event'] ] = true;
 		}
-		return array_keys( $events );
+		$events = array_keys( $events );
+		add_option( self::EVENTS_OPTION, $events, '', true );
+		return $events;
 	}
 
 	/**
@@ -266,10 +287,19 @@ final class WebhookRepository {
 	}
 
 	/**
-	 * Drop the object-cached enabled list.
+	 * Drop the object-cached enabled list and rewrite EVENTS_OPTION from the
+	 * table. Called after every write (also a failed or rolled-back one: the
+	 * table is the truth either way).
 	 */
 	public function invalidate(): void {
+		global $wpdb;
+
 		wp_cache_delete( self::CACHE_KEY, self::CACHE_GROUP );
+		$events = $wpdb->get_col( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- the option below IS the cache; this rebuilds it after a write.
+			$wpdb->prepare( "SELECT DISTINCT event FROM {$wpdb->prefix}bfag_webhooks WHERE enabled = %d ORDER BY event ASC LIMIT %d", 1, 1000 )
+		);
+		$events = array_values( array_map( 'strval', array_filter( is_array( $events ) ? $events : [], 'is_scalar' ) ) );
+		update_option( self::EVENTS_OPTION, $events, true );
 	}
 
 	/**

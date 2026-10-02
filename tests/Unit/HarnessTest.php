@@ -175,4 +175,33 @@ final class HarnessTest extends TestCase {
 		$this->assertSame( [ 1, 2, 3, 4, 5 ], get_sites( [ 'fields' => 'ids', 'number' => 0 ] ), 'number 0 is no limit' );
 		$this->assertSame( '3', get_sites( [ 'number' => 1, 'offset' => 2 ] )[0]->blog_id, 'objects unless fields=ids' );
 	}
+
+	/**
+	 * P7 / F21: update_option() as core — unchanged values are not written
+	 * and return false (a `2` over a stored `'2'` included), the autoload
+	 * flag of an existing option moves only with its value, and a write the
+	 * database refuses returns false and stores nothing.
+	 */
+	public function test_update_option_models_core_unchanged_autoload_and_failure(): void {
+		$this->assertTrue( update_option( 'bfag_h', 2, false ), 'a missing option is added' );
+		$this->assertSame( 'off', $GLOBALS['bfag_test_option_autoload']['bfag_h'] );
+		$this->assertFalse( update_option( 'bfag_h', 2, true ), 'unchanged: not written' );
+		$this->assertFalse( update_option( 'bfag_h', '2', true ), 'the stored form is a string: still unchanged' );
+		$this->assertSame( 'off', $GLOBALS['bfag_test_option_autoload']['bfag_h'], 'the flag did not move without the value' );
+		$this->assertTrue( update_option( 'bfag_h', 3, true ) );
+		$this->assertSame( 'on', $GLOBALS['bfag_test_option_autoload']['bfag_h'], 'it moves with a changed value' );
+		$this->assertTrue( update_option( 'bfag_h', 4 ), 'null autoload keeps the flag' );
+		$this->assertSame( 'on', $GLOBALS['bfag_test_option_autoload']['bfag_h'] );
+
+		$this->assertSame( [ 'bfag_h' => true, 'bfag_nope' => false ], wp_set_option_autoload_values( [ 'bfag_h' => false, 'bfag_nope' => true ] ) );
+		$this->assertSame( 'off', $GLOBALS['bfag_test_option_autoload']['bfag_h'] );
+		$this->assertArrayNotHasKey( 'bfag_nope', $GLOBALS['bfag_test_options'], 'a missing option is not created' );
+
+		$GLOBALS['bfag_test_option_write_fails'] = [ 'bfag_h', 'bfag_new' ];
+		$this->assertFalse( update_option( 'bfag_h', 5 ) );
+		$this->assertSame( '4', get_option( 'bfag_h' ), 'a refused write stores nothing' );
+		$this->assertFalse( update_option( 'bfag_new', 1 ) );
+		$this->assertFalse( add_option( 'bfag_new', 1 ) );
+		$this->assertFalse( get_option( 'bfag_new' ) );
+	}
 }

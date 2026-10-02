@@ -107,7 +107,7 @@ final class Settings {
 	 */
 	public function update( array $values ): array {
 		$clean = $this->sanitize( $values );
-		update_option( self::OPTION, $clean, false );
+		update_option( self::OPTION, $clean, true ); // Autoloaded: read on every request (P7).
 		$this->cache = null;
 		return $clean;
 	}

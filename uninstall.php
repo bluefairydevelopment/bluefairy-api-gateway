@@ -45,6 +45,7 @@ $bfag_option_keys = [
 	'bfag_cache_generation',
 	'bfag_tag_generations',
 	'bfag_install_error',
+	'bfag_webhook_events',
 ];
 
 $bfag_cron_hooks = [

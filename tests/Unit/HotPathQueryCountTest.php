@@ -21,6 +21,11 @@ use BlueFairy\ApiGateway\RateLimit\RateLimitRuleRepository;
 use BlueFairy\ApiGateway\Settings;
 use BlueFairy\ApiGateway\Support\RequestContext;
 use BlueFairy\ApiGateway\Tests\TestCase;
+use BlueFairy\ApiGateway\Webhook\DeliveryRepository;
+use BlueFairy\ApiGateway\Webhook\EventBus;
+use BlueFairy\ApiGateway\Webhook\EventRegistry;
+use BlueFairy\ApiGateway\Webhook\WebhookDispatcher;
+use BlueFairy\ApiGateway\Webhook\WebhookRepository;
 
 /**
  * Boots the real middleware classes exactly as Plugin::boot() wires them
@@ -344,5 +349,21 @@ final class HotPathQueryCountTest extends TestCase {
 
 		self::assertNotContains( 'insert:bfag_rate_limit_hits', $this->trace() );
 		self::assertNotContains( 'get_var:bfag_rate_limit_hits', $this->trace() );
+	}
+
+	/**
+	 * The boot cost P7 measured: EventBus::register_hooks() on every page
+	 * view. With the list stored it issues no query, and still hooks the
+	 * events it names (positive) and nothing else (negative).
+	 */
+	public function test_event_bus_boot_issues_no_query_and_hooks_exactly_the_listed_events(): void {
+		add_option( WebhookRepository::EVENTS_OPTION, [ 'post.published' ], '', true );
+		$settings   = new Settings();
+		$deliveries = new DeliveryRepository( $settings );
+		( new EventBus( new WebhookRepository(), new WebhookDispatcher( $deliveries, $settings ), new EventRegistry(), $deliveries ) )->register_hooks();
+
+		$this->assertSame( [], $this->wpdb->calls );
+		$this->assertNotEmpty( $GLOBALS['bfag_test_hooks']['transition_post_status'] ?? [], 'post.published is hooked' );
+		$this->assertArrayNotHasKey( 'post_updated', $GLOBALS['bfag_test_hooks'], 'post.updated is not in the list' );
 	}
 }

@@ -32,6 +32,7 @@ First release. The free base plugin of a pair: BlueFairy API Gateway Pro is an a
 - Table creation is verified after `dbDelta`; a missing table is logged, recorded in `bfag_install_error`, shown as an admin notice and retried at most once every five minutes.
 
 ### Notes
-- Database schema version **1.0.2** — an internal counter; the first release ships at it.
+- Database schema version **1.0.3** — an internal counter; the first release ships at it.
+- The options read on every request (`bfag_settings`, `bfag_db_version`, `bfag_version`, `bfag_cache_generation`, `bfag_webhook_events`) are autoloaded, so without a persistent object cache a page view costs no query for them and none for the webhook list.
 - `uninstall.php` removes options, transients (`bfag_kpis` by name as well as by sweep), cron events, the per-user proxy-notice dismissal and the capability on every site; the six tables are dropped only when *Delete data on uninstall* is on.
 - Tested against WordPress 7.1; requires WordPress 6.6 and PHP 8.1 or newer.

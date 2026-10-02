@@ -586,11 +586,15 @@ final class AdminMenuTest extends TestCase {
 				],
 				$exit->payload
 			);
-			$update = array_pop( $this->wpdb->calls );
+			// The last UPDATE (a webhook write is followed by the enabled-event rebuild, P7).
+			$updates = $this->wpdb->calls_to( 'update' );
+			$update  = end( $updates );
+			$this->assertIsArray( $update, $kind );
 			$this->assertSame( 'update', $update['method'] );
 			$this->assertSame( $table, $update['table'] );
 			$this->assertSame( [ 'id' => 4 ], $update['where'] );
 			$this->assertSame( 0, (int) $update['data']['enabled'] );
+			$this->wpdb->calls = []; // The negative cases below must issue no UPDATE of their own.
 		}
 
 		bfag_test_ajax_request(

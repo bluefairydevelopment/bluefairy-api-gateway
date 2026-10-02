@@ -89,6 +89,8 @@ if ( ! defined( 'OBJECT' ) ) {
 // ------------------------------------------------------------------
 function bfag_test_reset(): void {
 	$GLOBALS['bfag_test_options']       = [];
+	$GLOBALS['bfag_test_option_autoload']    = []; // option => on|off|auto, as core stores it.
+	$GLOBALS['bfag_test_option_write_fails'] = []; // Options whose writes the "database" refuses.
 	$GLOBALS['bfag_test_transients']    = [];
 	$GLOBALS['bfag_test_cache']         = [];
 	$GLOBALS['bfag_test_cache_expires'] = [];
@@ -151,21 +153,84 @@ function get_option( string $option, mixed $default_value = false ): mixed {
 	// (`4` → '4', true → '1', false → ''); arrays and objects are unserialised.
 	return is_scalar( $value ) || null === $value ? (string) $value : $value;
 }
-function update_option( string $option, mixed $value, bool|string|null $autoload = null ): bool {
-	$GLOBALS['bfag_test_options'][ $option ] = $value;
-	return true;
+/**
+ * The autoload value core stores for a given argument (WP 6.6+): `on`, `off`
+ * or `auto` (null, the default, lets core decide by size).
+ */
+function bfag_test_autoload_value( bool|string|null $autoload ): string {
+	if ( true === $autoload || 'yes' === $autoload || 'on' === $autoload ) {
+		return 'on';
+	}
+	if ( false === $autoload || 'no' === $autoload || 'off' === $autoload ) {
+		return 'off';
+	}
+	return 'auto';
 }
-function add_option( string $option, mixed $value = '', string $deprecated = '', bool|string $autoload = 'yes' ): bool {
-	if ( array_key_exists( $option, $GLOBALS['bfag_test_options'] ) ) {
+/**
+ * The form a value takes in the options table, for core's "unchanged"
+ * test: scalars as strings (MySQL reports zero affected rows when `2`
+ * replaces `'2'`), arrays and objects serialised.
+ */
+function bfag_test_option_form( mixed $value ): string {
+	return is_scalar( $value ) || null === $value ? (string) $value : serialize( $value );
+}
+// As core (WP 6.6+): a missing option is added (with $autoload); a value
+// identical to the stored one is NOT written and returns false, and the
+// autoload flag of an existing option changes only together with its value.
+// $GLOBALS['bfag_test_option_write_fails'] lists options whose writes fail
+// (the database refused the statement): nothing stored, false returned.
+// $GLOBALS['bfag_test_option_autoload'] records the flag per option.
+function update_option( string $option, mixed $value, bool|string|null $autoload = null ): bool {
+	if ( ! array_key_exists( $option, $GLOBALS['bfag_test_options'] ) ) {
+		return add_option( $option, $value, '', $autoload );
+	}
+	if ( bfag_test_option_form( $value ) === bfag_test_option_form( $GLOBALS['bfag_test_options'][ $option ] ) ) {
+		return false;
+	}
+	if ( in_array( $option, $GLOBALS['bfag_test_option_write_fails'] ?? [], true ) ) {
 		return false;
 	}
 	$GLOBALS['bfag_test_options'][ $option ] = $value;
+	if ( null !== $autoload ) {
+		$GLOBALS['bfag_test_option_autoload'][ $option ] = bfag_test_autoload_value( $autoload );
+	}
+	return true;
+}
+function add_option( string $option, mixed $value = '', string $deprecated = '', bool|string|null $autoload = null ): bool {
+	if ( array_key_exists( $option, $GLOBALS['bfag_test_options'] ) ) {
+		return false;
+	}
+	if ( in_array( $option, $GLOBALS['bfag_test_option_write_fails'] ?? [], true ) ) {
+		return false;
+	}
+	$GLOBALS['bfag_test_options'][ $option ]         = $value;
+	$GLOBALS['bfag_test_option_autoload'][ $option ] = bfag_test_autoload_value( $autoload );
 	return true;
 }
 function delete_option( string $option ): bool {
 	$existed = array_key_exists( $option, $GLOBALS['bfag_test_options'] );
-	unset( $GLOBALS['bfag_test_options'][ $option ] );
+	unset( $GLOBALS['bfag_test_options'][ $option ], $GLOBALS['bfag_test_option_autoload'][ $option ] );
 	return $existed;
+}
+/**
+ * As core (WP 6.4+): set the autoload flag of existing options whatever
+ * their value; returns option => whether the flag changed.
+ *
+ * @param array<string, bool|string|null> $options Option => autoload.
+ * @return array<string, bool>
+ */
+function wp_set_option_autoload_values( array $options ): array {
+	$out = [];
+	foreach ( $options as $option => $autoload ) {
+		$want = bfag_test_autoload_value( $autoload );
+		if ( ! array_key_exists( $option, $GLOBALS['bfag_test_options'] ) || ( $GLOBALS['bfag_test_option_autoload'][ $option ] ?? null ) === $want ) {
+			$out[ $option ] = false;
+			continue;
+		}
+		$GLOBALS['bfag_test_option_autoload'][ $option ] = $want;
+		$out[ $option ]                                  = true;
+	}
+	return $out;
 }
 function get_transient( string $transient ): mixed {
 	$row = $GLOBALS['bfag_test_transients'][ $transient ] ?? null;
@@ -661,6 +726,7 @@ function bfag_test_load_site( int $blog_id ): void {
 	$state                              = $GLOBALS['bfag_test_site_state'][ $blog_id ] ?? [];
 	$GLOBALS['bfag_test_blog_id']       = $blog_id;
 	$GLOBALS['bfag_test_options']       = $state['options'] ?? [];
+	$GLOBALS['bfag_test_option_autoload'] = $state['autoload'] ?? [];
 	$GLOBALS['bfag_test_cron']          = $state['cron'] ?? [];
 	$GLOBALS['bfag_test_single_events'] = $state['single_events'] ?? [];
 	$GLOBALS['bfag_test_roles']         = $state['roles'] ?? [ 'administrator' => new WP_Role( 'administrator', [] ) ];
@@ -670,6 +736,7 @@ function bfag_test_load_site( int $blog_id ): void {
 function bfag_test_park_site(): void {
 	$GLOBALS['bfag_test_site_state'][ get_current_blog_id() ] = [
 		'options'       => $GLOBALS['bfag_test_options'],
+		'autoload'      => $GLOBALS['bfag_test_option_autoload'],
 		'cron'          => $GLOBALS['bfag_test_cron'],
 		'single_events' => $GLOBALS['bfag_test_single_events'],
 		'roles'         => $GLOBALS['bfag_test_roles'],

@@ -35,7 +35,7 @@ final class InstallerTest extends TestCase {
 		$this->assertStringContainsString( "  KEY idx_webhook_dir_id (webhook_id,direction,id),\n", $schema['bfag_webhook_deliveries'], 'PN3: last_statuses() groups MAX(id) by webhook_id under direction = out — a loose index scan' );
 		// N-16: the harness reads BFAG_DB_VERSION from the plugin file; the shipped value is what the tests see.
 		$this->assertSame( 1, preg_match( "/define\\( 'BFAG_DB_VERSION', '([^']+)' \\);/", (string) file_get_contents( BFAG_FILE ), $v ) );
-		$this->assertSame( '1.0.2', $v[1], 'bumped so dbDelta adds the new keys on upgrade' );
+		$this->assertSame( '1.0.3', $v[1], 'bumped so an existing install runs the upgrade steps (1.0.2 keys, 1.0.3 autoload)' );
 		$this->assertSame( $v[1], BFAG_DB_VERSION, 'the harness constant is the plugin file\'s, not a mirror' );
 	}
 

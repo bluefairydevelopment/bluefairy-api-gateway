@@ -52,6 +52,26 @@ final class Installer {
 		'bfag_cache_generation',
 		'bfag_tag_generations',
 		'bfag_install_error',
+		'bfag_webhook_events',
+	];
+
+	/**
+	 * Options read on every request, stored autoloaded so a site without a
+	 * persistent object cache pays no query for them (P7 / WPMAP-106): the
+	 * version markers `maybe_upgrade()` compares on every boot, the settings,
+	 * the global cache generation every cacheable REST request keys on, and
+	 * the enabled-event list `EventBus` hooks at boot. All are small.
+	 * `bfag_tag_generations` stays non-autoloaded: it is read only when a
+	 * tagged rule matches, and it grows with the tags rules carry.
+	 *
+	 * @var list<string>
+	 */
+	public const AUTOLOAD_OPTIONS = [
+		'bfag_settings',
+		'bfag_db_version',
+		'bfag_version',
+		'bfag_cache_generation',
+		'bfag_webhook_events',
 	];
 
 	/**
@@ -72,6 +92,14 @@ final class Installer {
 	 * finished delivery rows (PN2).
 	 */
 	private const RETRY_CLEANUP_VERSION = '1.0.2';
+
+	/**
+	 * The first schema version whose upgrade step turns autoload on for
+	 * AUTOLOAD_OPTIONS (P7): `update_option()` changes the flag of an
+	 * existing option only together with its value, so an install made
+	 * before 1.0.3 would otherwise keep them off.
+	 */
+	private const AUTOLOAD_VERSION = '1.0.3';
 
 	/**
 	 * Recurring cron hooks and their schedules.
@@ -153,16 +181,27 @@ final class Installer {
 	public static function provision_site(): void {
 		Capabilities::add_caps();
 		if ( ! get_option( 'bfag_settings' ) ) {
-			update_option( 'bfag_settings', Settings::DEFAULTS, false );
+			update_option( 'bfag_settings', Settings::DEFAULTS, true );
 		}
 		if ( ! self::create_tables() ) {
 			return;
 		}
 		self::seed_default_rules();
-		add_option( 'bfag_cache_generation', 1, '', false );
-		update_option( 'bfag_version', BFAG_VERSION, false );
-		update_option( 'bfag_db_version', BFAG_DB_VERSION, false );
+		add_option( 'bfag_cache_generation', 1, '', true );
+		update_option( 'bfag_version', BFAG_VERSION, true );
+		update_option( 'bfag_db_version', BFAG_DB_VERSION, true );
+		// A re-activated install keeps options written before 1.0.3 with autoload off.
+		self::autoload_hot_options();
 		self::schedule_cron();
+	}
+
+	/**
+	 * Turn autoload on for every existing option in AUTOLOAD_OPTIONS,
+	 * whatever its value (one statement; options not yet written are
+	 * skipped and get the flag when they are created).
+	 */
+	private static function autoload_hot_options(): void {
+		wp_set_option_autoload_values( array_fill_keys( self::AUTOLOAD_OPTIONS, true ) );
 	}
 
 	/**
@@ -230,7 +269,7 @@ final class Installer {
 		$current = get_option( 'bfag_db_version', '' );
 		$missing = '' === $current || false === $current;
 		if ( ! $missing && BFAG_VERSION !== (string) get_option( 'bfag_version', '' ) ) {
-			update_option( 'bfag_version', BFAG_VERSION, false );
+			update_option( 'bfag_version', BFAG_VERSION, true );
 		}
 		if ( ! $missing && version_compare( (string) $current, BFAG_DB_VERSION, '>=' ) ) {
 			return;
@@ -244,7 +283,7 @@ final class Installer {
 		}
 		if ( self::create_tables() ) {
 			self::upgrade_data( (string) $current );
-			update_option( 'bfag_db_version', BFAG_DB_VERSION, false );
+			update_option( 'bfag_db_version', BFAG_DB_VERSION, true );
 		}
 		Capabilities::add_caps();
 		self::schedule_cron();
@@ -269,6 +308,10 @@ final class Installer {
 	 * finished, so `idx_next_retry` held every finished row and the
 	 * pending-flush sweep scanned them all. Null it on the finished rows;
 	 * `pending`/`retrying` rows keep theirs (they are queued or scheduled).
+	 *
+	 * From < 1.0.3 (P7 / WPMAP-106): the hot-path options were written with
+	 * autoload off, costing a query each per request without a persistent
+	 * object cache; turn it on (AUTOLOAD_OPTIONS).
 	 *
 	 * Settings are NOT migrated here, and `provision_site()` never rewrites
 	 * an existing `bfag_settings`: a site keeps every value it was installed
@@ -295,6 +338,9 @@ final class Installer {
 					'failed'
 				)
 			);
+		}
+		if ( version_compare( $from, self::AUTOLOAD_VERSION, '<' ) ) {
+			self::autoload_hot_options();
 		}
 	}
 

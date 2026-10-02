@@ -125,7 +125,7 @@ Network activation provisions every site — tables, the seeded rules, the capab
 * Up to three signed outbound webhooks on six WordPress events and four WooCommerce events, HMAC-SHA256 `X-BF-Signature` over `timestamp.body`, delivery after the response (twenty at most, fifteen seconds at most, the rest by WP-Cron), a delivery log with Send test and Retry on failed outgoing deliveries, payload truncation and retention pruning.
 * Dashboard figures recomputed every five minutes, `GET /bfag/v1/status` for monitors, the `bfag_manage_gateway` capability, multisite provisioning.
 * Thirty-six `bfag_*` actions and filters as the add-on contract.
-* Compatibility: tested against WordPress 7.1; requires PHP 8.1 or newer. Database schema version 1.0.2 (internal).
+* Compatibility: tested against WordPress 7.1; requires PHP 8.1 or newer. Database schema version 1.0.3 (internal).
 
 == Upgrade Notice ==
 

@@ -252,7 +252,7 @@ final class CacheStore {
 	 */
 	public function flush_all(): void {
 		$next = $this->generation() + 1;
-		update_option( self::GENERATION_OPTION, $next, false );
+		update_option( self::GENERATION_OPTION, $next, true ); // Autoloaded: every cacheable request keys on it (P7).
 		wp_cache_delete( self::META_KEY, self::META_GROUP );
 
 		if ( wp_cache_supports( 'flush_group' ) ) {
