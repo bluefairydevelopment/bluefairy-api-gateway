@@ -35,14 +35,14 @@ Pro is always the first column.
 | **Webhook REST API** — list, create, update, delete, read the log, retry | Yes | — |
 | **Scoped API keys** (`read`, `write`, `cache:purge`, `webhook:read`, `webhook:write`) | Yes | — |
 | `GET /bfag/v1/status` for a monitoring tool | Yes | Yes |
-| **Updates through your licence key** (Licence tab); no feature depends on the licence | Yes | Updates from WordPress.org |
+| **Updates through your licence key** (Licence tab); no feature depends on the licence | Yes | — (no automatic updates: new versions are a download from the shop) |
 | Admin tabs | 7 (adds **API Keys** and **Licence**) | 5 |
 
 ## Where each row was verified
 
 The **Licence** rows describe Pro's licence client: `Licence\Updater` offers updates through the `Update URI` header's `update_plugins_wordpress.bluefairydevelopment.com` filter only while `Licence::is_active()`, and nothing outside `includes/Licence/` and the Licence tab reads the licence (`PluginTest::test_no_licence_state_switches_off_any_pro_feature`).
 
-Against the shipped code of both plugins at 1.0.0 (free f70bf71, Pro e1fc2f6):
+Against the 1.0.0 code of both plugins, re-verified on 2026-10-02 at free 768d911 and Pro 4b14e9a:
 
 - **Limits** — the free plugin's `bfag_cache_rule_limit` and `bfag_rate_limit_rule_limit` default to 1 and `bfag_webhook_limit` to 3; Pro answers all three with `Plugin::UNLIMITED`, which is **500**.
 - **No alerts in the free plugin** — no `wp_mail()` call anywhere in it; Pro's `Webhook\FailureNotifier` sends the alert, in the modes `Settings::ALERT_MODES` (`first`, `after_n`, `exhausted`; default `exhausted`).

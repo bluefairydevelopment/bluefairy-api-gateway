@@ -154,15 +154,16 @@ busy site.
 No entry is ever enumerated or deleted one by one. Each key embeds the
 **global generation** (option `bfag_cache_generation`) and the generation of
 each tag (all of them in the one option `bfag_tag_generations`). A purge bumps a generation, every
-future key is different, and the old entries are never looked up again. On an
-object cache that supports it the `bfag_responses` group is flushed as well.
+future key is different, and the old entries are never looked up again. A
+purge of everything also flushes the `bfag_responses` group on an object cache
+that supports it; a tag purge relies on the tag generations alone.
 
 | Trigger | What is purged |
 |---|---|
 | A post is saved, trashed or deleted (revisions and autosaves ignored) | everything |
 | A term is created, edited or deleted | everything |
 | A comment is inserted or changes status | everything |
-| **Purge all** on the Cache tab, or the dashboard's AJAX purge | everything |
+| **Purge all** on the Cache tab | everything |
 | `POST /bfag/v1/cache/purge` with no `tags` | everything |
 | `POST /bfag/v1/cache/purge` with `tags` | only responses cached under those tags |
 
@@ -177,8 +178,9 @@ content change; add tags to narrow purging to those tags.
 
 Hits and misses are counted in five-minute GMT buckets in `bfag_cache_stats`
 with a single `INSERT … ON DUPLICATE KEY UPDATE`, so a counter is never a
-read-modify-write race. The dashboard and `/bfag/v1/status` sum the last 24
-hours.
+read-modify-write race. With a persistent object cache they are counted there
+instead and written to the table by the five-minute KPI cron (see *Cron and
+WP-CLI notes*). The dashboard and `/bfag/v1/status` sum the last 24 hours.
 
 ---
 
@@ -269,7 +271,9 @@ proxies**. Only then is **one** forwarding header read: the one chosen under
 **Client address header** (`X-Forwarded-For` by default; `CF-Connecting-IP`,
 `X-Real-IP` or `True-Client-IP`). For `X-Forwarded-For` the address taken is
 the right-most one in the comma-separated list that is not itself a trusted
-proxy; if any entry is not a valid IP the header is ignored. For the
+proxy, read from the right; if an entry reached before that address is not a
+valid IP the header is ignored. Entries to the left of the address taken are
+never read. For the
 single-value headers the value is taken when it is a valid IP. Any header not
 chosen is ignored whatever it says, and an invalid value falls back to
 `REMOTE_ADDR`.
@@ -289,9 +293,12 @@ that one is believed.
 `bfag_cron_prune_hits` runs every five minutes and deletes hits older than the
 longest enabled window (at least 60 s), 10,000 rows at a time, at most 50
 batches per run. If WP-Cron has been asleep long enough for the table to pass
-ten million rows, the table is truncated outright and the event logged — it
-forgives every subject's current window, which is better than every request's
-`COUNT` degrading further. That check reads an upper bound from the two ends
+ten million rows, the oldest rows are deleted, by id range in slices of
+10,000 (at most 50 slices a run), until the newest ten million remain; with debug
+logging on, the number deleted is logged. The table is never truncated: a range delete of the
+oldest ids does not stall the inserts at the other end, and it forgives only
+the oldest hits, which is better than every request's `COUNT` degrading
+further. That check reads an upper bound from the two ends
 of the primary key (`MAX(id) - MIN(id) + 1`), not a `COUNT(*)` and not the
 storage engine's estimate, which MySQL 8 can hold stale for a day; the bound
 over-counts only by rows deleted out of the middle of the id range, which the
@@ -320,7 +327,7 @@ Deleting a webhook deletes its delivery log with it, inside one transaction.
 | **URL** | Required. `https://` only, and it must pass WordPress's `wp_http_validate_url()` — a loopback, private or otherwise unsafe address is refused. Redirects are not followed when delivering. (A filter, `bfag_webhook_allow_http`, permits plain `http://` for local development.) |
 | **Event** | Required; one of the events below, grouped as *Content*, *Users* and — when WooCommerce is active — *WooCommerce*. |
 | **Signing secret** | Leave blank on creation and a random 64-character hexadecimal secret is generated and **shown to you once**, on the Webhooks tab right after saving, in a box with a **Copy** button — copy it into your receiver then, because the stored secret is never displayed again. Or set your own (up to 255 characters). On edit, blank keeps the current secret; **Generate a new secret** replaces it — deliveries fail at the receiver until it is updated there — and the new secret is shown once after saving in the same way. |
-| **Extra headers** | One per line as `Name: value`. Only entries whose name is `[A-Za-z0-9-]` are shown here or read from here; anything else stored on the webhook (a Pro preset's configuration, which holds its credentials) is neither displayed nor touched by an edit. Sent with every delivery after sanitising: names must be `[A-Za-z0-9-]`; `Host`, `Content-Length`, `Transfer-Encoding`, `Connection`, `Cookie`, `Authorization`, `Proxy-Authorization` and anything beginning `X-Forwarded-` are dropped, as is any value containing a line break, and any name the plugin sets itself (`Content-Type`, `User-Agent`, `X-BF-*`). Each rejection is logged when debug logging is on. |
+| **Extra headers** | One per line as `Name: value`. Only entries whose name is `[A-Za-z0-9-]` are shown here or read from here; anything else stored on the webhook (a Pro preset's configuration, which holds its credentials) is neither displayed nor touched by an edit. Sent with every delivery after sanitising: names must be `[A-Za-z0-9-]`; `Host`, `Content-Length`, `Transfer-Encoding`, `Connection`, `Cookie`, `Authorization`, `Proxy-Authorization` and anything beginning `X-Forwarded-` are dropped, as is any value containing a line break, and any name the plugin sets itself (`Content-Type`, `User-Agent`, `X-BF-Event`, `X-BF-Delivery`, `X-BF-Timestamp`, `X-BF-Signature`). Each rejection is logged when debug logging is on. |
 | **Preset** | Appears only with the Pro add-on. |
 | **Max retries** | Appears only with the Pro add-on (stored as 3 otherwise). Its help text: *Automatic retries after a failed delivery (Pro). 0 = none.* |
 | **Enabled** | *Deliver this webhook.* |
@@ -338,25 +345,37 @@ URL as plain signed JSON.
 
 ### Events
 
-| Event key | Label | Fires on | `object` fields |
-|---|---|---|---|
-| `post.published` | Post published | `transition_post_status` — only when the new status is `publish` and the old one was not | `id`, `type`, `status`, `title`, `slug`, `link`, `author_id`, `date_gmt`, `modified_gmt` |
-| `post.updated` | Post updated | `post_updated` | same as above |
-| `post.deleted` | Post deleted | `before_delete_post` | same as above |
-| `user.registered` | User registered | `user_register` | `id`, `login`, `email`, `display_name`, `roles` |
-| `user.updated` | User profile updated | `profile_update` | same as above |
-| `comment.created` | Comment created | `wp_insert_comment` | `id`, `post_id`, `author`, `author_email`, `approved`, `date_gmt`, `type` |
-| `woocommerce.order.created` | Order created | `woocommerce_new_order` | `id`, `status`, `currency`, `total`, `customer_id`, `email`, `created_gmt` |
-| `woocommerce.order.status_changed` | Order status changed | `woocommerce_order_status_changed` | as above plus `from_status`, `to_status` |
-| `woocommerce.order.completed` | Order completed | `woocommerce_order_status_completed` | as the order object |
-| `woocommerce.product.updated` | Product updated | `woocommerce_update_product` | `id`, `name`, `sku`, `status`, `price`, `type` |
+| Event key | Label | Fires on |
+|---|---|---|
+| `post.published` | Post published | `transition_post_status` — only when the new status is `publish` and the old one was not |
+| `post.updated` | Post updated | `post_updated` |
+| `post.deleted` | Post deleted | `before_delete_post` |
+| `user.registered` | User registered | `user_register` |
+| `user.updated` | User profile updated | `profile_update` |
+| `comment.created` | Comment created | `wp_insert_comment` |
+| `woocommerce.order.created` | Order created | `woocommerce_new_order` |
+| `woocommerce.order.status_changed` | Order status changed | `woocommerce_order_status_changed` |
+| `woocommerce.order.completed` | Order completed | `woocommerce_order_status_completed` |
+| `woocommerce.product.updated` | Product updated | `woocommerce_update_product` |
+
+The payload's `object` carries these fields:
+
+| Events | `object` fields |
+|---|---|
+| the three `post.*` events | `id`, `type`, `status`, `title`, `slug`, `link`, `author_id`, `date_gmt`, `modified_gmt` |
+| `user.registered`, `user.updated` | `id`, `login`, `email`, `display_name`, `roles` |
+| `comment.created` | `id`, `post_id`, `author`, `author_email`, `approved`, `date_gmt`, `type` |
+| `woocommerce.order.created`, `woocommerce.order.completed` | `id`, `status`, `currency`, `total`, `customer_id`, `email`, `created_gmt` |
+| `woocommerce.order.status_changed` | the order fields plus `from_status`, `to_status` |
+| `woocommerce.product.updated` | `id`, `name`, `sku`, `status`, `price`, `type` |
 
 The four WooCommerce events are offered only while WooCommerce is active.
 Post events fire only for **public** post types, never for revisions or
-autosaves. Payloads are built from an allow-list of fields per object: never
+autosaves. The post's status is not checked: updating or deleting a draft or
+private post of a public type is delivered, with its `status` in the payload. Payloads are built from an allow-list of fields per object: never
 a raw `$userdata` array (which carries the password hash), never `$_SERVER`,
-never another user's email. A payload of `null` — a post that turned out to be
-private, a user that could not be loaded — means no delivery.
+never another user's email. A payload of `null` — a post whose type is not
+public, a user that could not be loaded — means no delivery.
 
 ### The payload
 
@@ -445,10 +464,8 @@ timestamp, so the signature changes while the body and `X-BF-Delivery` do not.
 Read the raw body before any framework parses it, rebuild the message,
 compare in constant time, and reject stale timestamps to defeat replay.
 
-**PHP**
-
 ```php
-<?php
+<?php // PHP receiver
 $secret    = getenv( 'BF_WEBHOOK_SECRET' );
 $body      = file_get_contents( 'php://input' );
 $timestamp = $_SERVER['HTTP_X_BF_TIMESTAMP'] ?? '';
@@ -471,9 +488,8 @@ $payload = json_decode( $body, true );
 http_response_code( 200 );
 ```
 
-**Node**
-
 ```js
+// Node receiver (Express)
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import express from 'express';
 
@@ -565,9 +581,9 @@ its two fields, so they are kept as hidden values rather than shown.
 
 | Field | Behaviour |
 |---|---|
-| **Debug logging** | Write gateway decisions to the PHP error log, each line prefixed `[bfag]` with a JSON context: rejected headers and why, breached rules, refused rule saves, prune and rotation counts, failed deliveries. Off by default; nothing is logged while it is off. |
+| **Debug logging** | Write gateway decisions to the PHP error log, each line prefixed `[bfag]` with a JSON context: rejected headers and why, breached rules, refused rule saves, prune and rotation counts, failed deliveries. Off by default; while it is off the only line written is a failed table creation, which is always logged. |
 | **Hide the WP-Cron notice** | Tick when a system cron runs `wp-cron.php` and `DISABLE_WP_CRON` is intentional. |
-| **Delete data on uninstall** | Drop the plugin tables and options when the plugin is deleted. The Pro add-on's uninstall honours this same switch for its own tables. |
+| **Delete data on uninstall** | Drop the plugin's six tables when the plugin is deleted (its options are removed on every uninstall). The Pro add-on's uninstall honours this same switch for its own tables. |
 
 Integer settings outside their bounds are clamped on save; an invalid
 notification email is stored as blank; unknown keys are dropped.
@@ -672,7 +688,7 @@ fired.
 | `bfag_rate_limit_subject_types` | filter | `( string[] $types = [ 'ip' ] )` | Subject types a rule may count by. Pro adds `user` and `apikey`. |
 | `bfag_rate_limit_subject` | filter | `( string\|null $subject, string $type, WP_REST_Request $request, string $ip )` | The subject a rule counts this request against. Default is the IP for type `ip`, `null` otherwise; `null` or `''` means the rule does not apply to this request. |
 | `bfag_rate_limit_is_blocked` | filter | `( bool $blocked = false, string $ip, WP_REST_Request $request )` | Return `true` to answer `403 bfag_blocked` before any rule is counted. |
-| `bfag_rate_limit_breached` | action | `( string $subject, array $rule, WP_REST_Request $request, string $ip, bool $forwarded_without_proxy )` | A subject newly exceeded a rule: fired once per window, when the marker is set, never for a request the marker refuses. `$forwarded_without_proxy` is true when a forwarded-address header arrived but the sender is not a trusted proxy — the IP is a shared address and must not be blocked. |
+| `bfag_rate_limit_breached` | action | `( string $subject, array $rule, WP_REST_Request $request, string $ip, bool $forwarded_without_proxy )` | A subject newly exceeded a rule: fired once per window, when the marker is set, never for a request the marker refuses. The last argument is true when a forwarded-address header arrived but the sender is not a trusted proxy — the IP is a shared address and must not be blocked. |
 | `bfag_rate_limit_refused` | action | `( string $subject, array $rule, string $ip, int $refused_so_far )` | Every request refused from the limited marker, with the running count of refusals of this subject under this rule in the current window (this one included; the breaching request is not a refusal). Fired with no database work — the count lives in the marker — so a DDoS threshold can mean "requests over the limit" without a `COUNT(*)` per `429`. |
 | `bfag_rate_limit_max_window` | filter | `( int $seconds )` | The oldest hit the prune cron must keep; default is the largest enabled window (or 60). Raise it if you count across a longer window yourself. |
 
@@ -722,7 +738,7 @@ Pro add-on enforces it.
 
 | Scope | Grants | Routes |
 |---|---|---|
-| `read` | Read any route | GET/HEAD/OPTIONS anywhere, and `/bfag/v1/status` |
+| `read` | Read any route | GET/HEAD/OPTIONS on every route outside `/bfag/v1`, and any method on the `/bfag/v1` routes not listed below (`/bfag/v1/status`) |
 | `write` | Create, update and delete through any REST route (acts as the key's user) | POST/PUT/PATCH/DELETE on every route outside `/bfag/v1` — `wp/v2`, `wc/v3`, … |
 | `cache:purge` | Purge the response cache | `POST /bfag/v1/cache/purge` |
 | `webhook:read` | List webhooks and their deliveries | GET on `/bfag/v1/webhooks…` |
@@ -785,7 +801,8 @@ plugin keeps doing exactly what it does now.
 | **Webhook REST API** — list, create, update, delete, read the log, retry | Yes | — |
 | **Scoped API keys** (`read`, `write`, `cache:purge`, `webhook:read`, `webhook:write`) | Yes | — |
 | `GET /bfag/v1/status` for a monitoring tool | Yes | Yes |
-| Admin tabs | 6 (adds **API Keys**) | 5 |
+| **Updates through your licence key** (Licence tab); no feature depends on the licence | Yes | — (no automatic updates: new versions are a download from the shop) |
+| Admin tabs | 7 (adds **API Keys** and **Licence**) | 5 |
 
 ### Why the missing rows cost you
 
@@ -794,8 +811,9 @@ was down for two minutes at three in the morning. The new order is in your deliv
 marked `failed`, and this plugin does nothing more about it: no second attempt,
 no email. It waits there until someone happens to open the dashboard and press
 **Retry** — by which time that order has sat unfulfilled for hours. Pro
-retries it for you one minute later, then five, then thirty, up to the limit
-you set per webhook, and emails you at the moment you choose: on the first
+retries it for you — due one minute later, then five, then thirty, and sent by
+a sweep that runs every five minutes — up to the limit you set per webhook, and
+emails you at the moment you choose: on the first
 failure, after a run of failures, or only once the last retry has failed.
 
 **Your CRM receives JSON it cannot read.** This plugin sends one signed JSON
@@ -816,8 +834,8 @@ speaks WPGraphQL, Pro caches those queries too; this plugin does not.
 **A client that is hammering you is only slowed down.** The free limiter answers
 `429` and keeps counting, request after request, for as long as the client cares
 to keep sending them. Pro blocks the address outright — for the penalty you set
-on the rule, or for an hour by default once a rule has refused the DDoS threshold
-number of its requests over the limit — and gives you a panel listing every block, its
+on the rule, or, once you switch on auto-block, for an hour by default after a
+rule has refused the DDoS threshold number of its requests over the limit — and gives you a panel listing every block, its
 reason and its expiry, with **Unblock** and a form to block an address by hand.
 
 **One rule means one budget for everyone.** Your search endpoint, your user
