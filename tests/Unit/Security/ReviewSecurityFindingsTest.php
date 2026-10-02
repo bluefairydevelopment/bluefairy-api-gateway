@@ -31,6 +31,7 @@ use BlueFairy\ApiGateway\RateLimit\RateLimitMiddleware;
 use BlueFairy\ApiGateway\RateLimit\RateLimitRuleRepository;
 use BlueFairy\ApiGateway\Settings;
 use BlueFairy\ApiGateway\Support\RequestContext;
+use BlueFairy\ApiGateway\Support\SealedValue;
 use BlueFairy\ApiGateway\Tests\SqliteWpdb;
 use BlueFairy\ApiGateway\Tests\TestCase;
 use BlueFairy\ApiGateway\Webhook\DeliveryRepository;
@@ -530,7 +531,12 @@ final class ReviewSecurityFindingsTest extends TestCase {
 		$this->assertStringEndsWith( '&bfag_notice=webhook_secret_shown', $location );
 		$stored = (string) $this->wpdb->calls_to( 'insert' )[0]['data']['secret'];
 		$this->assertMatchesRegularExpression( '/^[0-9a-f]{64}$/', $stored );
-		$this->assertSame( $stored, get_transient( 'bfag_new_secret_5' ), 'the secret that was stored is the one held for display' );
+		$held = get_transient( 'bfag_new_secret_5' );
+		$this->assertIsString( $held );
+		$this->assertStringNotContainsString( $stored, $held, 'WPMAP-140: the transient never holds the secret in the clear' );
+		$this->assertStringNotContainsString( substr( $stored, 0, 16 ), $held, 'not even a fragment of it' );
+		$this->assertStringStartsWith( SealedValue::PREFIX, $held );
+		$this->assertSame( $stored, SealedValue::open( $held, 'bfag_new_secret_5' ), 'the secret that was stored is the one held for display, sealed for this user\'s transient' );
 		$this->assertSame( 120, $GLOBALS['bfag_test_transients']['bfag_new_secret_5']['expires'] - time() );
 
 		$this->wpdb->queue( 'get_results', [ $this->webhook_row( [ 'secret' => $stored ] ) ] );
@@ -555,6 +561,29 @@ final class ReviewSecurityFindingsTest extends TestCase {
 		$this->wpdb->queue( 'get_var', 0 );
 		$this->assertStringNotContainsString( 'someone-elses', bfag_test_render( [ $page, 'render' ] ), 'scoped to the user who saved' );
 
+		// WPMAP-140: only a value sealed for THIS user's transient is shown.
+		// A plaintext value planted in the user's own slot, or user 5's
+		// sealed value copied into user 6's, shows nothing and is deleted.
+		foreach (
+			[
+				'a plaintext value'           => 'planted-plaintext-secret',
+				'a value sealed for user 5'   => SealedValue::seal( 'user-five-secret', 'bfag_new_secret_5' ),
+			] as $case => $planted
+		) {
+			set_transient( 'bfag_new_secret_6', $planted, 120 );
+			$this->wpdb->queue( 'get_results', [] );
+			$this->wpdb->queue( 'get_var', 0 );
+			$html = bfag_test_render( [ $page, 'render' ] );
+			$this->assertStringNotContainsString( 'planted-plaintext-secret', $html, $case );
+			$this->assertStringNotContainsString( 'user-five-secret', $html, $case );
+			$this->assertStringNotContainsString( 'Copy this signing secret', $html, $case );
+			$this->assertFalse( get_transient( 'bfag_new_secret_6' ), "$case is deleted" );
+		}
+		set_transient( 'bfag_new_secret_6', SealedValue::seal( 'user-six-secret', 'bfag_new_secret_6' ), 120 );
+		$this->wpdb->queue( 'get_results', [] );
+		$this->wpdb->queue( 'get_var', 0 );
+		$this->assertStringContainsString( '<code data-bfag-copy-target>user-six-secret</code>', bfag_test_render( [ $page, 'render' ] ), 'control: a value sealed for user 6 is shown to user 6' );
+
 		$menu = $this->admin_menu();
 		$this->assertSame( 'success', $menu->notices()['webhook_secret_shown'][0] );
 	}
@@ -578,7 +607,8 @@ final class ReviewSecurityFindingsTest extends TestCase {
 		$this->assertStringEndsWith( '&bfag_notice=webhook_secret_shown', $location );
 		$new = (string) $this->wpdb->calls_to( 'update' )[0]['data']['secret'];
 		$this->assertNotSame( self::SECRET, $new );
-		$this->assertSame( $new, get_transient( 'bfag_new_secret_5' ) );
+		$this->assertSame( $new, SealedValue::open( get_transient( 'bfag_new_secret_5' ), 'bfag_new_secret_5' ) );
+		$this->assertStringNotContainsString( $new, (string) get_transient( 'bfag_new_secret_5' ), 'sealed, never in the clear' );
 		delete_transient( 'bfag_new_secret_5' );
 
 		bfag_test_admin_request(

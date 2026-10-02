@@ -13,6 +13,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
+use BlueFairy\ApiGateway\Support\SealedValue;
 use BlueFairy\ApiGateway\Webhook\DeliveryRepository;
 use BlueFairy\ApiGateway\Webhook\EventRegistry;
 use BlueFairy\ApiGateway\Webhook\WebhookDispatcher;
@@ -37,7 +38,10 @@ final class WebhookPage extends Page {
 	public const DELIVERY_LIMIT = 50;
 
 	/**
-	 * Seconds a generated secret waits to be shown once.
+	 * Seconds a generated secret waits to be shown once. It is shown on the
+	 * page the save redirects to; the value is sealed while it waits
+	 * (Support\SealedValue, WPMAP-140), so neither the options table nor a
+	 * shared object cache holds the secret in the clear.
 	 */
 	public const NEW_SECRET_TTL = 120;
 
@@ -364,8 +368,9 @@ final class WebhookPage extends Page {
 	}
 
 	/**
-	 * The notice for a successful save. A generated secret is parked in a
-	 * user-scoped transient for the tab to show once.
+	 * The notice for a successful save. A generated secret is parked, sealed
+	 * for the transient's own name, in a user-scoped transient for the tab
+	 * to show once (WPMAP-140).
 	 *
 	 * @param string|null $shown The secret the plugin generated, if any.
 	 */
@@ -373,21 +378,26 @@ final class WebhookPage extends Page {
 		if ( null === $shown ) {
 			return 'webhook_saved';
 		}
-		set_transient( self::new_secret_transient(), $shown, self::NEW_SECRET_TTL );
+		$transient = self::new_secret_transient();
+		set_transient( $transient, SealedValue::seal( $shown, $transient ), self::NEW_SECRET_TTL );
 		return 'webhook_secret_shown';
 	}
 
 	/**
 	 * The secret parked by the current user's last save, deleted on read.
+	 * Anything that does not open as a value sealed for this user's
+	 * transient — a plaintext value, another user's, a tampered one — is
+	 * not shown, and is deleted all the same.
 	 */
 	private function take_new_secret(): ?string {
 		$transient = self::new_secret_transient();
-		$secret    = get_transient( $transient );
-		if ( ! is_string( $secret ) || '' === $secret ) {
+		$stored    = get_transient( $transient );
+		if ( false === $stored ) {
 			return null;
 		}
 		delete_transient( $transient );
-		return $secret;
+		$secret = SealedValue::open( $stored, $transient );
+		return null === $secret || '' === $secret ? null : $secret;
 	}
 
 	/**

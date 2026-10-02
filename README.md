@@ -104,7 +104,7 @@ Exempt from rate limiting. Returns:
 }
 ```
 
-`kpis` is `null` until the five-minute KPI cron has run once (or the dashboard's **Refresh** button has been pressed), and so are `counts.cache_24h` and `counts.deliveries_24h`, which are copied from it: a monitor polling this route never runs an aggregate query. `counts.webhooks` is live, cached for a minute. `blocked_today` is always `0` in the free plugin (the dashboard card says *Blocked (Pro)*); with Pro it is the number of addresses currently banned. The route's permission callback accepts the `bfag_manage_gateway` capability or, with Pro, an API key whose scope covers `read`.
+`kpis` is `null` until the five-minute KPI cron has run once (or the dashboard's **Refresh** button has been pressed), and so are `counts.cache_24h` and `counts.deliveries_24h`, which are copied from it: a monitor polling this route never runs an aggregate query. `counts.webhooks` is live, cached for a minute. `blocked_today` is always `0` in the free plugin (the dashboard card says *Blocked (Pro)*); with Pro it is the number of addresses currently blocked. The route's permission callback accepts the `bfag_manage_gateway` capability or, with Pro, an API key whose scope covers `read`.
 
 ### `POST /wp-json/bfag/v1/cache/purge`
 
@@ -173,7 +173,7 @@ includes/
     CachePurger.php              Post, term and comment hooks → purge
     CacheStatsRepository.php     Five-minute hit/miss buckets
   RateLimit/
-    RateLimitMiddleware.php      rest_pre_dispatch at priority 5: ban check, count, 429
+    RateLimitMiddleware.php      rest_pre_dispatch at priority 5: block check, count, 429
     HitCounter.php               Insert-then-count sliding window; prune; rotate
     RateLimitRuleRepository.php  bfag_rate_limit_rules CRUD, subject types, matching
     PruneCron.php                bfag_cron_prune_hits
