@@ -543,11 +543,12 @@ final class WebhookDispatcherTest extends TestCase {
 	public function test_dispatch_pending_sends_the_stored_bytes_as_attempt_one_after_clearing_the_due_time(): void {
 		$stored = '{"object":{"id":9}}';
 		wp_cache_set( WebhookRepository::CACHE_KEY, [ $this->webhook( [ 'id' => 6 ] ), $this->webhook() ], WebhookRepository::CACHE_GROUP ); // all_enabled(), warm.
+		$this->wpdb->rows_by_id( 'bfag_webhooks', [ $this->webhook( [ 'id' => 6, 'url' => 'https://hooks.example.com/six' ] ), $this->webhook() ] );
 		bfag_test_queue_http( 204 );
 
 		$result = $this->dispatcher()->dispatch_pending( [ 'id' => 31, 'webhook_id' => 7, 'event' => 'post.updated', 'payload' => $stored, 'truncated' => 0, 'status' => 'pending', 'attempt' => 1, 'next_retry_at' => '2026-01-01 00:00:00' ] );
 
-		$this->assertSame( [], $this->wpdb->calls_to( 'get_row' ), 'PN4: no find(): the webhook is picked from the cached enabled list' );
+		$this->assertSame( [ 'SELECT * FROM bfw_bfag_webhooks WHERE id = 7 LIMIT 1' ], array_column( $this->wpdb->calls_to( 'get_row' ), 'sql' ), 'PN4 / WPMAP-117: picked from the cached enabled list; one find() — the credentials of the delivery sent' );
 		$this->assertSame( [], $this->wpdb->calls_to( 'get_results' ), 'and the list was warm' );
 		$this->assertSame( 'https://hooks.example.com/in', $GLOBALS['bfag_test_http_calls'][0]['url'], 'the row\'s webhook (id 7), not the first in the list' );
 		$args = $this->sent_args();

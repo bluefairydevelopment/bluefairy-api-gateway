@@ -97,7 +97,7 @@ final class WebhookDispatcher {
 	 * before the request and finalised after it, so a fatal mid-send leaves a
 	 * visible pending row rather than nothing.
 	 *
-	 * @param array<string, mixed> $webhook     The webhook row.
+	 * @param array<string, mixed> $webhook     The webhook row, or a summary from all_enabled() (no secret: the full row is read with find()).
 	 * @param string               $event       Event key.
 	 * @param array<string, mixed> $payload     Payload to encode.
 	 * @param int                  $attempt     Attempt number (1 = first).
@@ -105,7 +105,17 @@ final class WebhookDispatcher {
 	 * @return array{delivery_id:int, success:bool, http_status:int|null}
 	 */
 	public function dispatch( array $webhook, string $event, array $payload, int $attempt = 1, ?int $delivery_id = null ): array {
-		$body = wp_json_encode( $payload );
+		$full = $this->with_credentials( $webhook );
+		if ( null === $full ) {
+			Logger::log( 'webhook delivery skipped: the webhook is gone or disabled', [ 'webhook_id' => (int) ( $webhook['id'] ?? 0 ) ] );
+			return [
+				'delivery_id' => (int) ( $delivery_id ?? 0 ),
+				'success'     => false,
+				'http_status' => null,
+			];
+		}
+		$webhook = $full;
+		$body    = wp_json_encode( $payload );
 		if ( ! is_string( $body ) ) {
 			Logger::log( 'webhook payload could not be encoded', [ 'event' => $event ] );
 			$body = '{}';
@@ -261,10 +271,40 @@ final class WebhookDispatcher {
 			);
 			return $failure;
 		}
+		// The summary decided; the credentials come from the row itself (WPMAP-117), one read per delivery sent.
+		$webhook = $this->with_credentials( $webhook );
+		if ( null === $webhook ) {
+			Logger::log( 'pending delivery dropped: webhook missing or disabled', [ 'delivery_id' => $delivery_id ] );
+			$this->deliveries->update(
+				$delivery_id,
+				[
+					'status'        => 'failed',
+					'next_retry_at' => null,
+				]
+			);
+			return $failure;
+		}
 		$this->deliveries->update( $delivery_id, [ 'next_retry_at' => null ] );
 		$body    = (string) ( $row['payload'] ?? '' );
 		$decoded = json_decode( $body, true );
 		return $this->send( $webhook, (string) ( $row['event'] ?? '' ), is_array( $decoded ) ? $decoded : [], $body, max( 1, (int) ( $row['attempt'] ?? 1 ) ), $delivery_id );
+	}
+
+	/**
+	 * The full row of a webhook given as a summary (no `secret` key — what
+	 * all_enabled() returns, WPMAP-117): read with find(), and null when it
+	 * is gone or no longer enabled. A full row (it carries `secret`) is
+	 * returned as given: the admin's Send test and Retry pass find() rows.
+	 *
+	 * @param array<string, mixed> $webhook A webhook row or summary.
+	 * @return array<string, mixed>|null
+	 */
+	private function with_credentials( array $webhook ): ?array {
+		if ( array_key_exists( 'secret', $webhook ) ) {
+			return $webhook;
+		}
+		$full = $this->webhooks->find( (int) ( $webhook['id'] ?? 0 ) );
+		return null !== $full && 1 === (int) ( $full['enabled'] ?? 0 ) ? $full : null;
 	}
 
 	/**

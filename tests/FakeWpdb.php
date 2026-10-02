@@ -51,6 +51,28 @@ class FakeWpdb {
 	private array $missing_tables = [];
 
 	/**
+	 * Rows get_row() answers by primary key, per unprefixed table: a
+	 * `SELECT … FROM <prefix><table> WHERE id = N` is answered from here
+	 * (recorded, the get_row queue untouched) when N is listed.
+	 *
+	 * @var array<string, array<int, array<string, mixed>>>
+	 */
+	private array $rows_by_id = [];
+
+	/**
+	 * Answer get_row() lookups by id on $table from $rows (each with an `id`),
+	 * as `find()` reads them — whatever order the code asks in.
+	 *
+	 * @param string                           $table Unprefixed table name.
+	 * @param list<array<string, mixed>>       $rows  Rows.
+	 */
+	public function rows_by_id( string $table, array $rows ): void {
+		foreach ( $rows as $row ) {
+			$this->rows_by_id[ $table ][ (int) $row['id'] ] = $row;
+		}
+	}
+
+	/**
 	 * Make `SHOW TABLES LIKE` report these (unprefixed) tables as absent.
 	 *
 	 * @param list<string> $tables Unprefixed table names.
@@ -130,6 +152,11 @@ class FakeWpdb {
 	}
 
 	public function get_row( string $query, string $output = 'OBJECT', int $y = 0 ): mixed {
+		if ( 1 === preg_match( '/FROM ' . preg_quote( $this->prefix, '/' ) . '([a-z_]+) WHERE id = (\d+)/', $query, $m ) && isset( $this->rows_by_id[ $m[1] ][ (int) $m[2] ] ) ) {
+			$this->last_query = $query;
+			$this->calls[]    = [ 'method' => 'get_row', 'sql' => $query ];
+			return $this->rows_by_id[ $m[1] ][ (int) $m[2] ];
+		}
 		return $this->record( 'get_row', $query, null );
 	}
 

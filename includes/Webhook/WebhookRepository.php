@@ -24,7 +24,8 @@ use BlueFairy\ApiGateway\Logger;
  * registered as a target) and about `headers`, which must decode to a flat
  * object of strings — the dispatcher sanitises them again at send time.
  *
- * `all_enabled()` is object-cached under `bfag/webhooks_enabled`; every write
+ * `all_enabled()` — summaries with no URL, secret or headers (WPMAP-117) — is
+ * object-cached under `bfag/webhooks_enabled`; every write
  * clears that key. The list EventBus needs on EVERY request — which events
  * have an enabled webhook — is kept in the autoloaded option
  * `bfag_webhook_events`, rewritten from the table after every write (P7 /
@@ -46,6 +47,17 @@ final class WebhookRepository {
 	public const EVENTS_OPTION = 'bfag_webhook_events';
 
 	/**
+	 * The columns all_enabled() returns and caches: what deciding WHAT to
+	 * dispatch needs, and nothing a sender could use (WPMAP-117 / R1-12).
+	 * The URL, the secret and the headers — a Pro preset's credentials live
+	 * in `headers` — never enter the shared object cache; the dispatcher
+	 * reads them with find() for the delivery it sends.
+	 *
+	 * @var list<string>
+	 */
+	public const SUMMARY_COLUMNS = [ 'id', 'label', 'event', 'preset', 'enabled', 'max_retries' ];
+
+	/**
 	 * Every webhook, newest last.
 	 *
 	 * @param int $limit Maximum rows.
@@ -63,7 +75,12 @@ final class WebhookRepository {
 	}
 
 	/**
-	 * Every enabled webhook, object-cached for five minutes.
+	 * Every enabled webhook as a SUMMARY (SUMMARY_COLUMNS only — no URL,
+	 * secret or headers), object-cached for five minutes. To send, read the
+	 * full row with find() (WebhookDispatcher::dispatch() does).
+	 *
+	 * A cached value is re-reduced on read, so an entry written by an
+	 * earlier version (full rows) never hands out a credential.
 	 *
 	 * @return list<array<string, mixed>>
 	 */
@@ -72,15 +89,40 @@ final class WebhookRepository {
 
 		$cached = wp_cache_get( self::CACHE_KEY, self::CACHE_GROUP );
 		if ( is_array( $cached ) ) {
-			return $cached;
+			return $this->summaries( $cached );
 		}
 		$rows = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-			$wpdb->prepare( "SELECT * FROM {$wpdb->prefix}bfag_webhooks WHERE enabled = %d ORDER BY id ASC LIMIT %d", 1, 1000 ),
+			$wpdb->prepare( "SELECT id, label, event, preset, enabled, max_retries FROM {$wpdb->prefix}bfag_webhooks WHERE enabled = %d ORDER BY id ASC LIMIT %d", 1, 1000 ),
 			ARRAY_A
 		);
-		$rows = $this->normalize_rows( $rows );
+		$rows = $this->summaries( is_array( $rows ) ? $rows : [] );
 		wp_cache_set( self::CACHE_KEY, $rows, self::CACHE_GROUP, self::CACHE_TTL );
 		return $rows;
+	}
+
+	/**
+	 * Reduce rows to SUMMARY_COLUMNS, cast.
+	 *
+	 * @param array<mixed> $rows Rows (full or already summaries).
+	 * @return list<array<string, mixed>>
+	 */
+	private function summaries( array $rows ): array {
+		$out  = [];
+		$keep = array_fill_keys( self::SUMMARY_COLUMNS, true );
+		foreach ( $rows as $row ) {
+			if ( ! is_array( $row ) ) {
+				continue;
+			}
+			$summary                = array_intersect_key( $row, $keep );
+			$summary['id']          = (int) ( $summary['id'] ?? 0 );
+			$summary['label']       = (string) ( $summary['label'] ?? '' );
+			$summary['event']       = (string) ( $summary['event'] ?? '' );
+			$summary['preset']      = (string) ( $summary['preset'] ?? '' );
+			$summary['enabled']     = (int) ( $summary['enabled'] ?? 0 );
+			$summary['max_retries'] = (int) ( $summary['max_retries'] ?? 3 );
+			$out[]                  = $summary;
+		}
+		return $out;
 	}
 
 	/**

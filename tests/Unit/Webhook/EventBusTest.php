@@ -81,7 +81,9 @@ final class EventBusTest extends TestCase {
 				$w
 			);
 		}
+		// WPMAP-117: the cache holds summaries; the dispatcher reads each full row (secret, URL, headers) with find().
 		wp_cache_set( WebhookRepository::CACHE_KEY, $rows, WebhookRepository::CACHE_GROUP );
+		$this->wpdb->rows_by_id( 'bfag_webhooks', $rows );
 	}
 
 	private function publish( int $id, string $old = 'draft' ): void {
@@ -328,7 +330,7 @@ final class EventBusTest extends TestCase {
 		do_action( EventBus::HOOK );
 
 		$this->assertCount( 5, $GLOBALS['bfag_test_http_calls'] );
-		$this->assertSame( [], $this->wpdb->calls_to( 'get_row' ), 'PN4: the webhook comes from the cached enabled list, not a find() per row' );
+		$this->assertSame( array_fill( 0, 5, 'SELECT * FROM bfw_bfag_webhooks WHERE id = 1 LIMIT 1' ), array_column( $this->wpdb->calls_to( 'get_row' ), 'sql' ), 'WPMAP-117: the decision comes from the cached enabled list (PN4); the credentials from one find() per delivery SENT' );
 		$this->assertSame( '{"object":{"id":103}}', $GLOBALS['bfag_test_http_calls'][2]['args']['body'], 'the stored bytes' );
 		$this->assertSame( '103', $GLOBALS['bfag_test_http_calls'][2]['args']['headers']['X-BF-Delivery'] );
 		$select = $this->wpdb->calls_to( 'get_results' )[0]['sql'];
