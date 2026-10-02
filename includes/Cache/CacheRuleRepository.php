@@ -16,6 +16,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 use BlueFairy\ApiGateway\Logger;
 use BlueFairy\ApiGateway\Settings;
 use BlueFairy\ApiGateway\Support\GlobMatcher;
+use BlueFairy\ApiGateway\Support\Limits;
 
 /**
  * Cache rules: which routes are cached, for how long, under which tags, and
@@ -82,7 +83,7 @@ final class CacheRuleRepository {
 
 		global $wpdb;
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery -- plugin table; the result is object-cached below.
-		$rows = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}bfag_cache_rules WHERE enabled = %d ORDER BY id ASC LIMIT %d", 1, 200 ), ARRAY_A );
+		$rows = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}bfag_cache_rules WHERE enabled = %d ORDER BY id ASC LIMIT %d", 1, Limits::MAX_ROWS ), ARRAY_A );
 
 		$rules = $this->normalise_rows( $rows );
 		wp_cache_set( self::CACHE_KEY, $rules, self::CACHE_GROUP, self::CACHE_TTL );
@@ -92,13 +93,13 @@ final class CacheRuleRepository {
 	/**
 	 * Every rule, enabled or not, ordered by id.
 	 *
-	 * @param int $limit Maximum rows.
+	 * @param int $limit Maximum rows, 1..Limits::MAX_ROWS (WPMAP-138).
 	 * @return list<array<string, mixed>>
 	 */
-	public function all( int $limit = 200 ): array {
+	public function all( int $limit = Limits::MAX_ROWS ): array {
 		global $wpdb;
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- admin listing of a plugin table.
-		$rows = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}bfag_cache_rules ORDER BY id ASC LIMIT %d", max( 1, $limit ) ), ARRAY_A );
+		$rows = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}bfag_cache_rules ORDER BY id ASC LIMIT %d", max( 1, min( Limits::MAX_ROWS, $limit ) ) ), ARRAY_A );
 		return $this->normalise_rows( $rows );
 	}
 
@@ -204,10 +205,12 @@ final class CacheRuleRepository {
 	}
 
 	/**
-	 * Maximum number of rules: 1 unless an add-on raises it.
+	 * Maximum number of rules: 1 unless an add-on raises it, and never more
+	 * than Limits::MAX_ROWS — the most all() and all_enabled() read
+	 * (WPMAP-138).
 	 */
 	public function limit(): int {
-		return (int) apply_filters( 'bfag_cache_rule_limit', 1 );
+		return Limits::clamp( apply_filters( 'bfag_cache_rule_limit', 1 ) );
 	}
 
 	/**

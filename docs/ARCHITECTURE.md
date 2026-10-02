@@ -18,6 +18,11 @@ Plan: `~/Sites/blueSites/plans/bluefairy-api-gateway.plan.md` (read "Revision v3
 - All SQL through `$wpdb->prepare()`; reads via `get_results/get_row/get_var/get_col`;
   writes via `insert/update/delete` or prepared `query()`. Table names are
   `$wpdb->prefix . 'bfag_…'`. Every list query has a `LIMIT`.
+- **One row ceiling (WPMAP-138):** `Support\Limits::MAX_ROWS` (1000, at least the Pro add-on's cap of 500) bounds every read of the
+  cache-rule, rate-limit-rule and webhook tables — `all_enabled()` (the enforcement read), `all()` (the admin lists, and Pro's
+  `GET /bfag/v1/webhooks`, which calls it with no argument) and `enabled_events()` — and `Limits::clamp()` bounds every `limit()` to
+  0..MAX_ROWS, so a row that may be created is always one that is listed, matched and enforced. (The reads stopped at `LIMIT 200`
+  while Pro allowed 500: rules 201-500 counted toward the limit but never appeared and never matched.)
 - Hot-path reads (`all_enabled()`) are object-cached in group `bfag`, key named below,
   TTL 300, and every write to that table calls `wp_cache_delete()` on the key.
 - Admin: every form handler calls `check_admin_referer( 'bfag_<action>' )` and
@@ -90,10 +95,10 @@ generation orphans the old entries (transients expire by TTL; object-cache entri
 **`CacheRuleRepository`** — `__construct()`. Rows are associative arrays with the table's
 columns, `enabled`/`id`/`ttl_seconds` cast to int, `tags` as a comma-separated string.
 - `all_enabled(): array` — object cache key `cache_rules_enabled`, ordered by id
-- `all( int $limit = 200 ): array`, `find( int $id ): ?array`, `count(): int`
+- `all( int $limit = Limits::MAX_ROWS ): array` (clamped to 1..MAX_ROWS), `find( int $id ): ?array`, `count(): int`
 - `create( array $data ): int|false` — returns false (and logs) when `count() >= limit()` or the glob fails `GlobMatcher::is_valid`; the TTL is **clamped** to 1–86400 (never refused), and `update()` clamps it the same way; tags sanitised through `CacheStore::sanitize_tag()` (`[a-z0-9_:-]`, lower-cased, max 50 chars, max 20 tags; `post:7`, `type:product` are the Pro purge-tag shapes)
 - `update( int $id, array $data ): bool`, `delete( int $id ): bool`, `set_enabled( int $id, bool ): bool`
-- `limit(): int` — `(int) apply_filters( 'bfag_cache_rule_limit', 1 )`
+- `limit(): int` — `Limits::clamp( apply_filters( 'bfag_cache_rule_limit', 1 ) )`
 - `match( string $route ): ?array` — among enabled rules whose glob matches (via `GlobMatcher`) the most specific one: highest `GlobMatcher::specificity()`, tie → lowest id; null when none. So a `wp/v2/posts/**` rule added after the seeded `**` rule wins for posts
 - `sort_by_specificity( array $rules ): array` — the same order, for the Cache tab ("Most specific rule wins")
 - `tags_of( array $rule ): string[]`
@@ -122,7 +127,7 @@ columns, `enabled`/`id`/`ttl_seconds` cast to int, `tags` as a comma-separated s
 ### Rate limiting (`includes/RateLimit/`)
 
 **`RateLimitRuleRepository`** — same shape as CacheRuleRepository. Object cache key
-`rl_rules_enabled`. `limit()` = `apply_filters( 'bfag_rate_limit_rule_limit', 1 )`.
+`rl_rules_enabled`. `limit()` = `Limits::clamp( apply_filters( 'bfag_rate_limit_rule_limit', 1 ) )`; `all( int $limit = Limits::MAX_ROWS )`.
 `subject_types(): string[]` = `apply_filters( 'bfag_rate_limit_subject_types', [ 'ip' ] )`.
 `create()` rejects a subject_type not in `subject_types()`, max_requests 1–65535,
 window_seconds 1–86400, penalty_seconds 0–2592000. `matching( string $route ): array` —
@@ -158,11 +163,11 @@ window_seconds among enabled rules (default 60).
 - `payload( string $event, array $hook_args ): ?array` — normalised array (`['event'=>…, 'site'=>home_url(), 'occurred_at'=>gmdate('c'), 'object'=>[...]]`); null means "do not dispatch" (e.g. post not public). Passed through `apply_filters( 'bfag_webhook_payload', $payload, $event, $hook_args )`. Never include user passwords, hashes, emails of other users beyond the object's own author email, or `$_SERVER`.
 
 **`WebhookRepository`** — `__construct()`. Rows: `id`, `label`, `url`, `event`, `secret`, `headers` (JSON string, decoded to array by `headers_of()`), `preset`, `enabled` (int), `max_retries` (int), `created_at`.
-- `all( int $limit = 200 ): array`, `all_enabled(): array` (object cache key `webhooks_enabled`) — **summaries only** (WPMAP-117 / R1-12): `SUMMARY_COLUMNS` = `id`, `label`, `event`, `preset`, `enabled`, `max_retries`, selected by name; the URL, the secret and `headers` (where a Pro preset keeps its credentials) are never read into the shared object cache, and a cached value is re-reduced on read so an entry an earlier version wrote never hands one out — read a webhook's credentials with `find()`; `find( int ): ?array` (the full row, uncached), `for_event( string $event ): array` (enabled only), `count(): int`, `enabled_events(): string[]` — from the autoloaded option `EVENTS_OPTION` = `bfag_webhook_events` with NO query (P7 / WPMAP-106: `EventBus::register_hooks()` runs on every page view); when the option does not exist it is built from `all_enabled()` and `add_option()`ed (never overwriting a concurrent write's value)
+- `all( int $limit = Limits::MAX_ROWS ): array` (clamped to 1..MAX_ROWS), `all_enabled(): array` (object cache key `webhooks_enabled`, `LIMIT` MAX_ROWS) — **summaries only** (WPMAP-117 / R1-12): `SUMMARY_COLUMNS` = `id`, `label`, `event`, `preset`, `enabled`, `max_retries`, selected by name; the URL, the secret and `headers` (where a Pro preset keeps its credentials) are never read into the shared object cache, and a cached value is re-reduced on read so an entry an earlier version wrote never hands one out — read a webhook's credentials with `find()`; `find( int ): ?array` (the full row, uncached), `for_event( string $event ): array` (enabled only), `count(): int`, `enabled_events(): string[]` — from the autoloaded option `EVENTS_OPTION` = `bfag_webhook_events` with NO query (P7 / WPMAP-106: `EventBus::register_hooks()` runs on every page view); when the option does not exist it is built from `all_enabled()` and `add_option()`ed (never overwriting a concurrent write's value)
 - `invalidate(): void` — after EVERY write (failed and rolled-back ones too): `wp_cache_delete()` of `webhooks_enabled`, then `SELECT DISTINCT event … WHERE enabled = 1 ORDER BY event LIMIT 1000` (`get_col`) rewritten into `bfag_webhook_events` (autoload `true`); a refused write deletes the option instead (logged) so the next boot rebuilds it rather than hooking a stale list (F21)
 - `create( array $data ): int|false` — false when `count() >= limit()`; `url` must pass `wp_http_validate_url()` and be https unless `apply_filters( 'bfag_webhook_allow_http', false )`, except that `url = ''` is accepted when `preset !== ''` (U-14: a preset builds its own request; `update()` the same, reading the stored preset through `find()` when none is supplied — with no preset a blank URL is a row no delivery could reach); `label` 1–200 chars; `headers` must be a JSON object of string values (or an array, encoded on save); `event` is a sanitised key (the admin page checks it exists in `EventRegistry` — the repository stays dumb). `secret` defaults to `bin2hex( random_bytes( 32 ) )` when empty.
 - `update( int $id, array $data ): bool`, `delete( int $id ): bool` — deletes deliveries first, then the webhook, inside `START TRANSACTION`/`COMMIT` (prepared `query()`); `set_enabled( int, bool )`
-- `limit(): int` — `(int) apply_filters( 'bfag_webhook_limit', 3 )`
+- `limit(): int` — `Limits::clamp( apply_filters( 'bfag_webhook_limit', 3 ) )`
 - `headers_of( array $row ): array<string,string>`
 
 **`DeliveryRepository`** — `__construct( Settings )`.

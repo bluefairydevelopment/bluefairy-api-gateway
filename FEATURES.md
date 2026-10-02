@@ -675,7 +675,7 @@ fired.
 
 | Hook | Type | Signature | Purpose |
 |---|---|---|---|
-| `bfag_cache_rule_limit` | filter | `( int $limit = 1 )` | Maximum number of cache rules. |
+| `bfag_cache_rule_limit` | filter | `( int $limit = 1 )` | Maximum number of cache rules; at most 1,000 (the most rules the plugin reads). |
 | `bfag_cache_purge_tags` | filter | `( string[]\|null $tags = null, string $type, int $id )` | `$type` is `'post'`, `'term'` or `'comment'`. Return the tags the change touches to bump only those; return `null` to flush everything. Include `all`: a rule with no tags is keyed on it and is purged on every content change; only tagged rules are narrower. |
 | `bfag_cache_bypass` | filter | `( bool $bypass = false, WP_REST_Request $request )` | Return `true` to force a request past the cache (`BYPASS`). |
 | `bfag_cache_purged` | action | `( string $scope, string[] $tags )` | `$scope` is `'all'` or `'tags'`. Fired by every purge path: content hooks, the Cache tab, AJAX and the REST endpoint. |
@@ -684,7 +684,7 @@ fired.
 
 | Hook | Type | Signature | Purpose |
 |---|---|---|---|
-| `bfag_rate_limit_rule_limit` | filter | `( int $limit = 1 )` | Maximum number of rate-limit rules. |
+| `bfag_rate_limit_rule_limit` | filter | `( int $limit = 1 )` | Maximum number of rate-limit rules; at most 1,000. |
 | `bfag_rate_limit_subject_types` | filter | `( string[] $types = [ 'ip' ] )` | Subject types a rule may count by. Pro adds `user` and `apikey`. |
 | `bfag_rate_limit_subject` | filter | `( string\|null $subject, string $type, WP_REST_Request $request, string $ip )` | The subject a rule counts this request against. Default is the IP for type `ip`, `null` otherwise; `null` or `''` means the rule does not apply to this request. |
 | `bfag_rate_limit_is_blocked` | filter | `( bool $blocked = false, string $ip, WP_REST_Request $request )` | Return `true` to answer `403 bfag_blocked` before any rule is counted. |
@@ -696,7 +696,7 @@ fired.
 
 | Hook | Type | Signature | Purpose |
 |---|---|---|---|
-| `bfag_webhook_limit` | filter | `( int $limit = 3 )` | Maximum number of webhooks. |
+| `bfag_webhook_limit` | filter | `( int $limit = 3 )` | Maximum number of webhooks; at most 1,000. |
 | `bfag_webhook_events` | filter | `( array $events )` | Add events: `key => [ 'hook' => string, 'label' => string, 'accepted_args' => int, 'group' => string ]`. An add-on event's payload object is `[ 'id' => <first integer hook argument> ]` until `bfag_webhook_payload` fills it in. |
 | `bfag_webhook_payload` | filter | `( array\|null $payload, string $event, array $hook_args )` | The payload before it is signed and sent. Return `null` to suppress the delivery. |
 | `bfag_webhook_request_args` | filter | `( array $args, array $webhook, string $event, array $payload )` | The `wp_remote_post()` arguments. May rewrite `body` and `headers`, set `url` to redirect the delivery, and set `headers['Authorization']` — the only place a credential header is accepted. The filter is trusted for credentials, not for transport: after it runs the headers are sanitised again, so a `Host`, `X-Forwarded-*` or line-break value it plants is dropped. Set `$args['bfag_skip']` to a non-empty string to cancel the delivery: it is logged as `failed` with that string as the response body, nothing is sent, and `bfag_webhook_delivery_failed` fires with `$is_final` true. |

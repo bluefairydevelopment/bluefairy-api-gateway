@@ -10,6 +10,7 @@ namespace BlueFairy\ApiGateway\Tests\Unit\RateLimit;
 use BlueFairy\ApiGateway\Logger;
 use BlueFairy\ApiGateway\RateLimit\RateLimitRuleRepository;
 use BlueFairy\ApiGateway\Settings;
+use BlueFairy\ApiGateway\Support\Limits;
 use BlueFairy\ApiGateway\Tests\TestCase;
 
 final class RateLimitRuleRepositoryTest extends TestCase {
@@ -56,7 +57,7 @@ final class RateLimitRuleRepositoryTest extends TestCase {
 		$this->assertSame( 1, $first[0]['id'] );
 		$this->assertCount( 1, $this->wpdb->calls_to( 'get_results' ) );
 		$sql = (string) $this->wpdb->calls_to( 'get_results' )[0]['sql'];
-		$this->assertSame( 'SELECT * FROM bfw_bfag_rate_limit_rules WHERE enabled = 1 ORDER BY id ASC LIMIT 200', $sql );
+		$this->assertSame( 'SELECT * FROM bfw_bfag_rate_limit_rules WHERE enabled = 1 ORDER BY id ASC LIMIT ' . Limits::MAX_ROWS, $sql );
 
 		$this->assertSame( $first, wp_cache_get( 'rl_rules_enabled', 'bfag' ) );
 		$this->assertSame( $first, $repo->all_enabled() );
@@ -97,7 +98,7 @@ final class RateLimitRuleRepositoryTest extends TestCase {
 		$default = ( new RateLimitRuleRepository() )->all();
 		$this->assertCount( 1, $default );
 		$this->assertSame( 3, $default[0]['id'] );
-		$this->assertStringEndsWith( 'LIMIT 200', (string) $this->wpdb->calls_to( 'get_results' )[1]['sql'] );
+		$this->assertStringEndsWith( 'LIMIT ' . Limits::MAX_ROWS, (string) $this->wpdb->calls_to( 'get_results' )[1]['sql'] );
 	}
 
 	public function test_find_returns_the_normalised_row_or_null(): void {

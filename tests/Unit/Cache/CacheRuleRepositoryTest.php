@@ -10,6 +10,7 @@ namespace BlueFairy\ApiGateway\Tests\Unit\Cache;
 use BlueFairy\ApiGateway\Cache\CacheRuleRepository;
 use BlueFairy\ApiGateway\Logger;
 use BlueFairy\ApiGateway\Settings;
+use BlueFairy\ApiGateway\Support\Limits;
 use BlueFairy\ApiGateway\Tests\TestCase;
 
 final class CacheRuleRepositoryTest extends TestCase {
@@ -52,7 +53,7 @@ final class CacheRuleRepositoryTest extends TestCase {
 		$this->assertSame( $first, $second );
 		$this->assertCount( 1, $this->wpdb->calls_to( 'get_results' ), 'second call served from the object cache' );
 		$this->assertSame(
-			'SELECT * FROM bfw_bfag_cache_rules WHERE enabled = 1 ORDER BY id ASC LIMIT 200',
+			'SELECT * FROM bfw_bfag_cache_rules WHERE enabled = 1 ORDER BY id ASC LIMIT ' . Limits::MAX_ROWS,
 			$this->wpdb->calls_to( 'get_results' )[0]['sql']
 		);
 		$this->assertSame( $first, wp_cache_get( CacheRuleRepository::CACHE_KEY, 'bfag' ) );

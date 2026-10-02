@@ -15,6 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 use BlueFairy\ApiGateway\Logger;
 use BlueFairy\ApiGateway\Support\GlobMatcher;
+use BlueFairy\ApiGateway\Support\Limits;
 
 /**
  * Rows of `bfag_rate_limit_rules` as associative arrays with the table's
@@ -92,7 +93,7 @@ final class RateLimitRuleRepository {
 		global $wpdb;
 
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- plugin table, prefix interpolation; cached above.
-		$rows  = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}bfag_rate_limit_rules WHERE enabled = %d ORDER BY id ASC LIMIT %d", 1, 200 ), ARRAY_A );
+		$rows  = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}bfag_rate_limit_rules WHERE enabled = %d ORDER BY id ASC LIMIT %d", 1, Limits::MAX_ROWS ), ARRAY_A );
 		$rules = $this->normalize_all( $rows );
 		wp_cache_set( self::CACHE_KEY, $rules, self::CACHE_GROUP, self::CACHE_TTL );
 		return $rules;
@@ -101,14 +102,14 @@ final class RateLimitRuleRepository {
 	/**
 	 * Every rule, enabled or not, ordered by id.
 	 *
-	 * @param int $limit Maximum rows.
+	 * @param int $limit Maximum rows, 1..Limits::MAX_ROWS (WPMAP-138).
 	 * @return list<array<string, mixed>>
 	 */
-	public function all( int $limit = 200 ): array {
+	public function all( int $limit = Limits::MAX_ROWS ): array {
 		global $wpdb;
 
 		// phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- plugin table, prefix interpolation; admin listing.
-		$rows = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}bfag_rate_limit_rules ORDER BY id ASC LIMIT %d", max( 1, $limit ) ), ARRAY_A );
+		$rows = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$wpdb->prefix}bfag_rate_limit_rules ORDER BY id ASC LIMIT %d", max( 1, min( Limits::MAX_ROWS, $limit ) ) ), ARRAY_A );
 		return $this->normalize_all( $rows );
 	}
 
@@ -209,17 +210,19 @@ final class RateLimitRuleRepository {
 	}
 
 	/**
-	 * Maximum number of rules. One in the free plugin.
+	 * Maximum number of rules. One in the free plugin, and never more than
+	 * Limits::MAX_ROWS — the most all() and all_enabled() read (WPMAP-138).
 	 */
 	public function limit(): int {
 		/**
-		 * Filters the maximum number of rate-limit rules.
+		 * Filters the maximum number of rate-limit rules. Clamped to
+		 * Limits::MAX_ROWS.
 		 *
 		 * @since 1.0.0
 		 *
 		 * @param int $limit Default 1.
 		 */
-		return (int) apply_filters( 'bfag_rate_limit_rule_limit', 1 );
+		return Limits::clamp( apply_filters( 'bfag_rate_limit_rule_limit', 1 ) );
 	}
 
 	/**

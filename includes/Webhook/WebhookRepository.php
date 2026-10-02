@@ -14,6 +14,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 use BlueFairy\ApiGateway\Logger;
+use BlueFairy\ApiGateway\Support\Limits;
 
 /**
  * CRUD for the `bfag_webhooks` table.
@@ -60,13 +61,13 @@ final class WebhookRepository {
 	/**
 	 * Every webhook, newest last.
 	 *
-	 * @param int $limit Maximum rows.
+	 * @param int $limit Maximum rows, 1..Limits::MAX_ROWS (WPMAP-138).
 	 * @return list<array<string, mixed>>
 	 */
-	public function all( int $limit = 200 ): array {
+	public function all( int $limit = Limits::MAX_ROWS ): array {
 		global $wpdb;
 
-		$limit = max( 1, min( 1000, $limit ) );
+		$limit = max( 1, min( Limits::MAX_ROWS, $limit ) );
 		$rows  = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
 			$wpdb->prepare( "SELECT * FROM {$wpdb->prefix}bfag_webhooks ORDER BY id ASC LIMIT %d", $limit ),
 			ARRAY_A
@@ -92,7 +93,7 @@ final class WebhookRepository {
 			return $this->summaries( $cached );
 		}
 		$rows = $wpdb->get_results( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching
-			$wpdb->prepare( "SELECT id, label, event, preset, enabled, max_retries FROM {$wpdb->prefix}bfag_webhooks WHERE enabled = %d ORDER BY id ASC LIMIT %d", 1, 1000 ),
+			$wpdb->prepare( "SELECT id, label, event, preset, enabled, max_retries FROM {$wpdb->prefix}bfag_webhooks WHERE enabled = %d ORDER BY id ASC LIMIT %d", 1, Limits::MAX_ROWS ),
 			ARRAY_A
 		);
 		$rows = $this->summaries( is_array( $rows ) ? $rows : [] );
@@ -293,7 +294,8 @@ final class WebhookRepository {
 
 	/**
 	 * How many webhooks may exist. Three in the free plugin; the Pro add-on
-	 * raises it through `bfag_webhook_limit`.
+	 * raises it through `bfag_webhook_limit`. Never more than
+	 * Limits::MAX_ROWS, the most all() and all_enabled() read (WPMAP-138).
 	 */
 	public function limit(): int {
 		/**
@@ -301,9 +303,9 @@ final class WebhookRepository {
 		 *
 		 * @since 1.0.0
 		 *
-		 * @param int $limit Default 3.
+		 * @param int $limit Default 3. Clamped to 0..Limits::MAX_ROWS.
 		 */
-		return max( 0, (int) apply_filters( 'bfag_webhook_limit', 3 ) );
+		return Limits::clamp( apply_filters( 'bfag_webhook_limit', 3 ) );
 	}
 
 	/**
@@ -341,7 +343,7 @@ final class WebhookRepository {
 
 		wp_cache_delete( self::CACHE_KEY, self::CACHE_GROUP );
 		$events = $wpdb->get_col( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- the option below IS the cache; this rebuilds it after a write.
-			$wpdb->prepare( "SELECT DISTINCT event FROM {$wpdb->prefix}bfag_webhooks WHERE enabled = %d ORDER BY event ASC LIMIT %d", 1, 1000 )
+			$wpdb->prepare( "SELECT DISTINCT event FROM {$wpdb->prefix}bfag_webhooks WHERE enabled = %d ORDER BY event ASC LIMIT %d", 1, Limits::MAX_ROWS )
 		);
 		$events = array_values( array_map( 'strval', array_filter( is_array( $events ) ? $events : [], 'is_scalar' ) ) );
 		if ( ! $this->write_option( self::EVENTS_OPTION, $events, true ) ) {
