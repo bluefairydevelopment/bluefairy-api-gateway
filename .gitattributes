@@ -10,3 +10,6 @@
 /composer.lock    export-ignore
 /.phpunit.cache   export-ignore
 /docs/screenshots export-ignore
+/composer.json    export-ignore
+/docs/MARKETING.txt export-ignore
+/docs/COMPARISON.md export-ignore
