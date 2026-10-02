@@ -30,6 +30,8 @@ foreach ( $events as $bfag_key => $bfag_spec ) {
 	<input type="hidden" name="id" value="<?php echo esc_attr( (string) (int) $webhook['id'] ); ?>" />
 	<?php wp_nonce_field( 'bfag_save_webhook' ); ?>
 	<table class="form-table" role="presentation">
+		<?php // Two row groups with the add-on hook between them, right under Preset (U-14 / WPMAP-113): an add-on may print <tr> rows or its own <tbody> groups. ?>
+		<tbody>
 		<tr>
 			<th scope="row"><label for="bfag-wh-label"><?php esc_html_e( 'Label', 'bluefairy-api-gateway' ); ?></label></th>
 			<td><input type="text" id="bfag-wh-label" name="bfag[label]" class="regular-text" maxlength="200" required value="<?php echo esc_attr( (string) $webhook['label'] ); ?>" /></td>
@@ -97,6 +99,21 @@ foreach ( $events as $bfag_key => $bfag_spec ) {
 				</td>
 			</tr>
 		<?php endif; ?>
+		</tbody>
+		<?php
+		/**
+		 * Extra rows in the add/edit webhook form, rendered directly under the
+		 * Preset row (where the Preset row would be when no preset is
+		 * registered) and before Max retries and Enabled, between two
+		 * `<tbody>` row groups: print `<tr>` rows or `<tbody>` groups.
+		 *
+		 * @since 1.0.0
+		 *
+		 * @param array<string, mixed> $webhook The row being edited (without its secret), or defaults with id 0.
+		 */
+		do_action( 'bfag_webhook_form_fields', $webhook );
+		?>
+		<tbody>
 		<?php if ( $is_pro ) : ?>
 			<tr>
 				<th scope="row"><label for="bfag-wh-retries"><?php esc_html_e( 'Max retries', 'bluefairy-api-gateway' ); ?></label></th>
@@ -110,16 +127,7 @@ foreach ( $events as $bfag_key => $bfag_spec ) {
 			<th scope="row"><?php esc_html_e( 'Enabled', 'bluefairy-api-gateway' ); ?></th>
 			<td><label><input type="checkbox" name="bfag[enabled]" value="1" <?php checked( 1, (int) $webhook['enabled'] ); ?> /> <?php esc_html_e( 'Deliver this webhook', 'bluefairy-api-gateway' ); ?></label></td>
 		</tr>
-		<?php
-		/**
-		 * Extra rows in the add/edit webhook form.
-		 *
-		 * @since 1.0.0
-		 *
-		 * @param array<string, mixed> $webhook The row being edited (without its secret), or defaults with id 0.
-		 */
-		do_action( 'bfag_webhook_form_fields', $webhook );
-		?>
+		</tbody>
 	</table>
 	<p class="submit">
 		<?php submit_button( $bfag_editing ? __( 'Save webhook', 'bluefairy-api-gateway' ) : __( 'Add webhook', 'bluefairy-api-gateway' ), 'primary', 'bfag_save', false, [ 'id' => 'bfag-webhook-save' ] ); ?>

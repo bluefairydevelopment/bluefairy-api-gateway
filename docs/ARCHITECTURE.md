@@ -263,7 +263,7 @@ strings or one comma-separated string, each sanitised by `CacheStore::sanitize_t
 | `bfag_settings_saved` | action | — | `( array $clean, array $raw )` — fired after the base Settings form saves, with the full `$_POST` as `$raw`. NOT fired when the database refused the base write (F21 / WPMAP-110): the page redirects with `settings_save_failed` instead |
 | `bfag_ratelimit_page_after` | action | — | rendered below the rate-limit rules table and its add/edit form (Pro's Blocked IPs panel) |
 | `bfag_cache_page_after` | action | — | rendered below the cache rules table and its add/edit form |
-| `bfag_webhook_form_fields` | action | — | `( array $webhook )` — extra rows in the add/edit webhook form |
+| `bfag_webhook_form_fields` | action | — | `( array $webhook )` — extra rows in the add/edit webhook form, rendered directly under the Preset row (where it would be when no preset is registered) and above Max retries / Enabled (U-14 / WPMAP-113), between two `<tbody>` row groups of the form table — print `<tr>` rows or whole `<tbody>` groups (Pro's preset fields), never a nested `<tbody>` |
 | `bfag_webhook_form_defaults` | filter | built-in add-form values | `( array $defaults )` — values the Add webhook form opens with; Pro sets `max_retries` to its *Retries per delivery* default. `id` is always forced back to 0 |
 | `bfag_webhook_presets` | filter | `[]` | `slug => label`; when non-empty the base form shows a Preset `<select>` and stores `preset` |
 | `bfag_webhook_sanitize` | filter | data | `( array $data, array $raw )` — add-on sanitises its own form fields before `create()`/`update()` |

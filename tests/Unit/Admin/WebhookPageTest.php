@@ -328,6 +328,47 @@ final class WebhookPageTest extends TestCase {
 		$this->assertStringNotContainsString( 'If you remove the preset later', $html, 'no presets: no line about them' );
 	}
 
+	/**
+	 * U-14 / WPMAP-113: `bfag_webhook_form_fields` renders directly under the
+	 * Preset row — before Max retries and Enabled — and between two row
+	 * groups, so an add-on's own <tbody> (Pro's preset fields) is never
+	 * nested inside another.
+	 */
+	public function test_the_form_fields_hook_renders_under_the_preset_row_between_row_groups(): void {
+		add_action(
+			'bfag_webhook_form_fields',
+			static function (): void {
+				echo '<tbody data-bfag-preset-config="slack" hidden><tr><td>PRESET-FIELDS</td></tr></tbody>';
+			}
+		);
+		add_filter( 'bfag_webhook_presets', static fn(): array => [ 'slack' => 'Slack' ] );
+		add_filter( 'bfag_is_pro', '__return_true' );
+		$this->prime_list( [], [] );
+		$html = bfag_test_render( [ $this->page(), 'render' ] );
+
+		$this->assertSame( 1, substr_count( $html, 'PRESET-FIELDS' ), 'fired once' );
+		$at = (int) strpos( $html, 'PRESET-FIELDS' );
+		$this->assertGreaterThan( 0, $at );
+		$this->assertGreaterThan( (int) strpos( $html, 'data-bfag-preset-select' ), $at, 'after the Preset select' );
+		$this->assertLessThan( (int) strpos( $html, 'name="bfag[max_retries]"' ), $at, 'before Max retries' );
+		$this->assertLessThan( (int) strpos( $html, 'name="bfag[enabled]"' ), $at, 'before Enabled' );
+		$this->assertMatchesRegularExpression( '#</select>\s*</td>\s*</tr>\s*</tbody>\s*<tbody data-bfag-preset-config="slack"#', $html, 'directly under the Preset row, after its row group closes' );
+		$form   = substr( $html, (int) strpos( $html, '<table class="form-table"' ) );
+		$form   = substr( $form, 0, (int) strpos( $form, '</table>' ) );
+		$before = substr( $form, 0, (int) strpos( $form, '<tbody data-bfag-preset-config' ) );
+		$this->assertSame( substr_count( $before, '<tbody' ), substr_count( $before, '</tbody>' ), 'no row group is open where the add-on prints' );
+		$this->assertSame( substr_count( $form, '<tbody' ), substr_count( $form, '</tbody>' ), 'every row group closes' );
+		$this->assertSame( 0, substr_count( $form, '<tr' ) - substr_count( $form, '</tr>' ) );
+
+		// No preset registered: the hook still fires, where the Preset row would be.
+		unset( $GLOBALS['bfag_test_hooks']['bfag_webhook_presets'] );
+		$this->prime_list( [], [] );
+		$html = bfag_test_render( [ $this->page(), 'render' ] );
+		$at   = (int) strpos( $html, 'PRESET-FIELDS' );
+		$this->assertGreaterThan( (int) strpos( $html, 'name="bfag[headers]"' ), $at );
+		$this->assertLessThan( (int) strpos( $html, 'name="bfag[enabled]"' ), $at );
+	}
+
 	public function test_a_blank_url_saves_with_a_preset_and_is_refused_without_one(): void {
 		$this->wpdb->always( 'get_var', '0' );
 		bfag_test_admin_request(
