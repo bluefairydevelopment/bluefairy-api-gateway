@@ -4,7 +4,7 @@ Tags: rest api, cache, rate limit, webhooks, headless
 Requires at least: 6.6
 Tested up to: 7.1
 Requires PHP: 8.1
-Stable tag: 1.0.1
+Stable tag: 1.0.2
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -128,6 +128,10 @@ This plugin connects to services outside your site in one way only: **outbound w
 
 == Changelog ==
 
+= 1.0.2 =
+* Fix: the first page load after an update could book the scheduled jobs during plugin loading, before WordPress's `init`. With WooCommerce (or another plugin that translates its cron schedule names) active, WordPress logged "Translation loading for the woocommerce domain was triggered too early". The jobs are now booked at `init`, on that same page load.
+* Fix: a scheduled job lost to a cron wipe or a restore (hit-log, delivery-log and cached-response pruning, the dashboard figures) is booked again on the next page load. Before, it stayed lost until the plugin was re-activated and those logs were never pruned.
+
 = 1.0.1 =
 * Up to 500 cache rules, 500 rate-limit rules and 500 webhooks — was one, one and three. The ceiling is now the same with or without API Gateway Pro, which is sold on its own features alone. The page shown when every one is in use, and the notice when a save is refused for that reason, no longer mention Pro.
 * The Pro panel lists only what Pro adds, with no limit among them.
@@ -147,6 +151,9 @@ This plugin connects to services outside your site in one way only: **outbound w
 * Compatibility: tested against WordPress 7.1; requires PHP 8.1 or newer. Database schema version 1.0.3 (internal).
 
 == Upgrade Notice ==
+
+= 1.0.2 =
+Fixes a "triggered too early" translation notice after an update, and brings back scheduled jobs lost to a cron wipe. No change to settings or data.
 
 = 1.0.1 =
 Up to 500 cache rules, rate-limit rules and webhooks (was one, one and three), as in Pro. No change to settings or data.

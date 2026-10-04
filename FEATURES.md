@@ -1,6 +1,6 @@
 # BlueFairy API Gateway — Feature Guide
 
-Version 1.0.1 | GPL-2.0-or-later | PHP 8.1+ | WordPress 6.6+
+Version 1.0.2 | GPL-2.0-or-later | PHP 8.1+ | WordPress 6.6+
 
 BlueFairy API Gateway sits in front of the WordPress REST API and does three
 things: it caches anonymous responses, it rate-limits clients, and it sends
@@ -609,11 +609,13 @@ notification email is stored as blank; unknown keys are dropped.
 | `bfag_cron_flush_pending` | single event, on demand | send webhook deliveries queued past the twenty-per-flush limit, batch after batch of twenty for up to twenty seconds a run |
 
 The five-minute interval is registered by the plugin on `cron_schedules` as
-`bfag_five_minutes` (its label is translated only once `init` has run: an
-upgrade boot schedules the events on `plugins_loaded`, and translating there
-would trip WordPress 6.7's early-text-domain notice). The four recurring events are scheduled sixty seconds
-after activation and cleared on deactivation, along with any pending flush
-event. They run on WP-Cron, which is driven
+`bfag_five_minutes` (its label is translated only once `init` has run, so a
+schedule lookup before `init` never trips WordPress 6.7's early-text-domain
+notice). The four recurring events are scheduled sixty seconds after
+activation and cleared on deactivation, along with any pending flush event.
+The plugin books them only from `init` on, never during plugin loading, and
+any that goes missing (a cron wipe, a restore) is booked again on the next
+page load. They run on WP-Cron, which is driven
 by page views; on a quiet site the hit log is pruned less often than every
 five minutes, which is harmless because counting only ever looks back one
 window. If `DISABLE_WP_CRON` is true the plugin's screen shows a warning until

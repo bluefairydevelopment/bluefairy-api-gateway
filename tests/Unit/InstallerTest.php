@@ -15,6 +15,16 @@ use BlueFairy\ApiGateway\Tests\TestCase;
 
 final class InstallerTest extends TestCase {
 
+	/**
+	 * Activation, network (de)activation and wp_initialize_site all run after
+	 * init, on the web and under WP-CLI alike, so this suite starts there. A
+	 * test of the plugins_loaded boot path puts init back to unfired itself.
+	 */
+	protected function setUp(): void {
+		parent::setUp();
+		$GLOBALS['bfag_test_fired']['init'] = 1;
+	}
+
 	public function test_schema_defines_exactly_the_six_owned_tables_as_innodb(): void {
 		$schema = Installer::schema( 'bfw_', 'DEFAULT CHARSET utf8mb4' );
 		$this->assertSame( Installer::TABLES, array_keys( $schema ) );
@@ -195,6 +205,7 @@ final class InstallerTest extends TestCase {
 			10,
 			2
 		);
+		$GLOBALS['bfag_test_fired']['init'] = 0;
 		$this->assertSame( 0, did_action( 'init' ), 'control: before init' );
 		$before = Installer::cron_schedules( [] )['bfag_five_minutes'];
 		$this->assertSame( 'Every five minutes (BlueFairy API Gateway)', $before['display'], 'before init: the literal — no gettext call' );
@@ -204,6 +215,66 @@ final class InstallerTest extends TestCase {
 		$after = Installer::cron_schedules( [] )['bfag_five_minutes'];
 		$this->assertSame( '[translated] Every five minutes (BlueFairy API Gateway)', $after['display'], 'after init: translated' );
 		$this->assertSame( 300, $after['interval'] );
+	}
+
+	/**
+	 * maybe_upgrade() runs on plugins_loaded. Booking a missing job there ran
+	 * wp_get_schedules() before init, and WooCommerce's cron_schedules filter
+	 * translates: core's "translation loading ... was triggered too early"
+	 * notice. Before init the booking waits for init, once, and is still made.
+	 * The planted cron_schedules filter is the stand-in for WooCommerce's: it
+	 * counts every wp_get_schedules() call.
+	 */
+	public function test_before_init_schedule_cron_waits_for_init_and_then_books_every_job(): void {
+		$reads = 0;
+		add_filter(
+			'cron_schedules',
+			static function ( array $schedules ) use ( &$reads ): array {
+				++$reads;
+				return $schedules;
+			}
+		);
+		$GLOBALS['bfag_test_fired']['init'] = 0;
+
+		Installer::schedule_cron();
+		Installer::schedule_cron();
+
+		$this->assertSame( 0, $reads, 'no wp_get_schedules() before init' );
+		$this->assertSame( [], $GLOBALS['bfag_test_cron'], 'nothing booked before init' );
+		$this->assertSame( 10, has_action( 'init', [ Installer::class, 'schedule_cron' ] ), 'deferred to init' );
+		$deferred = array_filter( $GLOBALS['bfag_test_hooks']['init'][10] ?? [], static fn( array $e ): bool => [ Installer::class, 'schedule_cron' ] === $e[0] );
+		$this->assertCount( 1, $deferred, 'deferred once, however often it is asked' );
+
+		do_action( 'init' );
+		$this->assertGreaterThan( 0, $reads, 'control: on init the schedules are read' );
+		$this->assertSame( array_keys( Installer::CRON ), array_keys( $GLOBALS['bfag_test_cron'] ), 'every job booked on init' );
+	}
+
+	/**
+	 * A cron wipe or a restore took the jobs away, and nothing put them back
+	 * until the plugin was re-activated: the hit, delivery and response logs
+	 * were never pruned again. ensure_cron() (on init) books what is missing
+	 * on an installed site, and books nothing where the schema is missing or
+	 * behind: provision_site() keeps crons off tables that do not exist.
+	 */
+	public function test_ensure_cron_puts_back_lost_jobs_only_on_an_installed_site(): void {
+		Installer::ensure_cron();
+		$this->assertSame( [], $GLOBALS['bfag_test_cron'], 'never installed: nothing booked' );
+
+		update_option( 'bfag_db_version', '0.9.0' );
+		Installer::ensure_cron();
+		$this->assertSame( [], $GLOBALS['bfag_test_cron'], 'schema behind: nothing booked' );
+
+		update_option( 'bfag_db_version', BFAG_DB_VERSION );
+		Installer::ensure_cron();
+		$this->assertSame( array_keys( Installer::CRON ), array_keys( $GLOBALS['bfag_test_cron'] ), 'installed: every lost job is back' );
+		foreach ( Installer::CRON as $hook => $schedule ) {
+			$this->assertSame( $schedule, $GLOBALS['bfag_test_cron'][ $hook ]['recurrence'], $hook );
+		}
+
+		$booked = $GLOBALS['bfag_test_cron'];
+		Installer::ensure_cron();
+		$this->assertSame( $booked, $GLOBALS['bfag_test_cron'], 'a booked job is left as it was' );
 	}
 
 	public function test_schedule_cron_is_idempotent(): void {
@@ -580,8 +651,11 @@ final class InstallerTest extends TestCase {
 	public function test_maybe_upgrade_on_a_site_with_no_version_provisions_it_in_full(): void {
 		$this->wpdb->always( 'get_var', '0' );
 		$this->assertFalse( get_option( 'bfag_db_version' ) );
+		$GLOBALS['bfag_test_fired']['init'] = 0; // The boot runs on plugins_loaded.
 
 		Installer::maybe_upgrade();
+		$this->assertSame( [], $GLOBALS['bfag_test_cron'], 'nothing booked before init' );
+		do_action( 'init' );
 
 		$this->assertCount( 6, $GLOBALS['bfag_test_db_delta'] );
 		$this->assertCount( 2, $this->wpdb->calls_to( 'insert' ), 'rules seeded' );
@@ -595,8 +669,11 @@ final class InstallerTest extends TestCase {
 	public function test_maybe_upgrade_on_a_site_behind_reasserts_the_capability_and_crons_without_reseeding(): void {
 		update_option( 'bfag_db_version', '0.9.0' );
 		$this->wpdb->always( 'get_var', '0' );
+		$GLOBALS['bfag_test_fired']['init'] = 0; // The boot runs on plugins_loaded.
 
 		Installer::maybe_upgrade();
+		$this->assertSame( [], $GLOBALS['bfag_test_cron'], 'nothing booked before init' );
+		do_action( 'init' );
 
 		$this->assertCount( 6, $GLOBALS['bfag_test_db_delta'] );
 		$this->assertCount( 0, $this->wpdb->calls_to( 'insert' ), 'an upgrade never reseeds' );

@@ -58,6 +58,8 @@ final class Plugin {
 		self::$booted = true;
 
 		Installer::maybe_upgrade();
+		// A recurring job lost to a cron wipe or a restore is booked again (on init).
+		add_action( 'init', [ Installer::class, 'ensure_cron' ] );
 		// A site created after a network activation is provisioned as it is born.
 		add_action( 'wp_initialize_site', [ Installer::class, 'initialize_site' ], 20 );
 

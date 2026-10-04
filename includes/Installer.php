@@ -381,6 +381,18 @@ final class Installer {
 	 * five-minute jobs are silently never scheduled.
 	 */
 	public static function schedule_cron(): void {
+		// Not before init: wp_schedule_event() reads wp_get_schedules(), and
+		// every plugin's cron_schedules filter runs there. WooCommerce's
+		// translates its labels, so booking a missing job from plugins_loaded
+		// (maybe_upgrade() after an update) loaded the woocommerce text domain
+		// early: core's "translation loading ... was triggered too early"
+		// notice. Before init the booking waits for init, and is still made.
+		if ( ! did_action( 'init' ) ) {
+			if ( false === has_action( 'init', [ self::class, 'schedule_cron' ] ) ) {
+				add_action( 'init', [ self::class, 'schedule_cron' ] );
+			}
+			return;
+		}
 		if ( false === has_filter( 'cron_schedules', [ self::class, 'cron_schedules' ] ) ) {
 			add_filter( 'cron_schedules', [ self::class, 'cron_schedules' ] ); // phpcs:ignore WordPress.WP.CronInterval.CronSchedulesInterval -- 300 s by design: the hit log and KPIs are five-minute buckets.
 		}
@@ -389,6 +401,25 @@ final class Installer {
 				wp_schedule_event( time() + 60, $schedule, $hook );
 			}
 		}
+	}
+
+	/**
+	 * Hooked to `init` by Plugin::boot(): put back any recurring job a cron
+	 * wipe or a restore took away, on a site that is installed. The jobs
+	 * prune the hit log, the delivery log and the cached responses and
+	 * recompute the KPIs; without this a lost event stayed lost until the
+	 * plugin was re-activated, and those tables grew without limit. Only once
+	 * the schema is current: a site whose tables could not be created gets
+	 * no crons (provision_site()), and maybe_upgrade() books them itself
+	 * when an upgrade succeeds. Cheap: wp_next_scheduled() reads the
+	 * autoloaded cron array, and nothing is written unless a job is missing.
+	 */
+	public static function ensure_cron(): void {
+		$current = get_option( 'bfag_db_version', '' );
+		if ( ! is_string( $current ) || '' === $current || version_compare( $current, BFAG_DB_VERSION, '<' ) ) {
+			return;
+		}
+		self::schedule_cron();
 	}
 
 	/**

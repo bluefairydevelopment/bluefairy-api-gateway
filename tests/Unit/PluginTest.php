@@ -88,6 +88,24 @@ final class PluginTest extends TestCase {
 		$this->assertCount( 1, $GLOBALS['bfag_test_hooks']['rest_pre_dispatch'][5] ?? [], 'the limiter is bound once' );
 	}
 
+	/**
+	 * The wiring of the cron self-heal: an installed site whose cron array
+	 * was wiped boots (plugins_loaded) and, on init, has every job back,
+	 * without any job booked before init.
+	 */
+	public function test_boot_puts_back_jobs_lost_to_a_cron_wipe_on_init(): void {
+		update_option( 'bfag_db_version', BFAG_DB_VERSION );
+		update_option( 'bfag_version', BFAG_VERSION );
+		$this->assertSame( [], $GLOBALS['bfag_test_cron'], 'control: the cron array is empty' );
+
+		Plugin::boot();
+		$this->assertSame( 10, has_action( 'init', [ \BlueFairy\ApiGateway\Installer::class, 'ensure_cron' ] ) );
+		$this->assertSame( [], $GLOBALS['bfag_test_cron'], 'nothing booked before init' );
+
+		do_action( 'init' );
+		$this->assertSame( array_keys( \BlueFairy\ApiGateway\Installer::CRON ), array_keys( $GLOBALS['bfag_test_cron'] ) );
+	}
+
 	public function test_reset_clears_the_registry_and_the_guard_so_boot_runs_again(): void {
 		Plugin::boot();
 		Plugin::$dispatching = true;

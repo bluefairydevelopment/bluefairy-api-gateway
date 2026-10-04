@@ -7,6 +7,12 @@ Versioning follows [Semantic Versioning](https://semver.org/): major = architect
 
 ---
 
+## [1.0.2] — 2026-10-03
+
+### Fixed
+- **Early translation notice (WPMAP-150).** `Installer::maybe_upgrade()` runs on `plugins_loaded` and, on a site whose schema was behind, called `schedule_cron()`, whose `wp_schedule_event()` reads `wp_get_schedules()` and so runs every plugin's `cron_schedules` filter. This plugin's own label was already literal before `init` (D6), but WooCommerce's filter translates, and WordPress 6.7+ logged *Translation loading for the woocommerce domain was triggered too early*. `schedule_cron()` now books on `init` when called before it (once, however often it is asked).
+- **Lost scheduled jobs.** A cron wipe or a restore removed `bfag_cron_prune_hits`, `bfag_cron_prune_deliveries`, `bfag_cron_recompute_kpis` and `bfag_cron_prune_responses` for good: only activation and a schema upgrade booked them, so the hit, delivery and response logs stopped being pruned and the dashboard figures went stale. `Installer::ensure_cron()`, hooked to `init` by `Plugin::boot()`, books any that is missing on an installed site (schema current); nothing is written when all are booked.
+
 ## [1.0.1] — 2026-10-02
 
 Packaging for WordPress.org (WPMAP-142), and the row limits made the same as Pro's. No change to settings, database schema or data.
