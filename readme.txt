@@ -1,5 +1,6 @@
 === BlueFairy API Gateway ===
 Contributors: bluefairydevelopment
+Donate link: https://ko-fi.com/bluefairydevelopment
 Tags: rest api, cache, rate limit, webhooks, headless
 Requires at least: 6.6
 Tested up to: 7.1

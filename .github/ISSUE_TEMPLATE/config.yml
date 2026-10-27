@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/bluefairydevelopment/bluefairy-api-gateway/blob/main/SECURITY.md
+    about: Please email support@bluefairydevelopment.com — never open a public issue for a security problem.
+  - name: Pro add-on and paid support
+    url: https://support.bluefairydevelopment.com
+    about: Pro customers get support through the Blue Fairy Support Hub.
+  - name: Buy us a coffee
+    url: https://ko-fi.com/bluefairydevelopment
+    about: Like the free plugin? A coffee keeps it maintained.
