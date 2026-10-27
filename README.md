@@ -236,3 +236,9 @@ The last line runs `assets/js/admin.js` against a dependency-free fake DOM (no n
 ## Support
 
 Documentation ships with the plugin (`docs/ApiGatewayFeaturesGuide.pdf`, `CHANGELOG.md`, `docs/ARCHITECTURE.md`). For questions and bug reports, start from the product page at https://wordpress.bluefairydevelopment.com/product/bluefairy-api-gateway/ or https://bluefairydevelopment.com.
+
+## Support the free plugin
+
+This plugin is free and always will be. If it saves you time, you can [buy us a coffee on Ko-fi](https://ko-fi.com/bluefairydevelopment) ☕ — it helps keep the free plugins tested and maintained.
+
+Found a bug or have an idea? [Open an issue](../../issues/new/choose). Security problems: see [SECURITY.md](SECURITY.md).
