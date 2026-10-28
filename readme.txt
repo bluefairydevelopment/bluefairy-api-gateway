@@ -4,6 +4,7 @@ Tags: rest api, cache, rate limit, webhooks, headless
 Requires at least: 6.6
 Tested up to: 7.1
 Requires PHP: 8.1
+Donate link: https://ko-fi.com/bluefairydevelopment
 Stable tag: 1.0.3
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
