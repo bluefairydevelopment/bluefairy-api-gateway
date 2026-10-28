@@ -1,11 +1,10 @@
 === BlueFairy API Gateway ===
 Contributors: bluefairydevelopment
-Donate link: https://ko-fi.com/bluefairydevelopment
 Tags: rest api, cache, rate limit, webhooks, headless
 Requires at least: 6.6
 Tested up to: 7.1
 Requires PHP: 8.1
-Stable tag: 1.0.2
+Stable tag: 1.0.3
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -41,7 +40,7 @@ Everything lives under **Settings → API Gateway**, in five tabs.
 
 **Cache** — the rules table with an Enabled/Disabled badge you can click, **Edit** and **Delete**, and **Purge all**. The add/edit form takes a label, a route glob (matched without the leading slash: `wc/v3/products/*` matches `wc/v3/products` and `wc/v3/products/12`), a TTL in seconds and optional comma-separated tags. Every content change purges every rule; with API Gateway Pro a tagged rule is purged only by the changes that touch its tags. Edit the seeded "All routes" rule to narrow it. With more than one rule the most specific one wins, and the table is listed in that order.
 
-**Rate limit** — the rules table and a form with a label, *Count by* (IP address), a route glob, and *Requests per seconds*. Values outside 1–65535 requests or 1–86400 seconds are refused rather than silently changed.
+**Rate limit** — the rules table and a form with a label, *Count by* (IP address), a route glob, and the limit: how many requests are allowed in how many seconds. Values outside 1–65535 requests or 1–86400 seconds are refused rather than silently changed.
 
 **Webhooks** — the webhooks table with **Edit**, **Send test** and **Delete**, the **Delivery log** button, and the add/edit form: label, `https://` URL, event, signing secret (blank generates one and shows it once after saving), extra headers as `Name: value` lines, and an Enabled box. Press **Send test** on a new webhook: the notice reports the HTTP status, and the delivery log shows the receiver's response under each row.
 
@@ -129,6 +128,9 @@ This plugin connects to services outside your site in one way only: **outbound w
 
 == Changelog ==
 
+= 1.0.3 =
+* Readme: the rate-limit form description is reworded. No code change.
+
 = 1.0.2 =
 * Fix: the first page load after an update could book the scheduled jobs during plugin loading, before WordPress's `init`. With WooCommerce (or another plugin that translates its cron schedule names) active, WordPress logged "Translation loading for the woocommerce domain was triggered too early". The jobs are now booked at `init`, on that same page load.
 * Fix: a scheduled job lost to a cron wipe or a restore (hit-log, delivery-log and cached-response pruning, the dashboard figures) is booked again on the next page load. Before, it stayed lost until the plugin was re-activated and those logs were never pruned.
@@ -152,6 +154,9 @@ This plugin connects to services outside your site in one way only: **outbound w
 * Compatibility: tested against WordPress 7.1; requires PHP 8.1 or newer. Database schema version 1.0.3 (internal).
 
 == Upgrade Notice ==
+
+= 1.0.3 =
+Readme wording only. No change to code, settings or data.
 
 = 1.0.2 =
 Fixes a "triggered too early" translation notice after an update, and brings back scheduled jobs lost to a cron wipe. No change to settings or data.

@@ -7,6 +7,11 @@ Versioning follows [Semantic Versioning](https://semver.org/): major = architect
 
 ---
 
+## [1.0.3] — 2026-10-28
+
+### Changed
+- Readme: the rate-limit form description no longer reads "Requests per seconds". No code, settings or data change.
+
 ## [1.0.2] — 2026-10-03
 
 ### Fixed
