@@ -21,3 +21,8 @@
 # WordPress.org listing assets (banners, icons, screenshots) go to the SVN
 # assets/ directory, never into the plugin zip.
 /wp-org-assets    export-ignore
+
+# Only the features guide PDF ships from docs/ (2026-10-28). `git archive`
+# reads these, not .distignore; the later -export-ignore wins for the guide.
+/docs/*                     export-ignore
+/docs/*FeaturesGuide.pdf    -export-ignore
