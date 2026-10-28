@@ -1,0 +1,7 @@
+# What the release zip leaves out. wp-deploy/wp-release.sh applies this list to
+# the built zip (distignore.py) whichever way it was built. readme.txt is the
+# shipped readme; README.md and the raw screenshots are the repository's.
+/.distignore
+/README.md
+/docs/ARCHITECTURE.md
+/phpstan-bootstrap.php
