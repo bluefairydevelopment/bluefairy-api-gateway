@@ -3,7 +3,7 @@
     "description": "REST response caching, rate limiting and outbound webhooks for WordPress. No third-party SDKs: every HTTP call goes through wp_remote_post.",
     "type": "wordpress-plugin",
     "license": "GPL-2.0-or-later",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "keywords": ["wordpress", "rest-api", "cache", "rate-limit", "webhooks", "no-third-party-sdks"],
     "authors": [
         {
