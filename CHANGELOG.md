@@ -9,6 +9,8 @@ Versioning follows [Semantic Versioning](https://semver.org/): major = architect
 
 ## [Unreleased]
 
+## [1.0.4] — 2026-10-29
+
 ### Changed
 
 - **Rate limiting counts an IPv6 client by its /64 network (WPMAP-296).** An `ip` rule used to count each full IPv6 address separately, so a client that sent every request from a new address in its /64 (an ISP or host normally gives one customer a whole /64) never reached a limit. IPv6 requests are now counted against their /64 network (shown as `2001:db8:1:2::/64` in the hit log); IPv4 is still counted per address. **Behaviour change:** devices that share one IPv6 /64 — for example several machines on one home or office connection — now share one budget, as devices behind one IPv4 NAT address already did. Raise the rule's limit if legitimate clients share a /64. With the Pro add-on, blocks of IPv6 clients cover the whole /64 too.

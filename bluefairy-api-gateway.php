@@ -3,7 +3,7 @@
  * Plugin Name:       BlueFairy API Gateway
  * Plugin URI:        https://wordpress.bluefairydevelopment.com/product/bluefairy-api-gateway/
  * Description:       REST response caching, per-IP rate limiting and signed outbound webhooks for WordPress — a hardened API layer for headless sites and integrations. Add BlueFairy API Gateway Pro for per-content-type cache rules, tag purging, DDoS auto-block, webhook retries, CRM presets and API keys.
- * Version:           1.0.3
+ * Version:           1.0.4
  * Requires at least: 6.6
  * Requires PHP:      8.1
  * Author:            Blue Fairy Development
@@ -24,7 +24,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 define( 'BFAG_FILE', __FILE__ );
 define( 'BFAG_DIR', plugin_dir_path( __FILE__ ) );
 define( 'BFAG_URL', plugin_dir_url( __FILE__ ) );
-define( 'BFAG_VERSION', '1.0.3' );
+define( 'BFAG_VERSION', '1.0.4' );
 define( 'BFAG_DB_VERSION', '1.0.3' );
 
 // Autoloader — no Composer required at runtime. Only this plugin's namespace;
