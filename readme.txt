@@ -5,7 +5,7 @@ Tags: rest api, cache, rate limit, webhooks, headless
 Requires at least: 6.6
 Tested up to: 7.1
 Requires PHP: 8.1
-Stable tag: 1.0.3
+Stable tag: 1.0.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -129,6 +129,10 @@ This plugin connects to services outside your site in one way only: **outbound w
 
 == Changelog ==
 
+= 1.0.4 =
+* Security: a request authenticated by an API key or application password is now always rate-limited and can be blocked, whoever the key belongs to. "Exempt editors" now covers only an editor's own browser session. New filter `bfag_rate_limit_exempt`.
+* Change: rate-limit rules count an IPv6 client by its /64 network, so rotating addresses within one /64 no longer escapes a limit. Devices sharing one IPv6 /64 now share one budget.
+
 = 1.0.3 =
 * Readme: the rate-limit form description is reworded. No code change.
 
@@ -155,6 +159,9 @@ This plugin connects to services outside your site in one way only: **outbound w
 * Compatibility: tested against WordPress 7.1; requires PHP 8.1 or newer. Database schema version 1.0.3 (internal).
 
 == Upgrade Notice ==
+
+= 1.0.4 =
+Security fix: API-key traffic is always rate-limited. IPv6 clients are counted per /64 network; raise a rule's limit if legitimate clients share one.
 
 = 1.0.3 =
 Readme wording only. No change to code, settings or data.

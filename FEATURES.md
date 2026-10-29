@@ -1,6 +1,6 @@
 # BlueFairy API Gateway — Feature Guide
 
-Version 1.0.3 | GPL-2.0-or-later | PHP 8.1+ | WordPress 6.6+
+Version 1.0.4 | GPL-2.0-or-later | PHP 8.1+ | WordPress 6.6+
 
 BlueFairy API Gateway sits in front of the WordPress REST API and does three
 things: it caches anonymous responses, it rate-limits clients, and it sends
