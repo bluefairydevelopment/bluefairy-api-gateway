@@ -65,4 +65,33 @@ final class IpUtilsTest extends TestCase {
 		$this->assertFalse( IpUtils::in_any_range( '198.51.100.1', $ranges ) );
 		$this->assertFalse( IpUtils::in_any_range( '198.51.100.1', [] ) );
 	}
+
+	/**
+	 * WPMAP-296: an IPv6 client is counted by its /64, since one host can
+	 * rotate through every address of its /64; IPv4 stays per address.
+	 *
+	 * @param string $ip       Client IP.
+	 * @param string $expected Rate-limit subject.
+	 */
+	#[\PHPUnit\Framework\Attributes\DataProvider( 'subject_cases' )]
+	public function test_rate_limit_subject( string $ip, string $expected ): void {
+		$this->assertSame( $expected, IpUtils::rate_limit_subject( $ip ) );
+	}
+
+	/**
+	 * @return array<string, array{string, string}>
+	 */
+	public static function subject_cases(): array {
+		return [
+			'ipv4 per address'      => [ '203.0.113.10', '203.0.113.10' ],
+			'ipv6 to its /64'       => [ '2001:db8:1:2:aaaa:bbbb:cccc:dddd', '2001:db8:1:2::/64' ],
+			'same /64, same bucket' => [ '2001:db8:1:2::9', '2001:db8:1:2::/64' ],
+			'next /64 differs'      => [ '2001:db8:1:3::9', '2001:db8:1:3::/64' ],
+			'uncompressed ipv6'     => [ '2001:0db8:0001:0002:0000:0000:0000:0001', '2001:db8:1:2::/64' ],
+			'ipv4-mapped ipv6'      => [ '::ffff:203.0.113.10', '203.0.113.10' ],
+			'loopback ipv6'         => [ '::1', '::/64' ],
+			'empty stays empty'     => [ '', '' ],
+			'invalid unchanged'     => [ 'nope', 'nope' ],
+		];
+	}
 }

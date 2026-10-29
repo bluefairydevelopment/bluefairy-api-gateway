@@ -142,6 +142,20 @@ final class RateLimitMiddlewareTest extends TestCase {
 		$this->assertSame( [], $this->breaches );
 	}
 
+	/**
+	 * WPMAP-296: IPv6 clients rotating through their /64 share one budget.
+	 */
+	public function test_ipv6_addresses_in_one_slash_64_share_an_ip_subject(): void {
+		$_SERVER['REMOTE_ADDR'] = '2001:db8:1:2::a';
+		$this->wpdb->queue( 'get_var', '1' );
+		$this->assertNull( $this->check( $this->middleware() ) );
+		$_SERVER['REMOTE_ADDR'] = '2001:db8:1:2::b';
+		$this->wpdb->queue( 'get_var', '1' );
+		$this->assertNull( $this->check( $this->middleware() ) );
+		$subjects = array_map( static fn( array $call ): string => $call['data']['subject'], $this->wpdb->calls_to( 'insert' ) );
+		$this->assertSame( [ '2001:db8:1:2::/64', '2001:db8:1:2::/64' ], $subjects );
+	}
+
 	public function test_a_non_null_result_is_returned_untouched_without_counting(): void {
 		$prior = new \WP_REST_Response( [ 'from' => 'elsewhere' ], 200 );
 		$this->wpdb->queue( 'get_var', '999' );

@@ -91,4 +91,25 @@ final class IpUtils {
 		}
 		return false;
 	}
+
+	/**
+	 * What an `ip` rate-limit rule counts a client as: an IPv4 address as
+	 * itself; an IPv6 address as its /64 network (`2001:db8:1:2::/64`),
+	 * because a single host is normally given a whole /64 and can send each
+	 * request from a new address in it (WPMAP-296). An IPv4-mapped IPv6
+	 * address counts as its IPv4 address. '' and invalid input are returned
+	 * unchanged.
+	 *
+	 * @param string $ip Client IP.
+	 */
+	public static function rate_limit_subject( string $ip ): string {
+		if ( ! str_contains( $ip, ':' ) || ! self::is_valid_ip( $ip ) ) {
+			return $ip;
+		}
+		$packed = (string) inet_pton( $ip );
+		if ( str_starts_with( $packed, str_repeat( "\0", 10 ) . "\xff\xff" ) ) {
+			return (string) inet_ntop( substr( $packed, 12 ) );
+		}
+		return inet_ntop( substr( $packed, 0, 8 ) . str_repeat( "\0", 8 ) ) . '/64';
+	}
 }

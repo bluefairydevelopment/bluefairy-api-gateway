@@ -15,6 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 use BlueFairy\ApiGateway\Logger;
 use BlueFairy\ApiGateway\Settings;
+use BlueFairy\ApiGateway\Support\IpUtils;
 use BlueFairy\ApiGateway\Support\RequestContext;
 
 /**
@@ -127,8 +128,9 @@ final class RateLimitMiddleware {
 		}
 
 		foreach ( $this->rules->matching( $route ) as $rule ) {
-			$type    = (string) $rule['subject_type'];
-			$default = 'ip' === $type ? $ip : null;
+			$type = (string) $rule['subject_type'];
+			// An IPv6 client is counted by its /64 (WPMAP-296).
+			$default = 'ip' === $type ? IpUtils::rate_limit_subject( $ip ) : null;
 
 			/**
 			 * Filters the subject a rule counts this request against.
@@ -138,7 +140,8 @@ final class RateLimitMiddleware {
 			 *
 			 * @since 1.0.0
 			 *
-			 * @param string|null      $subject Default: the IP for type `ip`, null otherwise.
+			 * @param string|null      $subject Default: for type `ip` the IPv4 address, or the
+			 *                                  IPv6 address's /64 (`2001:db8::/64`); null otherwise.
 			 * @param string           $type    The rule's subject_type.
 			 * @param \WP_REST_Request $request The request.
 			 * @param string           $ip      Client IP.

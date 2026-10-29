@@ -71,7 +71,8 @@ final class ReleasePackagingTest extends TestCase {
 		$found['readme changelog'] = $m[1] ?? '';
 		preg_match( '/^== Upgrade Notice ==\s+= ([^=\s]+) =/m', $readme, $m );
 		$found['readme upgrade notice'] = $m[1] ?? '';
-		preg_match( '/^## \[([^\]]+)\]/m', self::read( 'CHANGELOG.md' ), $m );
+		// An [Unreleased] section above the newest release is allowed.
+		preg_match( '/^## \[(\d[^\]]*)\]/m', self::read( 'CHANGELOG.md' ), $m );
 		$found['CHANGELOG.md'] = $m[1] ?? '';
 		// composer.json carried 1.0.0 through the 1.0.1 release.
 		$composer                = json_decode( self::read( 'composer.json' ), true );
