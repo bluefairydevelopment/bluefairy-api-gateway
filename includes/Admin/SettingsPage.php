@@ -118,7 +118,7 @@ final class SettingsPage extends Page {
 					'rate_limit_exempt_editors' => [
 						'label'       => __( 'Exempt editors', 'bluefairy-api-gateway' ),
 						'type'        => 'checkbox',
-						'description' => __( 'Do not rate-limit logged-in users who can edit posts (the block editor\'s own REST calls).', 'bluefairy-api-gateway' ),
+						'description' => __( 'Do not rate-limit logged-in users who can edit posts in their own browser session (the block editor\'s own REST calls). Requests made with an API key or an application password are always limited.', 'bluefairy-api-gateway' ),
 					],
 					'trusted_proxies'           => [
 						'label'       => __( 'Trusted proxies', 'bluefairy-api-gateway' ),

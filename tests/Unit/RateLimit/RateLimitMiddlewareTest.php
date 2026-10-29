@@ -49,6 +49,7 @@ final class RateLimitMiddlewareTest extends TestCase {
 		$this->breaches     = [];
 		$this->breach_flags = [];
 		$this->refusals     = [];
+		unset( $GLOBALS['wp_rest_auth_cookie'] ); // WPMAP-295: no browser session unless a test opens one.
 		$GLOBALS['bfag_test_serving_rest'] = true; // TF4: these are top-level REST requests; the harness default is false, as core.
 		add_action(
 			'bfag_rate_limit_breached',
@@ -139,6 +140,20 @@ final class RateLimitMiddlewareTest extends TestCase {
 		$this->assertSame( 'wp/v2/posts', $inserts[0]['data']['route'], 'the log shows the normalised real route' );
 		$this->assertSame( HitCounter::route_hash( 'rule:1' ), $inserts[0]['data']['route_hash'], 'but the bucket is the rule' );
 		$this->assertSame( [], $this->breaches );
+	}
+
+	/**
+	 * WPMAP-296: IPv6 clients rotating through their /64 share one budget.
+	 */
+	public function test_ipv6_addresses_in_one_slash_64_share_an_ip_subject(): void {
+		$_SERVER['REMOTE_ADDR'] = '2001:db8:1:2::a';
+		$this->wpdb->queue( 'get_var', '1' );
+		$this->assertNull( $this->check( $this->middleware() ) );
+		$_SERVER['REMOTE_ADDR'] = '2001:db8:1:2::b';
+		$this->wpdb->queue( 'get_var', '1' );
+		$this->assertNull( $this->check( $this->middleware() ) );
+		$subjects = array_map( static fn( array $call ): string => $call['data']['subject'], $this->wpdb->calls_to( 'insert' ) );
+		$this->assertSame( [ '2001:db8:1:2::/64', '2001:db8:1:2::/64' ], $subjects );
 	}
 
 	public function test_a_non_null_result_is_returned_untouched_without_counting(): void {
@@ -550,6 +565,7 @@ final class RateLimitMiddlewareTest extends TestCase {
 	// ------------------------------------------------------------------
 
 	public function test_a_logged_in_user_who_can_edit_posts_is_exempt_by_default_and_anonymous_traffic_is_not(): void {
+		$GLOBALS['wp_rest_auth_cookie'] = true; // A browser session: cookie + REST nonce.
 		$this->assertTrue( Settings::DEFAULTS['rate_limit_exempt_editors'] );
 		wp_set_current_user( 7 );
 		bfag_test_grant( 'edit_posts' );
@@ -564,6 +580,7 @@ final class RateLimitMiddlewareTest extends TestCase {
 	}
 
 	public function test_a_logged_in_user_without_edit_posts_is_limited_and_the_exemption_can_be_switched_off(): void {
+		$GLOBALS['wp_rest_auth_cookie'] = true; // A browser session: cookie + REST nonce.
 		wp_set_current_user( 8 );
 		$this->wpdb->queue( 'get_var', '999' );
 		$this->assertSame( 429, $this->check( $this->middleware() )->get_status(), 'a subscriber is limited' );
@@ -581,6 +598,7 @@ final class RateLimitMiddlewareTest extends TestCase {
 	 * loopback SSR caller) keeps working; everyone else on it is refused.
 	 */
 	public function test_an_exempt_editor_passes_even_when_the_address_is_banned(): void {
+		$GLOBALS['wp_rest_auth_cookie'] = true; // A browser session: cookie + REST nonce.
 		$asked = 0;
 		add_filter(
 			'bfag_rate_limit_is_blocked',
@@ -601,6 +619,54 @@ final class RateLimitMiddlewareTest extends TestCase {
 		wp_set_current_user( 0 );
 		$GLOBALS['bfag_test_caps'] = [];
 		$this->assertSame( 403, $this->check( $this->middleware() )->get_status(), 'control: anonymous traffic on the address is banned' );
+	}
+
+	// ------------------------------------------------------------------
+	// WPMAP-295: only a browser session is exempt, never API-key traffic
+	// ------------------------------------------------------------------
+
+	/**
+	 * An editor or admin authenticated by an API key or an application
+	 * password (no cookie session) is limited and banned like anyone else:
+	 * a leaked admin-bound key must not bypass the limits and the ban list.
+	 */
+	public function test_an_editor_authenticated_without_a_browser_session_is_limited_and_banned(): void {
+		wp_set_current_user( 7 );
+		bfag_test_grant( 'edit_posts', 'manage_options' );
+		$this->wpdb->queue( 'get_var', '999' );
+		$this->assertSame( 429, $this->check( $this->middleware() )->get_status(), 'key-authenticated admin is limited' );
+
+		$GLOBALS['wp_rest_auth_cookie'] = true;
+		$this->wpdb->queue( 'get_var', '999' );
+		$this->assertNull( $this->check( $this->middleware() ), 'control: the same user in a browser session is exempt' );
+
+		unset( $GLOBALS['wp_rest_auth_cookie'] );
+		add_filter( 'bfag_rate_limit_is_blocked', '__return_true' );
+		$this->assertSame( 403, $this->check( $this->middleware() )->get_status(), 'key-authenticated admin on a banned address is refused' );
+	}
+
+	/**
+	 * The `bfag_rate_limit_exempt` filter lets an add-on withdraw the
+	 * exemption (Pro does when an API key authenticated the request, even
+	 * if a session cookie came along too).
+	 */
+	public function test_the_exempt_filter_can_withdraw_the_exemption(): void {
+		$GLOBALS['wp_rest_auth_cookie'] = true;
+		wp_set_current_user( 7 );
+		bfag_test_grant( 'edit_posts' );
+		$seen = [];
+		add_filter(
+			'bfag_rate_limit_exempt',
+			static function ( bool $exempt, \WP_REST_Request $request ) use ( &$seen ): bool {
+				$seen[] = [ $exempt, $request->get_route() ];
+				return false;
+			},
+			10,
+			2
+		);
+		$this->wpdb->queue( 'get_var', '999' );
+		$this->assertSame( 429, $this->check( $this->middleware() )->get_status() );
+		$this->assertSame( true, $seen[0][0] ?? null, 'the filter is told the default verdict' );
 	}
 
 	/**

@@ -7,6 +7,16 @@ Versioning follows [Semantic Versioning](https://semver.org/): major = architect
 
 ---
 
+## [Unreleased]
+
+### Changed
+
+- **Rate limiting counts an IPv6 client by its /64 network (WPMAP-296).** An `ip` rule used to count each full IPv6 address separately, so a client that sent every request from a new address in its /64 (an ISP or host normally gives one customer a whole /64) never reached a limit. IPv6 requests are now counted against their /64 network (shown as `2001:db8:1:2::/64` in the hit log); IPv4 is still counted per address. **Behaviour change:** devices that share one IPv6 /64 — for example several machines on one home or office connection — now share one budget, as devices behind one IPv4 NAT address already did. Raise the rule's limit if legitimate clients share a /64. With the Pro add-on, blocks of IPv6 clients cover the whole /64 too.
+
+### Fixed
+
+- **Rate limiting: API-key traffic is always limited (WPMAP-295).** The *Exempt editors* setting exempted any logged-in user who can edit posts, so a request authenticated by an API key or application password bound to an editor or administrator skipped every rate-limit rule and the block list: a leaked administrator key was never throttled or blocked. The exemption now applies only to the user's own browser session (a logged-in cookie with its REST nonce). New filter `bfag_rate_limit_exempt` lets an add-on withdraw the exemption; the Pro add-on does so whenever an API key authenticated the request.
+
 ## [1.0.3] — 2026-10-28
 
 ### Changed
