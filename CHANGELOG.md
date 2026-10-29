@@ -7,6 +7,12 @@ Versioning follows [Semantic Versioning](https://semver.org/): major = architect
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- **Rate limiting: API-key traffic is always limited (WPMAP-295).** The *Exempt editors* setting exempted any logged-in user who can edit posts, so a request authenticated by an API key or application password bound to an editor or administrator skipped every rate-limit rule and the block list: a leaked administrator key was never throttled or blocked. The exemption now applies only to the user's own browser session (a logged-in cookie with its REST nonce). New filter `bfag_rate_limit_exempt` lets an add-on withdraw the exemption; the Pro add-on does so whenever an API key authenticated the request.
+
 ## [1.0.3] — 2026-10-28
 
 ### Changed

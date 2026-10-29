@@ -109,7 +109,7 @@ final class RateLimitMiddleware {
 		// throttled by the ceiling meant for anonymous traffic — nor refused
 		// by a ban on a shared address (R2-05): the exemption is decided
 		// before the ban list is asked and before any hits-table work.
-		if ( Settings::to_bool( $this->settings->get( 'rate_limit_exempt_editors' ) ) && is_user_logged_in() && current_user_can( 'edit_posts' ) ) {
+		if ( $this->is_exempt_session( $request ) ) {
 			return $result;
 		}
 
@@ -413,6 +413,41 @@ final class RateLimitMiddleware {
 		}
 		$not_serving = function_exists( 'wp_is_serving_rest_request' ) && ! wp_is_serving_rest_request();
 		return $not_serving && ! ( defined( 'REST_REQUEST' ) && constant( 'REST_REQUEST' ) );
+	}
+
+	/**
+	 * Is this request an editor's own browser session, exempt from the
+	 * limits and the ban list?
+	 *
+	 * Only a cookie session counts: core sets `$wp_rest_auth_cookie` when a
+	 * valid logged-in cookie authenticated the request, and logs the user
+	 * out again unless the REST nonce came with it. A request authenticated
+	 * any other way — an application password, or an API key bound to an
+	 * editor or administrator — is API traffic and is limited like any
+	 * other, whatever the role of the user behind it (WPMAP-295): a leaked
+	 * admin-bound key must not bypass the limits or the ban list.
+	 *
+	 * @param \WP_REST_Request $request The request.
+	 */
+	private function is_exempt_session( \WP_REST_Request $request ): bool {
+		$exempt = Settings::to_bool( $this->settings->get( 'rate_limit_exempt_editors' ) )
+			&& true === ( $GLOBALS['wp_rest_auth_cookie'] ?? null )
+			&& is_user_logged_in()
+			&& current_user_can( 'edit_posts' );
+
+		/**
+		 * Filters whether this request is exempt from rate limits and the
+		 * ban list. The default is true only for a logged-in user who can
+		 * edit posts, in a browser (cookie) session, while the setting is on.
+		 * The Pro add-on answers false whenever an API key authenticated
+		 * the request.
+		 *
+		 * @since 1.0.4
+		 *
+		 * @param bool             $exempt  The default verdict.
+		 * @param \WP_REST_Request $request The request.
+		 */
+		return true === apply_filters( 'bfag_rate_limit_exempt', $exempt, $request );
 	}
 
 	/**

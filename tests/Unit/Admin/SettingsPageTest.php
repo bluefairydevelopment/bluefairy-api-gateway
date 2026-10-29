@@ -238,7 +238,7 @@ final class SettingsPageTest extends TestCase {
 	public function test_the_editor_exemption_checkbox_and_the_trusted_proxies_help_text(): void {
 		$fields = $this->page()->groups()['ratelimit']['fields'];
 		$this->assertSame( 'checkbox', $fields['rate_limit_exempt_editors']['type'] );
-		$this->assertSame( 'Do not rate-limit logged-in users who can edit posts (the block editor\'s own REST calls).', $fields['rate_limit_exempt_editors']['description'] );
+		$this->assertSame( 'Do not rate-limit logged-in users who can edit posts in their own browser session (the block editor\'s own REST calls). Requests made with an API key or an application password are always limited.', $fields['rate_limit_exempt_editors']['description'] );
 		$this->assertSame( 'One IP or CIDR per line. Needed behind Cloudflare, a load balancer or a CDN. Without it the proxy\'s address is the client IP and all visitors share one bucket; with it, the chosen header is read only from these addresses so visitors cannot forge their IP.', $fields['trusted_proxies']['description'] );
 
 		$html = bfag_test_render( [ $this->page(), 'render' ] );
