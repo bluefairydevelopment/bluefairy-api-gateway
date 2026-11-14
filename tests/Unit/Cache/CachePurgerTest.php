@@ -122,16 +122,18 @@ final class CachePurgerTest extends TestCase {
 	public function test_revisions_and_autosaves_do_not_purge_but_a_real_post_does(): void {
 		bfag_test_add_post(
 			[
-				'ID'        => 9,
-				'post_type' => 'revision',
-				'post_name' => '7-revision-v1',
+				'ID'          => 9,
+				'post_type'   => 'revision',
+				'post_name'   => '7-revision-v1',
+				'post_parent' => 7,
 			]
 		);
 		bfag_test_add_post(
 			[
-				'ID'        => 10,
-				'post_type' => 'revision',
-				'post_name' => '7-autosave-v1',
+				'ID'          => 10,
+				'post_type'   => 'revision',
+				'post_name'   => '7-autosave-v1',
+				'post_parent' => 7,
 			]
 		);
 		bfag_test_add_post(
@@ -313,5 +315,25 @@ final class CachePurgerTest extends TestCase {
 		);
 		$this->assertSame( 9, $this->store->tag_generation( 'x' ) );
 		$this->assertSame( 1, $this->store->generation() );
+	}
+	public function test_a_comment_status_change_reads_the_id_from_an_object_an_array_or_a_bare_id(): void {
+		$this->answer_tags( null );
+		$this->purger->register_hooks();
+
+		$this->fire( 'transition_comment_status', 'approved', 'unapproved', (object) [ 'comment_ID' => '40' ] );
+		$this->fire( 'transition_comment_status', 'approved', 'unapproved', [ 'comment_ID' => '50' ] );
+		$this->fire( 'transition_comment_status', 'approved', 'unapproved', '60' );
+		$this->fire( 'transition_comment_status', 'approved', 'unapproved', [ 'no_id' => 1 ] );
+
+		$this->assertSame(
+			[
+				[ 'comment', 40 ],
+				[ 'comment', 50 ],
+				[ 'comment', 60 ],
+				[ 'comment', 0 ],
+			],
+			$this->asked,
+			'an array and a numeric id are read like an object; anything else is comment 0'
+		);
 	}
 }

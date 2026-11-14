@@ -331,4 +331,21 @@ final class CacheRuleRepositoryTest extends TestCase {
 		$this->assertSame( [], $this->repo->tags_of( [ 'tags' => '' ] ) );
 		$this->assertSame( [], $this->repo->tags_of( [] ) );
 	}
+	public function test_tags_given_as_an_array_keep_only_the_strings_and_any_other_type_is_no_tags(): void {
+		$this->wpdb->always( 'get_var', '0' );
+		$this->repo->create( [ 'tags' => [ 'products', 7, null, 'Posts' ] ] );
+		$this->repo->create( [ 'tags' => 42 ] );
+
+		$inserts = $this->wpdb->calls_to( 'insert' );
+		$this->assertSame( 'products,posts', $inserts[0]['data']['tags'], 'non-strings in a tag array are dropped' );
+		$this->assertSame( '', $inserts[1]['data']['tags'], 'neither a string nor an array: no tags' );
+		$this->assertSame( [ 'a' ], $this->repo->tags_of( [ 'tags' => [ 'a', [ 'nested' ] ] ] ) );
+	}
+
+	public function test_a_failed_query_lists_no_rules(): void {
+		$this->wpdb->queue( 'get_results', null );
+		$this->assertSame( [], $this->repo->all() );
+		$this->wpdb->queue( 'get_results', [ $this->row( 1 ) ] );
+		$this->assertCount( 1, $this->repo->all(), 'control: rows from a good query are listed' );
+	}
 }

@@ -9,8 +9,10 @@ declare(strict_types=1);
 
 namespace BlueFairy\ApiGateway;
 
-if ( ! defined( 'ABSPATH' ) ) {
-	exit;
+// Direct-request guard: the unit suite defines ABSPATH, so this exit cannot run under it.
+// This file is first loaded before PHPUnit starts collecting coverage, so the if line is never recorded either.
+if ( ! defined( 'ABSPATH' ) ) { // @codeCoverageIgnore
+	exit; // @codeCoverageIgnore
 }
 
 use BlueFairy\ApiGateway\Support\RequestContext;

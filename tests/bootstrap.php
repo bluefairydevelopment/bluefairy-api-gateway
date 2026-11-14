@@ -92,6 +92,10 @@ function bfag_test_reset(): void {
 	$GLOBALS['bfag_test_option_autoload']    = []; // option => on|off|auto, as core stores it.
 	$GLOBALS['bfag_test_option_write_fails'] = []; // Options whose writes the "database" refuses.
 	$GLOBALS['bfag_test_transients']    = [];
+	$GLOBALS['bfag_test_public_post_types'] = null; // null: post and page.
+	$GLOBALS['bfag_test_comments']      = []; // id => comment object, read by get_comment().
+	$GLOBALS['bfag_test_wc_orders']     = []; // id => WC_Order, read by wc_get_order().
+	$GLOBALS['bfag_test_wc_products']   = []; // id => WC_Product, read by wc_get_product().
 	$GLOBALS['bfag_test_cache']         = [];
 	$GLOBALS['bfag_test_cache_expires'] = [];
 	$GLOBALS['bfag_test_hooks']         = [];
@@ -1188,6 +1192,7 @@ class WP_Post {
 	public string $post_title  = '';
 	public string $post_name   = '';
 	public int $post_author    = 0;
+	public int $post_parent    = 0;
 	public string $post_date_gmt = '';
 	public string $post_modified_gmt = '';
 	public string $post_content = '';
@@ -1220,14 +1225,18 @@ function get_permalink( mixed $post = 0 ): string|false {
 	$p = get_post( $post );
 	return $p ? home_url( '/?p=' . $p->ID ) : false;
 }
+// As core: a revision (autosaves are revisions too) answers with its parent id, anything else with false.
 function wp_is_post_revision( mixed $post ): int|false {
-	return false;
+	$p = get_post( $post );
+	return $p instanceof WP_Post && 'revision' === $p->post_type ? $p->post_parent : false;
 }
+// As core: an autosave is a revision named "<parent>-autosave…".
 function wp_is_post_autosave( mixed $post ): int|false {
-	return false;
+	$p = get_post( $post );
+	return $p instanceof WP_Post && 'revision' === $p->post_type && str_contains( $p->post_name, $p->post_parent . '-autosave' ) ? $p->post_parent : false;
 }
 function get_post_types( array $args = [], string $output = 'names' ): array {
-	return [ 'post' => 'post', 'page' => 'page' ];
+	return $GLOBALS['bfag_test_public_post_types'] ?? [ 'post' => 'post', 'page' => 'page' ];
 }
 function dbDelta( mixed $queries = '', bool $execute = true ): array { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName.FunctionNameInvalid
 	$GLOBALS['bfag_test_db_delta'][] = $queries;

@@ -112,4 +112,9 @@ final class SettingsTest extends TestCase {
 		update_option( 'bfag_settings', [ 'cache_enabled' => true ] );
 		$this->assertTrue( ( new Settings() )->get( 'rate_limit_exempt_editors' ), 'an option saved before the key existed reads the default' );
 	}
+	public function test_every_setting_that_is_not_a_bool_or_an_int_has_its_own_sanitiser(): void {
+		$others = array_keys( array_filter( Settings::DEFAULTS, static fn( mixed $d ): bool => ! is_bool( $d ) && ! is_int( $d ) ) );
+		sort( $others );
+		$this->assertSame( [ 'forwarded_header', 'notification_email', 'trusted_proxies' ], $others, 'sanitize() treats the last of these as an email: give a new string setting its own branch' );
+	}
 }

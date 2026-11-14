@@ -224,11 +224,61 @@ final class EventRegistryTest extends TestCase {
 		$this->assertSame( 'pending', $changed['object']['from_status'] );
 		$this->assertSame( 'processing', $changed['object']['to_status'] );
 		$this->assertSame( 501, $registry->payload( 'woocommerce.order.completed', [ 501, $order ] )['object']['id'] );
-		$this->assertNull( $registry->payload( 'woocommerce.order.created', [ 501, null ] ), 'no order object and no wc_get_order(): nothing to send' );
+		$this->assertNull( $registry->payload( 'woocommerce.order.created', [ 501, null ] ), 'no order object and none stored: nothing to send' );
 
 		$product = new \WC_Product( [ 'id' => 88, 'name' => 'Mug', 'sku' => 'MUG-1', 'price' => '9.99', 'type' => 'simple' ] );
 		$updated = $registry->payload( 'woocommerce.product.updated', [ 88, $product ] );
 		$this->assertSame( [ 'id' => 88, 'name' => 'Mug', 'sku' => 'MUG-1', 'status' => 'publish', 'price' => '9.99', 'type' => 'simple' ], $updated['object'] );
 		$this->assertNull( $registry->payload( 'woocommerce.product.updated', [ 88, 'not a product' ] ) );
+	}
+	public function test_an_event_list_entry_without_a_string_key_or_an_array_spec_is_dropped(): void {
+		add_filter(
+			'bfag_webhook_events',
+			static function ( array $events ): array {
+				$events[]           = [ 'hook' => 'numeric_key', 'label' => 'x', 'accepted_args' => 1 ];
+				$events['not.spec'] = 'a string, not a spec';
+				return $events;
+			}
+		);
+		$all = ( new EventRegistry() )->all();
+		$this->assertArrayNotHasKey( 'not.spec', $all );
+		$this->assertSame( [], array_filter( array_keys( $all ), 'is_int' ), 'no numeric key survives' );
+		$this->assertArrayHasKey( 'post.published', $all, 'control: the built-ins are still there' );
+	}
+
+	public function test_a_revision_or_autosave_is_never_sent_as_a_post_event(): void {
+		$registry = new EventRegistry();
+		$revision = bfag_test_add_post( [ 'ID' => 21, 'post_type' => 'revision', 'post_name' => '20-revision-v1', 'post_parent' => 20 ] );
+		$autosave = bfag_test_add_post( [ 'ID' => 22, 'post_type' => 'revision', 'post_name' => '20-autosave-v1', 'post_parent' => 20 ] );
+		// Treat revisions as a public type, so only the revision check itself can stop them.
+		$GLOBALS['bfag_test_public_post_types'] = [ 'post' => 'post', 'revision' => 'revision' ];
+		$this->assertNull( $registry->payload( 'post.updated', [ 21, $revision ] ) );
+		$this->assertNull( $registry->payload( 'post.deleted', [ 22, $autosave ] ) );
+		$post = bfag_test_add_post( [ 'ID' => 20, 'post_type' => 'post' ] );
+		$this->assertSame( 20, $registry->payload( 'post.updated', [ 20, $post ] )['object']['id'] ?? null, 'control: the parent post is sent' );
+	}
+
+	public function test_a_comment_given_by_id_alone_is_read_from_the_database(): void {
+		$GLOBALS['bfag_test_comments'][31] = (object) [ 'comment_ID' => '31', 'comment_post_ID' => '5', 'comment_author' => 'Ann', 'comment_approved' => '1' ];
+		$payload = ( new EventRegistry() )->payload( 'comment.created', [ 31, null ] );
+		$this->assertSame( 'Ann', $payload['object']['author'] ?? null, 'the stored comment fills the payload' );
+		$this->assertSame( 5, $payload['object']['post_id'] );
+	}
+
+	public function test_an_order_or_product_given_by_id_alone_is_looked_up_and_a_missing_one_sends_nothing(): void {
+		$registry                            = new EventRegistry();
+		$GLOBALS['bfag_test_wc_orders'][601]  = new \WC_Order( [ 'id' => 601, 'status' => 'completed' ] );
+		$GLOBALS['bfag_test_wc_products'][7] = new \WC_Product( [ 'id' => 7, 'name' => 'Mug', 'sku' => 'MUG-1' ] );
+
+		$order = $registry->payload( 'woocommerce.order.completed', [ 601, null ] );
+		$this->assertSame( 601, $order['object']['id'] ?? null );
+		$this->assertSame( 'completed', $order['object']['status'] );
+		$this->assertSame( '', $order['object']['created_gmt'], 'an order with no creation date sends an empty date, not 1970' );
+
+		$product = $registry->payload( 'woocommerce.product.updated', [ 7, null ] );
+		$this->assertSame( [ 'id' => 7, 'name' => 'Mug', 'sku' => 'MUG-1', 'status' => 'publish', 'price' => '0', 'type' => 'simple' ], $product['object'] ?? null );
+
+		$this->assertNull( $registry->payload( 'woocommerce.order.status_changed', [ 404, 'pending', 'processing', null ] ), 'a status change of an order that is gone sends nothing' );
+		$this->assertNull( $registry->payload( 'woocommerce.product.updated', [ 404, null ] ) );
 	}
 }

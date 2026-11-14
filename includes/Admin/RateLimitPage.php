@@ -9,8 +9,9 @@ declare(strict_types=1);
 
 namespace BlueFairy\ApiGateway\Admin;
 
+// Direct-request guard: the unit suite defines ABSPATH, so this exit cannot run under it.
 if ( ! defined( 'ABSPATH' ) ) {
-	exit;
+	exit; // @codeCoverageIgnore
 }
 
 use BlueFairy\ApiGateway\RateLimit\RateLimitRuleRepository;

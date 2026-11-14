@@ -15,8 +15,9 @@
 
 declare(strict_types=1);
 
+// Not-an-uninstall guard: the unit suite defines WP_UNINSTALL_PLUGIN, so this exit cannot run under it.
 if ( ! defined( 'WP_UNINSTALL_PLUGIN' ) ) {
-	exit;
+	exit; // @codeCoverageIgnore
 }
 
 /**

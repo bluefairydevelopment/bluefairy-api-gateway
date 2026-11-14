@@ -121,4 +121,14 @@ final class PluginTest extends TestCase {
 		Plugin::set( 'addon.thing', $object );
 		$this->assertSame( $object, Plugin::service( 'addon.thing' ) );
 	}
+	public function test_the_admin_screens_are_wired_only_in_wp_admin(): void {
+		Plugin::boot();
+		$this->assertFalse( (bool) has_action( 'admin_menu' ), 'control: a front-end request registers no admin menu' );
+
+		Plugin::reset();
+		$GLOBALS['bfag_test_is_admin'] = true;
+		Plugin::boot();
+		$this->assertTrue( (bool) has_action( 'admin_menu' ), 'wp-admin: the menu is registered' );
+		$this->assertTrue( (bool) has_action( 'admin_init' ), 'and its action handler' );
+	}
 }

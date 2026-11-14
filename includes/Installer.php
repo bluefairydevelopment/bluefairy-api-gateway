@@ -9,8 +9,9 @@ declare(strict_types=1);
 
 namespace BlueFairy\ApiGateway;
 
+// Direct-request guard: the unit suite defines ABSPATH, so this exit cannot run under it.
 if ( ! defined( 'ABSPATH' ) ) {
-	exit;
+	exit; // @codeCoverageIgnore
 }
 
 /**
@@ -218,7 +219,8 @@ final class Installer {
 	 */
 	public static function initialize_site( \WP_Site $site ): void {
 		if ( ! function_exists( 'is_plugin_active_for_network' ) ) {
-			require_once ABSPATH . 'wp-admin/includes/plugin.php';
+			// Loads WordPress core's own file; the unit suite stubs the function instead.
+			require_once ABSPATH . 'wp-admin/includes/plugin.php'; // @codeCoverageIgnore
 		}
 		if ( ! is_plugin_active_for_network( plugin_basename( BFAG_FILE ) ) ) {
 			return;

@@ -9,8 +9,9 @@ declare(strict_types=1);
 
 namespace BlueFairy\ApiGateway;
 
+// Direct-request guard: the unit suite defines ABSPATH, so this exit cannot run under it.
 if ( ! defined( 'ABSPATH' ) ) {
-	exit;
+	exit; // @codeCoverageIgnore
 }
 
 /**
@@ -165,11 +166,10 @@ final class Settings {
 				$clean[ $key ] = self::sanitize_cidr_list( $value );
 			} elseif ( 'forwarded_header' === $key ) {
 				$clean[ $key ] = self::sanitize_forwarded_header( $value );
-			} elseif ( 'notification_email' === $key ) {
+			} else {
+				// The one remaining key, notification_email. A new string setting needs its own branch above.
 				$email         = sanitize_email( is_string( $value ) ? $value : '' );
 				$clean[ $key ] = is_email( $email ) ? $email : '';
-			} else {
-				$clean[ $key ] = sanitize_text_field( is_string( $value ) ? $value : '' );
 			}
 		}
 		return $clean;

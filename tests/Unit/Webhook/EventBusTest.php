@@ -526,4 +526,45 @@ final class EventBusTest extends TestCase {
 		$this->assertFalse( method_exists( $this->bus(), 'invalidate' ) );
 		$this->assertTrue( method_exists( $this->bus(), 'flush' ), 'control' );
 	}
+	public function test_a_queued_delivery_the_database_refuses_is_logged_and_nothing_is_sent_for_it(): void {
+		update_option( 'bfag_settings', [ 'debug_logging' => true ] );
+		\BlueFairy\ApiGateway\Logger::use_settings( new Settings() );
+		ini_set( 'error_log', '/dev/null' );
+		$this->seed( [ [ 'event' => 'post.published' ] ] );
+		$this->wpdb->always( 'insert', false );
+		$bus = $this->bus();
+		$bus->register_hooks();
+		for ( $id = 1; $id <= EventBus::FLUSH_LIMIT + 1; $id++ ) {
+			$this->publish( $id );
+		}
+
+		$bus->flush();
+
+		$this->assertSame( [], $GLOBALS['bfag_test_http_calls'], 'no row, no request' );
+		$this->assertCount( EventBus::FLUSH_LIMIT + 1, $this->wpdb->calls_to( 'insert' ), 'every delivery was tried' );
+		$log = implode( "\n", \BlueFairy\ApiGateway\Logger::lines() );
+		$this->assertStringContainsString( 'webhook delivery row could not be created', $log );
+		$this->assertStringContainsString( 'webhook delivery could not be queued', $log );
+		$this->assertSame( [], $bus->pending() );
+	}
+
+	public function test_payloads_without_an_object_id_dedupe_on_their_content(): void {
+		$bus = $this->bus();
+		$bus->handle( 'form.submitted', [ 'contact' ] );
+		$bus->handle( 'form.submitted', [ 'newsletter' ] );
+		$this->assertCount( 1, $bus->pending(), 'both carry the same empty object, so they collapse to one' );
+		add_filter(
+			'bfag_webhook_payload',
+			static function ( array $payload, string $event, array $args ): array {
+				$payload['object'] = [ 'form' => $args[0] ];
+				return $payload;
+			},
+			10,
+			3
+		);
+		$bus->handle( 'form.submitted', [ 'contact' ] );
+		$bus->handle( 'form.submitted', [ 'contact' ] );
+		$bus->handle( 'form.submitted', [ 'newsletter' ] );
+		$this->assertCount( 3, $bus->pending(), 'different objects without an id stay apart; identical ones collapse' );
+	}
 }
