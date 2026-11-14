@@ -9,8 +9,9 @@ declare(strict_types=1);
 
 namespace BlueFairy\ApiGateway\Support;
 
+// Direct-request guard: the unit suite defines ABSPATH, so this exit cannot run under it.
 if ( ! defined( 'ABSPATH' ) ) {
-	exit;
+	exit; // @codeCoverageIgnore
 }
 
 /**
@@ -75,15 +76,13 @@ final class SealedValue {
 		if ( false === $raw || strlen( $raw ) < SODIUM_CRYPTO_SECRETBOX_NONCEBYTES + SODIUM_CRYPTO_SECRETBOX_MACBYTES ) {
 			return null;
 		}
-		try {
-			$plain = sodium_crypto_secretbox_open(
-				substr( $raw, SODIUM_CRYPTO_SECRETBOX_NONCEBYTES ),
-				substr( $raw, 0, SODIUM_CRYPTO_SECRETBOX_NONCEBYTES ),
-				self::key( $context )
-			);
-		} catch ( \SodiumException ) {
-			return null;
-		}
+		// No try/catch: sodium throws only for a nonce or key of the wrong length, and both are fixed here
+		// (the length check above, a 32-byte HMAC key). A forged or foreign value fails the MAC and returns false.
+		$plain = sodium_crypto_secretbox_open(
+			substr( $raw, SODIUM_CRYPTO_SECRETBOX_NONCEBYTES ),
+			substr( $raw, 0, SODIUM_CRYPTO_SECRETBOX_NONCEBYTES ),
+			self::key( $context )
+		);
 		return is_string( $plain ) ? $plain : null;
 	}
 

@@ -369,4 +369,28 @@ final class RateLimitRuleRepositoryTest extends TestCase {
 		add_filter( 'bfag_rate_limit_max_window', '__return_zero' );
 		$this->assertSame( 1, ( new RateLimitRuleRepository() )->max_window(), 'never below one second' );
 	}
+	public function test_create_reads_the_enabled_flag_like_a_checkbox_and_ignores_unknown_columns(): void {
+		$this->wpdb->always( 'get_var', '0' );
+		$repo  = new RateLimitRuleRepository();
+		$cases = [
+			[ true, 1 ],
+			[ false, 0 ],
+			[ ' Yes ', 1 ],
+			[ 'on', 1 ],
+			[ 'off', 0 ],
+			[ [ 1 ], 0 ],
+			[ 1.0, 0 ],
+		];
+		foreach ( $cases as [ $given, $stored ] ) {
+			$this->assertNotFalse( $repo->create( [ 'enabled' => $given, 'bogus' => 'x' ] ) );
+			$data = $this->wpdb->calls_to( 'insert' )[ count( $this->wpdb->calls_to( 'insert' ) ) - 1 ]['data'];
+			$this->assertSame( $stored, $data['enabled'], var_export( $given, true ) );
+			$this->assertArrayNotHasKey( 'bogus', $data, 'an unknown column never reaches the insert' );
+		}
+	}
+
+	public function test_a_failed_query_lists_no_rules(): void {
+		$this->wpdb->queue( 'get_results', null );
+		$this->assertSame( [], ( new RateLimitRuleRepository() )->all() );
+	}
 }

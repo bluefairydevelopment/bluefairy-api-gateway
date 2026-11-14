@@ -72,6 +72,39 @@ if ( ! class_exists( 'WC_Product', false ) ) {
 	}
 }
 
+if ( ! function_exists( 'get_comment' ) ) {
+	/**
+	 * As core: the stored comment, or null.
+	 *
+	 * @param mixed $comment Comment id.
+	 */
+	function get_comment( mixed $comment = null ): ?object {
+		return $GLOBALS['bfag_test_comments'][ (int) $comment ] ?? null;
+	}
+}
+
+if ( ! function_exists( 'wc_get_order' ) ) {
+	/**
+	 * As WooCommerce: the stored order, or false.
+	 *
+	 * @param mixed $order Order id.
+	 */
+	function wc_get_order( mixed $order = false ): WC_Order|false {
+		return $GLOBALS['bfag_test_wc_orders'][ (int) $order ] ?? false;
+	}
+}
+
+if ( ! function_exists( 'wc_get_product' ) ) {
+	/**
+	 * As WooCommerce: the stored product, or null.
+	 *
+	 * @param mixed $product Product id.
+	 */
+	function wc_get_product( mixed $product = false ): ?WC_Product {
+		return $GLOBALS['bfag_test_wc_products'][ (int) $product ] ?? null;
+	}
+}
+
 /**
  * Declare the `WooCommerce` class so `class_exists( 'WooCommerce' )` is true
  * for the rest of the process. Call it only from a test that runs in its own

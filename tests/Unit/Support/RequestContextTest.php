@@ -132,4 +132,9 @@ final class RequestContextTest extends TestCase {
 		$this->assertSame( 'wp/v2/posts', RequestContext::normalize_route( ' /wp/v2/posts ' ) );
 		$this->assertSame( '', RequestContext::normalize_route( '/' ) );
 	}
+	public function test_a_trusted_proxy_that_sends_no_forwarded_header_is_the_client(): void {
+		$_SERVER['REMOTE_ADDR'] = '10.0.0.5';
+		unset( $_SERVER['HTTP_X_FORWARDED_FOR'] );
+		$this->assertSame( '10.0.0.5', $this->context( [ '10.0.0.0/8' ] )->client_ip() );
+	}
 }

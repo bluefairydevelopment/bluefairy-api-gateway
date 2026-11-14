@@ -739,4 +739,48 @@ final class WebhookDispatcherTest extends TestCase {
 			$this->assertCount( 0, $GLOBALS['bfag_test_http_calls'] );
 		}
 	}
+	public function test_a_payload_json_cannot_encode_is_sent_as_an_empty_object_and_logged(): void {
+		$dispatcher = $this->dispatcher();
+		$this->enable_logging();
+		bfag_test_queue_http( 204 );
+
+		$result = $dispatcher->dispatch( $this->webhook(), 'post.updated', [ 'object' => [ 'price' => INF ] ] );
+
+		$this->assertTrue( $result['success'] );
+		$this->assertSame( '{}', $this->sent_args()['body'], 'an unencodable payload goes out as {}, never as an empty or broken body' );
+		$this->assertSame( '{}', $this->wpdb->calls_to( 'insert' )[0]['data']['payload'] );
+		$this->assertStringContainsString( 'webhook payload could not be encoded', implode( "\n", Logger::lines() ) );
+	}
+
+	public function test_nothing_is_sent_when_the_delivery_row_cannot_be_written(): void {
+		$dispatcher = $this->dispatcher();
+		$this->enable_logging();
+		$this->wpdb->queue( 'insert', false );
+		bfag_test_queue_http( 204 );
+
+		$result = $dispatcher->dispatch( $this->webhook(), 'post.updated', [ 'object' => [ 'id' => 1 ] ] );
+
+		$this->assertSame( [ 'delivery_id' => 0, 'success' => false, 'http_status' => null ], $result );
+		$this->assertSame( [], $GLOBALS['bfag_test_http_calls'], 'no request without a row to record it' );
+		$this->assertStringContainsString( 'webhook delivery row could not be created', implode( "\n", Logger::lines() ) );
+	}
+
+	public function test_dispatch_pending_fails_the_row_when_the_webhook_was_deleted_after_the_list_was_cached(): void {
+		$dispatcher = $this->dispatcher();
+		$this->enable_logging();
+		$summary = $this->webhook();
+		unset( $summary['secret'] );
+		wp_cache_set( WebhookRepository::CACHE_KEY, [ $summary ], WebhookRepository::CACHE_GROUP ); // Still listed, but find() finds no row.
+
+		$result = $dispatcher->dispatch_pending( [ 'id' => 33, 'webhook_id' => 7, 'event' => 'post.updated', 'payload' => '{}', 'truncated' => 0, 'status' => 'pending', 'attempt' => 1 ] );
+
+		$this->assertSame( [ 'delivery_id' => 33, 'success' => false, 'http_status' => null ], $result );
+		$this->assertSame( [], $GLOBALS['bfag_test_http_calls'], 'nothing sent' );
+		$this->assertSame( [ 'SELECT * FROM bfw_bfag_webhooks WHERE id = 7 LIMIT 1' ], array_column( $this->wpdb->calls_to( 'get_row' ), 'sql' ), 'the row was looked up' );
+		$updates = $this->wpdb->calls_to( 'update' );
+		$this->assertCount( 1, $updates );
+		$this->assertSame( [ 'status' => 'failed', 'next_retry_at' => null ], $updates[0]['data'] );
+		$this->assertSame( [ 'id' => 33 ], $updates[0]['where'] );
+		$this->assertStringContainsString( 'pending delivery dropped: webhook missing or disabled', implode( "\n", Logger::lines() ) );
+	}
 }

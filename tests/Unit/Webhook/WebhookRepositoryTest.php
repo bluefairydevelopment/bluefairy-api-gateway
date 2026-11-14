@@ -316,4 +316,26 @@ final class WebhookRepositoryTest extends TestCase {
 		$this->assertSame( 1, $repo->create( [ 'url' => 'https://hooks.example.com:8080/in' ] + self::VALID ), 'control: 8080 is a safe port' );
 		$this->assertSame( 'https://hooks.example.com:8080/in', $this->wpdb->calls_to( 'insert' )[0]['data']['url'] );
 	}
+	public function test_a_secret_longer_than_255_characters_is_refused_and_255_is_accepted(): void {
+		$this->enable_logging();
+		$repo = new WebhookRepository();
+		$this->wpdb->always( 'get_var', '0' );
+
+		$this->assertFalse( $repo->create( self::VALID + [ 'secret' => str_repeat( 'a', 256 ) ] ) );
+		$this->assertFalse( $repo->update( 3, [ 'secret' => str_repeat( 'b', 256 ) ] ) );
+		$this->assertSame( [], $this->wpdb->calls_to( 'insert' ) );
+		$this->assertSame( [], $this->wpdb->calls_to( 'update' ) );
+		$this->assertCount( 2, array_filter( Logger::lines(), static fn( string $l ): bool => str_contains( $l, 'secret longer than 255 characters' ) ) );
+
+		$this->assertSame( 1, $repo->create( self::VALID + [ 'secret' => str_repeat( 'a', 255 ) ] ), 'the column holds 255' );
+		$this->assertSame( str_repeat( 'a', 255 ), $this->wpdb->calls_to( 'insert' )[0]['data']['secret'] );
+	}
+
+	public function test_a_cached_enabled_list_with_a_non_row_entry_skips_it(): void {
+		wp_cache_set( WebhookRepository::CACHE_KEY, [ 'garbage', $this->row( 4 ) ], WebhookRepository::CACHE_GROUP );
+		$list = ( new WebhookRepository() )->all_enabled();
+		$this->assertCount( 1, $list );
+		$this->assertSame( 4, $list[0]['id'] );
+		$this->assertArrayNotHasKey( 'secret', $list[0], 'and the row is still reduced to a summary' );
+	}
 }

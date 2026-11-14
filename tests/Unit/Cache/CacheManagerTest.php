@@ -409,4 +409,10 @@ final class CacheManagerTest extends TestCase {
 		$this->assertInstanceOf( \WP_REST_Response::class, $hit );
 		$this->assertSame( 'HIT', $hit->get_headers()['X-BF-Cache'] );
 	}
+	public function test_rule_headers_that_are_json_but_not_an_object_add_nothing(): void {
+		$manager = $this->manager( [], [ $this->rule( '**', 60, '', '"X-Robots-Tag: noindex"' ) ] );
+		$stored  = $manager->maybe_store( $this->response(), $this->server, $this->request( 'GET', '/wp/v2/posts' ) );
+		$this->assertArrayNotHasKey( 'X-Robots-Tag', $stored->get_headers() );
+		$this->assertSame( 'MISS', $stored->get_headers()['X-BF-Cache'], 'the response is still cached' );
+	}
 }
