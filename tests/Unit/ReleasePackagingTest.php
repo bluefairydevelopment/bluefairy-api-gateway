@@ -53,8 +53,9 @@ final class ReleasePackagingTest extends TestCase {
 
 	/**
 	 * The version in the header, BFAG_VERSION, the readme's Stable tag, the
-	 * readme's newest changelog and upgrade-notice entries, CHANGELOG.md's
-	 * newest entry and composer.json's version are one number.
+	 * readme's newest changelog and upgrade-notice entries and CHANGELOG.md's
+	 * newest entry are one number. composer.json carries no version
+	 * (ComposerManifestTest, WPMAP-374).
 	 */
 	public function test_every_version_marker_names_the_same_release(): void {
 		$main   = self::read( 'bluefairy-api-gateway.php' );
@@ -74,9 +75,6 @@ final class ReleasePackagingTest extends TestCase {
 		// An [Unreleased] section above the newest release is allowed.
 		preg_match( '/^## \[(\d[^\]]*)\]/m', self::read( 'CHANGELOG.md' ), $m );
 		$found['CHANGELOG.md'] = $m[1] ?? '';
-		// composer.json carried 1.0.0 through the 1.0.1 release.
-		$composer                = json_decode( self::read( 'composer.json' ), true );
-		$found['composer.json'] = is_array( $composer ) ? (string) ( $composer['version'] ?? '' ) : '';
 
 		$this->assertMatchesRegularExpression( '/^\d+\.\d+\.\d+$/', $found['header Version'] );
 		$this->assertSame( array_fill_keys( array_keys( $found ), $found['header Version'] ), $found );
